@@ -1,141 +1,177 @@
-# Grasp — Agentic Institutional Brain
+# Grasp
 
-An AI-powered tool that acts as your company's institutional brain, capable of answering any question about the organization by reasoning over knowledge from **Confluence, Jira, SharePoint, Slack, and Notion**.
+Grasp is a self-hosted knowledge retrieval system that connects to your company's Confluence, Jira, SharePoint, Slack, and Notion instances. It periodically syncs content from these platforms into a local Git repository and a ChromaDB vector index, then uses Claude to answer natural-language questions about that content.
 
-Unlike basic RAG systems that only search what's been indexed, Grasp is an **agentic AI** — it actively pulls live information from all sources at query time and synthesizes comprehensive answers with source citations.
+At query time, Grasp searches both the local index and the live platform APIs in parallel, then synthesizes a single answer with source citations.
 
----
+## How It Works
 
-## Architecture
+Grasp has two main operating modes:
+
+**Sync** -- A background scheduler pulls documents from all configured platforms on a cron schedule (configurable, defaults to five times per day). Documents are classified into one of ten information types using Claude Haiku, written to a Git repository as Markdown files with YAML frontmatter, and indexed into ChromaDB. The initial sync supports checkpointing so it can resume if interrupted. Subsequent syncs are incremental, fetching only documents modified since the last run. After each sync, changes are staged for human review before being committed and pushed.
+
+**Query** -- When a user asks a question, Grasp fans out search requests to the local vector index and all configured platform APIs concurrently. A coordinator agent (Claude Sonnet) receives the aggregated results and synthesizes an answer. If the initial results are insufficient, the agent can make up to four follow-up tool calls to read specific files, run filtered searches, or query individual platforms directly. Responses are streamed to the client via SSE.
+
+## Requirements
+
+- Python 3.11+
+- An Anthropic API key
+- Credentials for at least one supported platform (Confluence, Jira, SharePoint, Slack, or Notion)
+
+## Setup
+
+1. Copy the example environment file and fill in your credentials:
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    GRASP SYSTEM                       │
-├──────────────────────────────────────────────────────┤
-│                                                      │
-│  SYNC LAYER — 5 parallel workers                    │
-│  Confluence │ Jira │ SharePoint │ Slack │ Notion    │
-│       ↓ asyncio.gather(5) ↓                         │
-│  Sync Orchestrator → Git Repo + ChromaDB            │
-│                                                      │
-│  QUERY LAYER — 6 parallel sub-agents                │
-│  ┌─────────────────────────────────────────────┐    │
-│  │  Coordinator Agent (Claude Sonnet 4)        │    │
-│  │  Phase 1: Fan-out → 6 sub-agents parallel   │    │
-│  │  Phase 2: Synthesize answer                 │    │
-│  │  Phase 3: Optional deep-dive follow-ups     │    │
-│  └─────────────────────────────────────────────┘    │
-│       ↓                                              │
-│  FastAPI + Web Dashboard                             │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-```
-
-## Key Features
-
-- **Multi-platform retrieval**: Confluence, Jira, SharePoint, Slack, Notion
-- **Parallel sub-agents**: Query-time fan-out to all sources simultaneously (~1-3s total)
-- **Checkpointed sync**: Full initial sync with resume capability; daily incremental updates
-- **Type-classified storage**: Documents auto-classified into 10 categories (architecture, features, operations, etc.)
-- **Human-approved commits**: Changes staged for review; commit + push only on approval
-- **Git-backed knowledge repo**: Version-controlled, structured Markdown with YAML frontmatter
-- **Live + cached queries**: Combines indexed repo with real-time platform searches
-- **Premium web dashboard**: Dark glassmorphism UI with streaming responses
-
-## Quick Start
-
-### 1. Configure credentials
-
-```bash
 cp .env.example .env
-# Edit .env with your API keys and platform credentials
 ```
 
-### 2. Run with Docker (recommended)
+2. Install and run locally:
 
-```bash
-docker-compose up -d
 ```
-
-### 3. Run locally
-
-```bash
 pip install -e .
 python main.py
 ```
 
-### 4. Open the dashboard
+Or use Docker:
 
-Navigate to [http://localhost:8000](http://localhost:8000)
+```
+docker-compose up -d
+```
+
+3. Open `http://localhost:8000` for the query interface, or `http://localhost:8000/admin` for the admin dashboard.
 
 ## Configuration
 
-All configuration is via environment variables (`.env` file):
+All configuration is done through environment variables in `.env`. See `.env.example` for the full list.
 
-| Variable | Required | Description |
+### Required
+
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
+| `ADMIN_KEY` | Secret key for admin API endpoints |
+
+### Optional -- Git Remote
+
+| Variable | Description |
+|---|---|
+| `GITHUB_REPO_PATH` | Local path for the knowledge repo (default: `./knowledge_repo`) |
+| `GITHUB_REMOTE_URL` | Remote Git URL for pushing committed changes |
+| `GITHUB_PAT` | GitHub Personal Access Token, injected into the HTTPS remote URL |
+
+### Optional -- Platform Connectors
+
+Configure only the platforms you use. Grasp auto-detects which connectors are available based on which credentials are present.
+
+| Variable | Platform |
+|---|---|
+| `CONFLUENCE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` | Confluence |
+| `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira |
+| `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` | SharePoint |
+| `SLACK_BOT_TOKEN` | Slack |
+| `NOTION_API_KEY` | Notion |
+
+### Optional -- Sync Schedule
+
+| Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | Anthropic API key for Claude |
-| `GITHUB_REMOTE_URL` | ✅ | Git remote URL for the knowledge repo |
-| `GITHUB_PAT` | ✅ | GitHub Personal Access Token for push |
-| `CONFLUENCE_URL` | ◻️ | Confluence base URL |
-| `CONFLUENCE_EMAIL` | ◻️ | Confluence account email |
-| `CONFLUENCE_API_TOKEN` | ◻️ | Confluence API token |
-| `JIRA_URL` | ◻️ | Jira base URL |
-| `JIRA_EMAIL` | ◻️ | Jira account email |
-| `JIRA_API_TOKEN` | ◻️ | Jira API token |
-| `SHAREPOINT_TENANT_ID` | ◻️ | Azure tenant ID |
-| `SHAREPOINT_CLIENT_ID` | ◻️ | Azure app client ID |
-| `SHAREPOINT_CLIENT_SECRET` | ◻️ | Azure app client secret |
-| `SHAREPOINT_SITE_ID` | ◻️ | SharePoint site ID |
-| `SLACK_BOT_TOKEN` | ◻️ | Slack bot token |
-| `NOTION_API_KEY` | ◻️ | Notion integration key |
-| `SYNC_CRON_HOURS` | ◻️ | Comma-separated sync hours UTC (default: 8,11,14,17,20) |
-| `SYNC_CRON_MINUTE` | ◻️ | Minute for sync runs (default: 0) |
+| `SYNC_CRON_HOURS` | `[2,5,8,11,14]` | Hours (UTC) to run sync |
+| `SYNC_CRON_MINUTE` | `30` | Minute within each hour |
+| `SYNC_BATCH_SIZE` | `100` | Documents per batch during sync |
 
-Only `ANTHROPIC_API_KEY` is strictly required. Connectors are auto-detected — configure only the platforms you use.
+### Optional -- Server
 
-## API Endpoints
-
-| Method | Endpoint | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `POST` | `/api/query` | Submit a question (SSE streaming response) |
-| `GET` | `/api/status` | System status, connector health, doc counts |
-| `POST` | `/api/sync/trigger` | Manually trigger a sync |
-| `GET` | `/api/sync/status` | Current sync progress |
-| `GET` | `/api/sync/history` | Sync history log |
-| `GET` | `/api/changes/pending` | Pending changeset for review |
-| `POST` | `/api/changes/approve` | Approve and commit changes |
-| `POST` | `/api/changes/reject` | Reject and revert changes |
-| `GET` | `/api/sources` | Document counts by source/type |
+| `HOST` | `0.0.0.0` | Server bind address |
+| `PORT` | `8000` | Server bind port |
 
-## Repository Structure
+## API
 
-Documents are organized by **information type** → **source platform**:
+All admin endpoints require the `X-Admin-Key` header.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/query` | No | Submit a question; returns an SSE stream |
+| `GET` | `/api/status` | No | System status, connector health, document counts |
+| `GET` | `/api/sources` | No | Document counts grouped by source and type |
+| `POST` | `/api/sync/trigger` | Admin | Trigger a sync manually |
+| `GET` | `/api/sync/status` | Admin | Current sync progress and worker status |
+| `GET` | `/api/sync/history` | Admin | Past sync results |
+| `GET` | `/api/changes/pending` | Admin | Pending changeset awaiting approval |
+| `GET` | `/api/changes/diff/{path}` | Admin | Git diff for a specific pending file |
+| `POST` | `/api/changes/approve` | Admin | Commit and push pending changes |
+| `POST` | `/api/changes/reject` | Admin | Revert all pending changes |
+
+## Knowledge Repository Layout
+
+Synced documents are stored as Markdown files organized by information type and source platform:
 
 ```
 knowledge_repo/
-├── architecture/    # System design, APIs, infrastructure
-├── features/        # Feature specs, PRDs, user stories
-├── operations/      # Runbooks, SOPs, deployments
-├── testing/         # Test plans, QA docs
-├── decisions/       # ADRs, meeting notes, RFCs
-├── strategy/        # Business strategy, OKRs, roadmaps
-├── incidents/       # Incident reports, postmortems
-├── discussions/     # Conversations, threads (Slack)
-├── references/      # General docs, wikis, guides
-└── general/         # Uncategorized
+  architecture/
+    confluence/
+    jira/
+    ...
+  features/
+  operations/
+  testing/
+  decisions/
+  strategy/
+  incidents/
+  discussions/
+  references/
+  general/
 ```
 
-Each document is a Markdown file with YAML frontmatter containing source, URL, timestamps, and classification metadata.
+Each file includes YAML frontmatter with the document's ID, source platform, title, URL, classification, and last-updated timestamp.
+
+## Project Structure
+
+```
+main.py                          Entry point
+src/
+  config.py                      Pydantic settings loaded from .env
+  connectors/
+    base.py                      BaseConnector interface, Document model, rate limiter
+    confluence.py                Confluence REST API connector
+    jira.py                      Jira REST API connector
+    sharepoint.py                SharePoint (Microsoft Graph) connector
+    slack.py                     Slack Web API connector
+    notion.py                    Notion API connector
+  sync/
+    orchestrator.py              Parallel sync across all connectors
+    scheduler.py                 APScheduler-based cron scheduling
+    checkpoints.py               Resumable sync state persistence
+  repo/
+    manager.py                   Git repo management, document classification, change approval
+  index/
+    vector_store.py              ChromaDB indexing and semantic search
+  agent/
+    engine.py                    Claude-powered query coordinator with tool use
+    sub_agents.py                Parallel search fan-out with timeout and error handling
+    tools.py                     Tool definitions and executor for the coordinator agent
+  api/
+    server.py                    FastAPI application and route definitions
+    models.py                    Pydantic request/response models
+  static/
+    index.html                   Query interface
+    admin.html                   Admin dashboard
+    styles.css                   Shared styles
+    app.js                       Query interface logic
+    admin.js                     Admin dashboard logic
+```
 
 ## Tech Stack
 
 | Component | Technology |
 |---|---|
-| LLM | Anthropic Claude (Sonnet 4 + Haiku 4) |
-| Vector DB | ChromaDB (local, persistent) |
-| Git | GitPython |
-| Scheduler | APScheduler |
-| API | FastAPI + Uvicorn |
-| Web UI | Vanilla HTML/CSS/JS |
+| LLM | Anthropic Claude (Sonnet 4 for queries, Haiku 4 for classification) |
+| Vector database | ChromaDB |
+| Git operations | GitPython |
+| Scheduler | APScheduler 3.x |
+| HTTP server | FastAPI + Uvicorn |
+| HTTP client | httpx (async) |
+| Frontend | HTML, CSS, JavaScript |
 | Deployment | Docker |
