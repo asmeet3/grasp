@@ -43,11 +43,18 @@ class JiraConnector(BaseConnector):
         response = await self.rate_limiter.execute(client, "GET", url, params=params)
         return response.json()
 
+    async def _api_post(self, url: str, json_body: dict) -> dict:
+        """POST request for Enhanced JQL search endpoint."""
+        client = await self._get_client()
+        response = await self.rate_limiter.execute(client, "POST", url, json=json_body)
+        return response.json()
+
     # ── Full retrieval ─────────────────────────────────────
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all Jira issues across the instance."""
-        jql = "ORDER BY created ASC"
+        # Enhanced JQL endpoint requires a restriction — cannot use bare ORDER BY
+        jql = 'created >= "2000-01-01" ORDER BY created ASC'
         next_page_token = None
 
         if checkpoint:
@@ -93,20 +100,25 @@ class JiraConnector(BaseConnector):
         next_page_token: str | None = None,
         max_results: int | None = None,
     ) -> AsyncGenerator[list[Document], None]:
-        """Search issues via JQL with nextPageToken pagination."""
+        """Search issues via Enhanced JQL (POST /search/jql) with cursor pagination."""
         url = f"{self.base_url}/rest/api/3/search/jql"
         total_fetched = 0
 
         while True:
-            params = {
+            page_size = min(self.batch_size, max_results - total_fetched if max_results else self.batch_size)
+            body = {
                 "jql": jql,
-                "maxResults": min(self.batch_size, max_results - total_fetched if max_results else self.batch_size),
-                "fields": "summary,description,status,assignee,reporter,priority,project,comment,issuetype,created,updated,labels",
+                "maxResults": page_size,
+                "fields": [
+                    "summary", "description", "status", "assignee", "reporter",
+                    "priority", "project", "comment", "issuetype", "created",
+                    "updated", "labels",
+                ],
             }
             if next_page_token:
-                params["nextPageToken"] = next_page_token
+                body["nextPageToken"] = next_page_token
 
-            data = await self._api_get(url, params=params)
+            data = await self._api_post(url, json_body=body)
 
             batch: list[Document] = []
             for issue in data.get("issues", []):

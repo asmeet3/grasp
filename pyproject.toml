@@ -31,7 +31,7 @@ dev = [
 
 [build-system]
 requires = ["setuptools>=70.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]

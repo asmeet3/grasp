@@ -22,8 +22,8 @@ class Settings(BaseSettings):
 
     # ── Anthropic ──────────────────────────────────────────
     anthropic_api_key: str = Field(..., description="Anthropic API key")
-    agent_model: str = Field("claude-sonnet-4-20250514", description="Model for agentic reasoning")
-    classifier_model: str = Field("claude-haiku-4-20250414", description="Model for content classification")
+    agent_model: str = Field("claude-sonnet-4-6", description="Model for agentic reasoning")
+    classifier_model: str = Field("claude-haiku-4-5-20251001", description="Model for content classification")
 
     # ── GitHub Repository ──────────────────────────────────
     github_repo_path: str = Field("./knowledge_repo", description="Local path for the knowledge repo")
@@ -53,13 +53,18 @@ class Settings(BaseSettings):
     notion_api_key: str = Field("", description="Notion integration key")
 
     # ── Sync Schedule ──────────────────────────────────────
-    sync_cron_hour: int = Field(2, description="Hour (UTC) for daily sync")
-    sync_cron_minute: int = Field(0, description="Minute for daily sync")
+    # Default times: 08:00, 11:00, 14:00, 17:00, 20:00 IST → 02:30, 05:30, 08:30, 11:30, 14:30 UTC
+    sync_cron_hours: list[int] = Field(
+        default=[2, 5, 8, 11, 14],
+        description="Hours (UTC) to run sync during working hours",
+    )
+    sync_cron_minute: int = Field(30, description="Minute for sync runs")
     sync_batch_size: int = Field(100, description="Documents per batch during sync")
 
     # ── Server ─────────────────────────────────────────────
     host: str = Field("0.0.0.0", description="Server bind host")
     port: int = Field(8000, description="Server bind port")
+    admin_key: str = Field(..., description="Secret key for admin endpoints (sync, approve, reject)")
 
     # ── Derived paths ──────────────────────────────────────
     @property

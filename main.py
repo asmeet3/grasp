@@ -182,7 +182,7 @@ def main():
     # 4. Scheduler
     scheduler = SyncScheduler(
         orchestrator=orchestrator,
-        hour=settings.sync_cron_hour,
+        hours=settings.sync_cron_hours,
         minute=settings.sync_cron_minute,
     )
 
@@ -209,6 +209,7 @@ def main():
         repo_manager=repo_manager,
         vector_store=vector_store,
         connectors=connectors,
+        admin_key=settings.admin_key,
     )
 
     # 7. Startup event — start scheduler
@@ -217,11 +218,6 @@ def main():
         loop = asyncio.get_event_loop()
         scheduler.start(loop=loop)
         logger.info("✓ Scheduler started")
-
-        # Auto-run full sync if no previous sync
-        if orchestrator.needs_full_sync() and connectors:
-            logger.info("No previous sync found — triggering initial full sync")
-            asyncio.create_task(orchestrator.run_sync())
 
     @app.on_event("shutdown")
     async def on_shutdown():

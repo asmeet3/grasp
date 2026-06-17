@@ -1,6 +1,7 @@
-"""Scheduler — runs daily sync via APScheduler BackgroundScheduler.
+"""Scheduler — runs sync via APScheduler BackgroundScheduler.
 
-Configurable cron trigger, manual trigger support, and graceful shutdown.
+Configurable cron triggers for working-hours sync, manual trigger support,
+and graceful shutdown.
 """
 
 from __future__ import annotations
@@ -19,11 +20,16 @@ logger = logging.getLogger(__name__)
 
 
 class SyncScheduler:
-    """Manages the daily sync schedule using APScheduler."""
+    """Manages the sync schedule using APScheduler."""
 
-    def __init__(self, orchestrator: SyncOrchestrator, hour: int = 2, minute: int = 0):
+    def __init__(
+        self,
+        orchestrator: SyncOrchestrator,
+        hours: list[int] | None = None,
+        minute: int = 0,
+    ):
         self.orchestrator = orchestrator
-        self.hour = hour
+        self.hours = hours or [8, 11, 14, 17, 20]
         self.minute = minute
         self.scheduler = BackgroundScheduler()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -32,16 +38,19 @@ class SyncScheduler:
         """Start the background scheduler."""
         self._loop = loop
 
+        # Comma-separated hours for a single cron trigger
+        hours_str = ",".join(str(h) for h in sorted(self.hours))
         self.scheduler.add_job(
             self._trigger_sync,
-            trigger=CronTrigger(hour=self.hour, minute=self.minute),
-            id="daily_sync",
-            name="Daily Knowledge Sync",
+            trigger=CronTrigger(hour=hours_str, minute=self.minute),
+            id="working_hours_sync",
+            name="Working Hours Knowledge Sync",
             replace_existing=True,
         )
 
         self.scheduler.start()
-        logger.info(f"Sync scheduler started — daily at {self.hour:02d}:{self.minute:02d} UTC")
+        formatted = ", ".join(f"{h:02d}:{self.minute:02d}" for h in sorted(self.hours))
+        logger.info(f"Sync scheduler started — runs at {formatted} UTC")
 
     def stop(self):
         """Stop the scheduler gracefully."""
@@ -76,7 +85,7 @@ class SyncScheduler:
     @property
     def next_run_time(self) -> str | None:
         """Get the next scheduled run time."""
-        job = self.scheduler.get_job("daily_sync")
+        job = self.scheduler.get_job("working_hours_sync")
         if job and job.next_run_time:
             return job.next_run_time.isoformat()
         return None

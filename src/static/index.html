@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Grasp — Agentic AI institutional brain for your organization">
+    <meta name="description" content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp — Institutional Brain</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
@@ -48,15 +48,13 @@
                 </div>
             </div>
 
-            <div class="sync-controls">
-                <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
-                    <span>⟳</span> Trigger Sync
-                </button>
-            </div>
-
             <div class="history-section">
                 <div class="history-title">Recent Queries</div>
                 <div id="historyContainer"></div>
+            </div>
+
+            <div class="sidebar-footer">
+                <a href="/admin">Admin Dashboard →</a>
             </div>
         </aside>
 
@@ -64,20 +62,23 @@
         <main class="main">
             <header class="main-header">
                 <div></div>
-                <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
-                    ⚠ <span id="pendingCount">0</span> pending changes
-                </div>
+                <div></div>
             </header>
 
             <div class="chat-area" id="chatArea">
                 <div class="welcome" id="welcome">
-                    <h1>Ask anything about your company</h1>
+                    <div class="welcome-motif">
+                        <div class="motif-line"></div>
+                        <div class="motif-diamond"></div>
+                        <div class="motif-line"></div>
+                    </div>
+                    <h1>Ask <span class="accent-word">anything</span> about your company</h1>
                     <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer — combining cached history with live data.</p>
                     <div class="suggestion-chips">
-                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
-                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
-                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
-                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
+                        <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
+                        <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
+                        <div class="suggestion-chip stagger-3" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
+                        <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
                     </div>
                 </div>
             </div>
@@ -92,28 +93,16 @@
                         onkeydown="handleInputKeydown(event)"
                         oninput="autoResize(this)"
                     ></textarea>
-                    <button class="send-btn" id="sendBtn" onclick="submitQuery()">▶</button>
+                    <button class="send-btn" id="sendBtn" onclick="submitQuery()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </button>
                 </div>
+                <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line</div>
             </div>
         </main>
-    </div>
-
-    <!-- Pending Changes Modal -->
-    <div class="modal-overlay" id="pendingModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2>📋 Pending Changes</h2>
-                <button class="modal-close" onclick="closePendingModal()">✕</button>
-            </div>
-            <div class="modal-body" id="pendingModalBody">
-                <p style="color: var(--text-secondary)">Loading...</p>
-            </div>
-            <div class="modal-footer">
-                <input class="commit-message-input" id="commitMessage" placeholder="Optional commit message...">
-                <button class="reject-btn" onclick="rejectChanges()">Reject</button>
-                <button class="approve-btn" onclick="approveChanges()">✓ Approve & Push</button>
-            </div>
-        </div>
     </div>
 
     <script src="/static/app.js"></script>

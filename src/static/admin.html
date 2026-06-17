@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
+    <title>Grasp — Admin Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+</head>
+<body>
+    <!-- Auth Gate -->
+    <div class="auth-gate" id="authGate">
+        <div class="auth-card">
+            <div class="auth-title">Grasp Admin</div>
+            <div class="brand-subtitle" style="text-align:center;margin-bottom:24px">Institutional Brain</div>
+            <p style="color:var(--text-tertiary);text-align:center;margin-bottom:20px;font-size:13px;line-height:1.6">Enter the admin key to access the management dashboard.</p>
+            <input type="password" class="admin-key-input" id="adminKeyInput" placeholder="Admin key..." onkeydown="if(event.key==='Enter')authenticateAdmin()">
+            <button class="approve-btn" style="width:100%;margin-top:14px" onclick="authenticateAdmin()">Authenticate</button>
+            <p id="authError" style="color:var(--danger);text-align:center;margin-top:12px;font-size:12px;display:none">Invalid admin key</p>
+        </div>
+    </div>
+
+    <!-- Admin Dashboard (hidden until authenticated) -->
+    <div class="app" id="adminApp" style="display:none">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <div class="brand-icon" style="background:linear-gradient(135deg, #d4943c, #c0802e)">A</div>
+                    <div>
+                        <div class="brand-text">Grasp Admin</div>
+                        <div class="brand-subtitle">Management Dashboard</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-panel" id="statusPanel">
+                <div class="status-row">
+                    <span class="status-label">System</span>
+                    <span><span class="status-dot online" id="statusDot"></span><span id="statusText">Online</span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Last Sync</span>
+                    <span id="lastSyncTime">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Documents</span>
+                    <span id="docCount">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Next Sync</span>
+                    <span id="nextSync">—</span>
+                </div>
+            </div>
+
+            <div class="connectors-list" id="connectorsList">
+                <div class="connectors-title">Connectors</div>
+                <div id="connectorsContainer">
+                    <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                </div>
+            </div>
+
+            <div class="sync-controls">
+                <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
+                    <span>⟳</span> Trigger Sync
+                </button>
+            </div>
+
+            <div class="sidebar-footer">
+                <a href="/">← Back to User View</a>
+            </div>
+        </aside>
+
+        <main class="main">
+            <header class="main-header">
+                <h2 style="font-family:'Instrument Serif',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)">Admin Dashboard</h2>
+                <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
+                    ⚠ <span id="pendingCount">0</span> pending changes
+                </div>
+            </header>
+
+            <div class="chat-area" id="adminContent" style="padding:36px">
+                <!-- Sync Status Card -->
+                <div style="max-width:800px;margin:0 auto">
+                    <h3 class="admin-section-title">Sync Status</h3>
+                    <div id="syncStatusCard" class="admin-card">
+                        <p style="color:var(--text-secondary)">Loading sync status...</p>
+                    </div>
+
+                    <h3 class="admin-section-title" style="margin-top:36px">Sync History</h3>
+                    <div id="syncHistoryCard" class="admin-card">
+                        <p style="color:var(--text-secondary)">Loading history...</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Pending Changes Modal -->
+    <div class="modal-overlay" id="pendingModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📋 Pending Changes</h2>
+                <button class="modal-close" onclick="closePendingModal()">✕</button>
+            </div>
+            <div class="modal-body" id="pendingModalBody">
+                <p style="color: var(--text-secondary)">Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <input class="commit-message-input" id="commitMessage" placeholder="Optional commit message...">
+                <button class="reject-btn" onclick="rejectChanges()">Reject</button>
+                <button class="approve-btn" onclick="approveChanges()">✓ Approve & Push</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/admin.js"></script>
+</body>
+</html>

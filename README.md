@@ -89,8 +89,8 @@ All configuration is via environment variables (`.env` file):
 | `SHAREPOINT_SITE_ID` | ◻️ | SharePoint site ID |
 | `SLACK_BOT_TOKEN` | ◻️ | Slack bot token |
 | `NOTION_API_KEY` | ◻️ | Notion integration key |
-| `SYNC_CRON_HOUR` | ◻️ | Daily sync hour UTC (default: 2) |
-| `SYNC_CRON_MINUTE` | ◻️ | Daily sync minute (default: 0) |
+| `SYNC_CRON_HOURS` | ◻️ | Comma-separated sync hours UTC (default: 8,11,14,17,20) |
+| `SYNC_CRON_MINUTE` | ◻️ | Minute for sync runs (default: 0) |
 
 Only `ANTHROPIC_API_KEY` is strictly required. Connectors are auto-detected — configure only the platforms you use.
 

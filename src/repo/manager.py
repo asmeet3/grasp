@@ -63,7 +63,7 @@ class RepoManager:
         self,
         repo_path: Path,
         anthropic_api_key: str,
-        classifier_model: str = "claude-haiku-4-20250414",
+        classifier_model: str = "claude-haiku-4-5-20251001",
         remote_url: str = "",
         github_pat: str = "",
     ):
@@ -397,7 +397,15 @@ class RepoManager:
             if self.remote_url:
                 try:
                     origin = self._repo.remote("origin")
-                    push_info = origin.push()
+                    active_branch = self._repo.active_branch.name
+                    # Check if upstream is configured
+                    try:
+                        self._repo.active_branch.tracking_branch()
+                        # Upstream exists — normal push
+                        origin.push()
+                    except (ValueError, TypeError):
+                        # First push — need to set upstream
+                        origin.push(refspec=f"{active_branch}:{active_branch}", set_upstream=True)
                     push_result = "success"
                     logger.info("Pushed to remote successfully")
                 except Exception as e:

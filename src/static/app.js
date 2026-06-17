@@ -8,10 +8,8 @@ let queryHistory = JSON.parse(localStorage.getItem('grasp_history') || '[]');
 
 document.addEventListener('DOMContentLoaded', () => {
     refreshStatus();
-    checkPendingChanges();
     renderHistory();
     setInterval(refreshStatus, 30000);
-    setInterval(checkPendingChanges, 15000);
 });
 
 // ── Status Polling ────────────────────────────────────────
@@ -50,7 +48,7 @@ async function refreshStatus() {
             nextSync.textContent = timeAgo(data.next_scheduled, true);
         }
 
-        // Connectors
+        // Connectors — pill badge style
         const container = document.getElementById('connectorsContainer');
         const connectors = data.connector_health || {};
         const names = { confluence: 'Confluence', jira: 'Jira', sharepoint: 'SharePoint', slack: 'Slack', notion: 'Notion' };
@@ -59,166 +57,17 @@ async function refreshStatus() {
         container.innerHTML = Object.entries(names).map(([key, name]) => {
             const health = connectors[key];
             const dotClass = health === true ? 'healthy' : health === false ? 'unhealthy' : 'unknown';
-            return `<div class="connector-item"><span class="connector-dot ${dotClass}"></span>${icons[key]} ${name}</div>`;
+            const pillLabel = health === true ? 'Active' : health === false ? 'Error' : 'N/A';
+            return `<div class="connector-item">
+                <span class="connector-dot ${dotClass}"></span>
+                ${icons[key]} ${name}
+                <span class="connector-status-pill ${dotClass}">${pillLabel}</span>
+            </div>`;
         }).join('');
 
     } catch (e) {
         console.error('Status refresh failed:', e);
     }
-}
-
-// ── Pending Changes ───────────────────────────────────────
-
-async function checkPendingChanges() {
-    try {
-        const res = await fetch(`${API_BASE}/api/changes/pending`);
-        const data = await res.json();
-
-        const badge = document.getElementById('pendingBadge');
-        if (data.has_pending && data.changeset) {
-            const total = data.changeset.summary?.total_changes || 0;
-            document.getElementById('pendingCount').textContent = total;
-            badge.style.display = 'inline-flex';
-        } else {
-            badge.style.display = 'none';
-        }
-    } catch (e) {
-        console.error('Pending check failed:', e);
-    }
-}
-
-function openPendingModal() {
-    document.getElementById('pendingModal').classList.add('active');
-    loadPendingDetails();
-}
-
-function closePendingModal() {
-    document.getElementById('pendingModal').classList.remove('active');
-}
-
-async function loadPendingDetails() {
-    const body = document.getElementById('pendingModalBody');
-    try {
-        const res = await fetch(`${API_BASE}/api/changes/pending`);
-        const data = await res.json();
-
-        if (!data.has_pending || !data.changeset) {
-            body.innerHTML = '<p style="color: var(--text-secondary)">No pending changes.</p>';
-            return;
-        }
-
-        const cs = data.changeset;
-        const s = cs.summary || {};
-
-        let html = `
-            <div class="change-stats">
-                <div class="stat-card added">
-                    <div class="stat-number">${s.total_added || 0}</div>
-                    <div class="stat-label">Added</div>
-                </div>
-                <div class="stat-card modified">
-                    <div class="stat-number">${s.total_modified || 0}</div>
-                    <div class="stat-label">Modified</div>
-                </div>
-                <div class="stat-card deleted">
-                    <div class="stat-number">${s.total_deleted || 0}</div>
-                    <div class="stat-label">Deleted</div>
-                </div>
-            </div>
-        `;
-
-        // By type breakdown
-        if (cs.by_type && Object.keys(cs.by_type).length > 0) {
-            html += '<div style="margin-bottom:16px"><strong style="font-size:12px;color:var(--text-secondary)">By Type:</strong>';
-            for (const [type, counts] of Object.entries(cs.by_type)) {
-                const parts = [];
-                if (counts.added) parts.push(`+${counts.added}`);
-                if (counts.modified) parts.push(`~${counts.modified}`);
-                if (counts.deleted) parts.push(`-${counts.deleted}`);
-                html += `<div style="font-size:12px;padding:2px 0;color:var(--text-secondary)">&nbsp;&nbsp;${type}: ${parts.join(', ')}</div>`;
-            }
-            html += '</div>';
-        }
-
-        // File list
-        html += '<div class="change-file-list">';
-        const files = cs.files || {};
-        for (const f of (files.added || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge added">A</span>${escapeHtml(f)}</div>`;
-        }
-        for (const f of (files.modified || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge modified">M</span>${escapeHtml(f)}</div>`;
-        }
-        for (const f of (files.deleted || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge deleted">D</span>${escapeHtml(f)}</div>`;
-        }
-
-        const total = (files.added?.length || 0) + (files.modified?.length || 0) + (files.deleted?.length || 0);
-        if (total > 90) {
-            html += `<div style="padding:8px;color:var(--text-tertiary);font-size:12px">...and ${total - 90} more files</div>`;
-        }
-        html += '</div>';
-
-        body.innerHTML = html;
-    } catch (e) {
-        body.innerHTML = `<p style="color:var(--danger)">Error loading changes: ${e.message}</p>`;
-    }
-}
-
-async function approveChanges() {
-    const msg = document.getElementById('commitMessage').value || null;
-    try {
-        const res = await fetch(`${API_BASE}/api/changes/approve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg }),
-        });
-        const data = await res.json();
-        if (data.status === 'committed') {
-            closePendingModal();
-            checkPendingChanges();
-            showToast('Changes committed & pushed ✓', 'success');
-        } else {
-            showToast(`Error: ${data.error}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
-}
-
-async function rejectChanges() {
-    if (!confirm('Are you sure? This will revert all uncommitted changes.')) return;
-    try {
-        const res = await fetch(`${API_BASE}/api/changes/reject`, { method: 'POST' });
-        const data = await res.json();
-        closePendingModal();
-        checkPendingChanges();
-        showToast('Changes rejected', 'warning');
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
-}
-
-// ── Sync Trigger ──────────────────────────────────────────
-
-async function triggerSync() {
-    const btn = document.getElementById('syncBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Syncing...';
-
-    try {
-        const res = await fetch(`${API_BASE}/api/sync/trigger`, { method: 'POST' });
-        const data = await res.json();
-        showToast(data.message, 'success');
-    } catch (e) {
-        showToast(`Sync error: ${e.message}`, 'error');
-    }
-
-    setTimeout(() => {
-        btn.disabled = false;
-        btn.innerHTML = '<span>⟳</span> Trigger Sync';
-        refreshStatus();
-    }, 3000);
 }
 
 // ── Query Submission ──────────────────────────────────────
@@ -281,14 +130,53 @@ async function submitQuery() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
+        let displayedText = '';
         let buffer = '';
         let lastWasData = false;
+        let isDone = false;
 
         assistantMsg.innerHTML = '';
 
+        function typeWriter() {
+            if (!isStreaming) return;
+            
+            if (displayedText.length < fullText.length) {
+                const diff = fullText.length - displayedText.length;
+                
+                // Add characters at a controlled pace to ensure a smooth typing effect
+                // even if the backend sends large chunks at once.
+                let charsToAdd = 1;
+                if (diff > 20) charsToAdd = 2;
+                if (diff > 50) charsToAdd = 3;
+                if (diff > 100) charsToAdd = 4;
+                if (diff > 200) charsToAdd = 6;
+                if (diff > 400) charsToAdd = 8;
+                
+                displayedText += fullText.slice(displayedText.length, displayedText.length + charsToAdd);
+                
+                const cursorHtml = '<span style="display:inline-block;width:6px;height:15px;background:var(--accent-primary);margin-left:4px;vertical-align:middle;animation:pulse 1s infinite"></span>';
+                assistantMsg.innerHTML = renderMarkdown(displayedText) + cursorHtml;
+                chatArea.scrollTop = chatArea.scrollHeight;
+                requestAnimationFrame(typeWriter);
+            } else if (!isDone) {
+                requestAnimationFrame(typeWriter);
+            } else {
+                assistantMsg.innerHTML = renderMarkdown(fullText);
+                chatArea.scrollTop = chatArea.scrollHeight;
+                addToHistory(question, fullText);
+                isStreaming = false;
+                document.getElementById('sendBtn').disabled = false;
+            }
+        }
+        
+        requestAnimationFrame(typeWriter);
+
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                isDone = true;
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
 
@@ -315,21 +203,14 @@ async function submitQuery() {
                     lastWasData = false;
                 }
             }
-
-            assistantMsg.innerHTML = renderMarkdown(fullText);
-            chatArea.scrollTop = chatArea.scrollHeight;
         }
-
-        // Save to history
-        addToHistory(question, fullText);
 
     } catch (e) {
         assistantMsg.innerHTML = `<p style="color:var(--danger)">Error: ${e.message}</p>`;
+        isStreaming = false;
+        document.getElementById('sendBtn').disabled = false;
+        chatArea.scrollTop = chatArea.scrollHeight;
     }
-
-    isStreaming = false;
-    document.getElementById('sendBtn').disabled = false;
-    chatArea.scrollTop = chatArea.scrollHeight;
 }
 
 // ── Markdown Rendering ────────────────────────────────────
@@ -433,18 +314,12 @@ function timeAgo(dateStr, future = false) {
 
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
-    toast.style.cssText = `
-        position: fixed; bottom: 24px; right: 24px; z-index: 9999;
-        padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 500;
-        color: white; max-width: 400px;
-        animation: modalIn 0.2s ease-out;
-        ${type === 'success' ? 'background: #059669;' : type === 'error' ? 'background: #dc2626;' : type === 'warning' ? 'background: #d97706;' : 'background: #4f46e5;'}
-    `;
+    toast.className = `toast ${type}`;
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => {
         toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s';
+        toast.style.transition = 'opacity 0.3s ease-out';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }

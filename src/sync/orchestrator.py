@@ -94,7 +94,11 @@ class SyncOrchestrator:
         return self.get_last_sync() is None
 
     async def run_sync(self) -> dict:
-        """Run a sync — full or incremental depending on state."""
+        """Run a sync — full or incremental depending on state.
+
+        If the last sync had any failed connectors, those connectors
+        get a full sync while successful ones get incremental.
+        """
         if self._sync_running:
             return {"error": "Sync already in progress"}
 
@@ -109,8 +113,23 @@ class SyncOrchestrator:
                 last_sync = self.get_last_sync()
                 since_str = last_sync["timestamp"]
                 since = datetime.fromisoformat(since_str)
-                logger.info(f"Starting INCREMENTAL sync (since {since_str})")
-                result = await self._incremental_sync(since)
+
+                # Check which connectors failed last time
+                last_workers = last_sync.get("workers", {})
+                failed_connectors = {
+                    name for name, info in last_workers.items()
+                    if info.get("status") == "failed"
+                }
+
+                if failed_connectors:
+                    logger.info(
+                        f"Starting MIXED sync — full for {failed_connectors}, "
+                        f"incremental for others (since {since_str})"
+                    )
+                    result = await self._mixed_sync(since, failed_connectors)
+                else:
+                    logger.info(f"Starting INCREMENTAL sync (since {since_str})")
+                    result = await self._incremental_sync(since)
 
             # Save sync state
             self._save_sync_state(result)
@@ -155,6 +174,44 @@ class SyncOrchestrator:
 
         return {
             "type": "full",
+            "total_docs": total_docs,
+            "workers": worker_results,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _mixed_sync(self, since: datetime, full_sync_connectors: set[str]) -> dict:
+        """Run full sync for failed connectors and incremental for the rest."""
+        tasks = []
+        for name, connector in self.connectors.items():
+            ws = WorkerStatus(name)
+            self._worker_statuses[name] = ws
+
+            if name in full_sync_connectors:
+                checkpoint = self.checkpoints.load_checkpoint(name)
+                tasks.append(self._run_full_worker(connector, ws, checkpoint))
+            else:
+                tasks.append(self._run_incremental_worker(connector, ws, since))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        total_docs = 0
+        worker_results = {}
+        for name, result in zip(self.connectors.keys(), results):
+            ws = self._worker_statuses[name]
+            if isinstance(result, Exception):
+                ws.status = "failed"
+                ws.errors.append(str(result))
+                worker_results[name] = {"status": "failed", "error": str(result)}
+            else:
+                total_docs += ws.docs_fetched
+                worker_results[name] = {"status": "completed", "docs": ws.docs_fetched}
+                if name in full_sync_connectors:
+                    self.checkpoints.clear_checkpoint(name)
+
+        return {
+            "type": "mixed",
+            "since": since.isoformat(),
+            "full_connectors": list(full_sync_connectors),
             "total_docs": total_docs,
             "workers": worker_results,
             "timestamp": datetime.now(timezone.utc).isoformat(),
