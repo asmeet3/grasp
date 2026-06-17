@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Grasp — Agentic AI institutional brain for your organization">
+    <title>Grasp — Institutional Brain</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <div class="brand-icon">G</div>
+                    <div>
+                        <div class="brand-text">Grasp</div>
+                        <div class="brand-subtitle">Institutional Brain</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-panel" id="statusPanel">
+                <div class="status-row">
+                    <span class="status-label">System</span>
+                    <span><span class="status-dot online" id="statusDot"></span><span id="statusText">Online</span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Last Sync</span>
+                    <span id="lastSyncTime">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Documents</span>
+                    <span id="docCount">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Next Sync</span>
+                    <span id="nextSync">—</span>
+                </div>
+            </div>
+
+            <div class="connectors-list" id="connectorsList">
+                <div class="connectors-title">Connectors</div>
+                <div id="connectorsContainer">
+                    <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                </div>
+            </div>
+
+            <div class="sync-controls">
+                <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
+                    <span>⟳</span> Trigger Sync
+                </button>
+            </div>
+
+            <div class="history-section">
+                <div class="history-title">Recent Queries</div>
+                <div id="historyContainer"></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <header class="main-header">
+                <div></div>
+                <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
+                    ⚠ <span id="pendingCount">0</span> pending changes
+                </div>
+            </header>
+
+            <div class="chat-area" id="chatArea">
+                <div class="welcome" id="welcome">
+                    <h1>Ask anything about your company</h1>
+                    <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer — combining cached history with live data.</p>
+                    <div class="suggestion-chips">
+                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
+                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
+                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
+                        <div class="suggestion-chip" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea
+                        class="input-field"
+                        id="queryInput"
+                        placeholder="Ask about your organization..."
+                        rows="1"
+                        onkeydown="handleInputKeydown(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="submitQuery()">▶</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Pending Changes Modal -->
+    <div class="modal-overlay" id="pendingModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>📋 Pending Changes</h2>
+                <button class="modal-close" onclick="closePendingModal()">✕</button>
+            </div>
+            <div class="modal-body" id="pendingModalBody">
+                <p style="color: var(--text-secondary)">Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <input class="commit-message-input" id="commitMessage" placeholder="Optional commit message...">
+                <button class="reject-btn" onclick="rejectChanges()">Reject</button>
+                <button class="approve-btn" onclick="approveChanges()">✓ Approve & Push</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

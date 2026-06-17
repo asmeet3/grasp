@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  grasp:
+    build: .
+    container_name: grasp
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Persist data across container restarts
+      - grasp_repo:/app/knowledge_repo
+      - grasp_chroma:/app/chroma_data
+      - grasp_checkpoints:/app/checkpoints
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  grasp_repo:
+  grasp_chroma:
+  grasp_checkpoints:
