@@ -366,7 +366,14 @@ class RepoManager:
             return ""
 
     def approve_commit(self, message: str | None = None) -> dict:
-        """Human-approved: commit all pending changes and push to remote."""
+        """Human-approved: commit all pending changes and push to remote.
+
+        Push strategy:
+        1. Commits changes on the current (main) branch
+        2. Attempts to push directly to main
+        3. If the push fails (e.g. conflicts or branch protection),
+           creates a timestamped branch and pushes there instead
+        """
         if not self._repo:
             return {"error": "Repository not initialized"}
 
@@ -385,32 +392,43 @@ class RepoManager:
             )
 
         try:
-            # Stage all changes
-            self._repo.git.add(A=True)
+            current_branch = self._repo.active_branch.name
 
-            # Commit
+            # Stage all changes and commit on the current branch
+            self._repo.git.add(A=True)
             self._repo.index.commit(message)
-            logger.info(f"Committed: {message}")
+            logger.info(f"Committed on {current_branch}: {message}")
 
             # Push to remote if configured
             push_result = None
+            push_branch = current_branch
             if self.remote_url:
                 try:
-                    origin = self._repo.remote("origin")
-                    active_branch = self._repo.active_branch.name
-                    # Check if upstream is configured
+                    # Try pushing directly to the current (main) branch
+                    self._repo.git.push("origin", current_branch)
+                    push_result = f"success (branch: {current_branch})"
+                    logger.info(f"Pushed to '{current_branch}' successfully")
+                except Exception as main_err:
+                    logger.warning(
+                        f"Direct push to '{current_branch}' failed: {main_err}. "
+                        f"Falling back to a new branch."
+                    )
+                    # Fallback: create a timestamped branch from the commit
+                    # and push that instead
+                    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                    fallback_branch = f"grasp/sync-{timestamp}"
+
+                    self._repo.git.branch(fallback_branch)
+                    logger.info(f"Created fallback branch: {fallback_branch}")
+
                     try:
-                        self._repo.active_branch.tracking_branch()
-                        # Upstream exists — normal push
-                        origin.push()
-                    except (ValueError, TypeError):
-                        # First push — need to set upstream
-                        origin.push(refspec=f"{active_branch}:{active_branch}", set_upstream=True)
-                    push_result = "success"
-                    logger.info("Pushed to remote successfully")
-                except Exception as e:
-                    push_result = f"push_failed: {e}"
-                    logger.error(f"Failed to push to remote: {e}")
+                        self._repo.git.push("--set-upstream", "origin", fallback_branch)
+                        push_result = f"success (fallback branch: {fallback_branch})"
+                        push_branch = fallback_branch
+                        logger.info(f"Pushed fallback branch '{fallback_branch}' to remote")
+                    except Exception as fallback_err:
+                        push_result = f"push_failed: {fallback_err}"
+                        logger.error(f"Fallback push also failed: {fallback_err}")
 
             # Clear pending changes
             pending_path = self.state_dir / "pending_changes.json"
@@ -421,6 +439,7 @@ class RepoManager:
                 "status": "committed",
                 "message": message,
                 "push": push_result,
+                "branch": push_branch,
                 "changes": summary,
             }
         except Exception as e:

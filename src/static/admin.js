@@ -3,6 +3,29 @@
 const API_BASE = '';
 let adminKey = sessionStorage.getItem('grasp_admin_key') || '';
 
+// ── Theme Toggle ──────────────────────────────────────────
+
+function initTheme() {
+    const saved = localStorage.getItem('grasp_theme');
+    if (saved === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    if (current === 'light') {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('grasp_theme', 'dark');
+    } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        localStorage.setItem('grasp_theme', 'light');
+    }
+}
+
+// Apply theme immediately
+initTheme();
+
 // ── Authentication ────────────────────────────────────────
 
 async function authenticateAdmin() {
@@ -33,8 +56,11 @@ function showAdminDashboard() {
     refreshStatus();
     checkPendingChanges();
     loadSyncHistory();
+    loadContributions();
+    checkContributionCount();
     setInterval(refreshStatus, 15000);
     setInterval(checkPendingChanges, 15000);
+    setInterval(checkContributionCount, 15000);
 }
 
 // Auto-authenticate if key is stored in session
@@ -165,6 +191,8 @@ async function loadSyncHistory() {
 
 // ── Pending Changes ───────────────────────────────────────
 
+let expandedFiles = new Set();
+
 async function checkPendingChanges() {
     try {
         const res = await fetch(`${API_BASE}/api/changes/pending`, {
@@ -187,6 +215,7 @@ async function checkPendingChanges() {
 
 function openPendingModal() {
     document.getElementById('pendingModal').classList.add('active');
+    expandedFiles.clear();
     loadPendingDetails();
 }
 
@@ -239,27 +268,159 @@ async function loadPendingDetails() {
             html += '</div>';
         }
 
-        html += '<div class="change-file-list">';
+        // File list header with toggle all button
         const files = cs.files || {};
-        for (const f of (files.added || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge added">A</span>${escapeHtml(f)}</div>`;
-        }
-        for (const f of (files.modified || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge modified">M</span>${escapeHtml(f)}</div>`;
-        }
-        for (const f of (files.deleted || []).slice(0, 30)) {
-            html += `<div class="file-item"><span class="file-badge deleted">D</span>${escapeHtml(f)}</div>`;
+        const allFiles = [
+            ...(files.added || []).map(f => ({ path: f, type: 'added' })),
+            ...(files.modified || []).map(f => ({ path: f, type: 'modified' })),
+            ...(files.deleted || []).map(f => ({ path: f, type: 'deleted' })),
+        ];
+
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.8px">Files (${allFiles.length})</strong>
+            <button class="diff-toggle-all" onclick="toggleAllDiffs()">Expand All</button>
+        </div>`;
+
+        html += '<div class="change-file-list" id="fileListContainer">';
+        for (const file of allFiles.slice(0, 60)) {
+            const badgeClass = file.type;
+            const badgeLabel = file.type === 'added' ? 'A' : file.type === 'modified' ? 'M' : 'D';
+            const fileId = btoa(file.path).replace(/[^a-zA-Z0-9]/g, '_');
+            const isExpanded = expandedFiles.has(file.path);
+
+            html += `<div class="file-item expandable ${isExpanded ? 'expanded' : ''}" onclick="toggleFileDiff('${escapeHtml(file.path)}', '${fileId}')" style="cursor:pointer">
+                <span class="file-badge ${badgeClass}">${badgeLabel}</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(file.path)}</span>
+                <span class="file-expand-icon">▶</span>
+            </div>
+            <div id="diff-${fileId}" style="display:${isExpanded ? 'block' : 'none'}"></div>`;
         }
 
-        const total = (files.added?.length || 0) + (files.modified?.length || 0) + (files.deleted?.length || 0);
-        if (total > 90) {
-            html += `<div style="padding:8px;color:var(--text-tertiary);font-size:12px">...and ${total - 90} more files</div>`;
+        if (allFiles.length > 60) {
+            html += `<div style="padding:8px;color:var(--text-tertiary);font-size:12px">...and ${allFiles.length - 60} more files</div>`;
         }
         html += '</div>';
 
         body.innerHTML = html;
+
+        // Load any already-expanded diffs
+        for (const file of allFiles) {
+            if (expandedFiles.has(file.path)) {
+                const fileId = btoa(file.path).replace(/[^a-zA-Z0-9]/g, '_');
+                loadFileDiff(file.path, fileId);
+            }
+        }
+
     } catch (e) {
         body.innerHTML = `<p style="color:var(--danger)">Error loading changes: ${e.message}</p>`;
+    }
+}
+
+async function toggleFileDiff(filePath, fileId) {
+    const panel = document.getElementById(`diff-${fileId}`);
+    const item = panel.previousElementSibling;
+
+    if (expandedFiles.has(filePath)) {
+        expandedFiles.delete(filePath);
+        panel.style.display = 'none';
+        item.classList.remove('expanded');
+    } else {
+        expandedFiles.add(filePath);
+        panel.style.display = 'block';
+        item.classList.add('expanded');
+        loadFileDiff(filePath, fileId);
+    }
+}
+
+async function loadFileDiff(filePath, fileId) {
+    const panel = document.getElementById(`diff-${fileId}`);
+    panel.innerHTML = '<div class="diff-loading">Loading diff...</div>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/changes/diff/${encodeURIComponent(filePath)}`, {
+            headers: adminHeaders(),
+        });
+        const data = await res.json();
+
+        if (!data.diff) {
+            panel.innerHTML = '<div class="diff-panel"><div class="diff-empty">No diff available (new file or binary)</div></div>';
+            return;
+        }
+
+        panel.innerHTML = renderDiff(data.diff, filePath);
+    } catch (e) {
+        panel.innerHTML = `<div class="diff-panel"><div class="diff-empty">Error: ${e.message}</div></div>`;
+    }
+}
+
+function renderDiff(diffText, filePath) {
+    const lines = diffText.split('\n');
+    let addCount = 0, delCount = 0;
+
+    let linesHtml = '';
+    for (const line of lines) {
+        if (line.startsWith('+++') || line.startsWith('---')) {
+            linesHtml += `<div class="diff-line header">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('@@')) {
+            linesHtml += `<div class="diff-line header">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('+')) {
+            addCount++;
+            linesHtml += `<div class="diff-line add">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('-')) {
+            delCount++;
+            linesHtml += `<div class="diff-line del">${escapeHtml(line)}</div>`;
+        } else {
+            linesHtml += `<div class="diff-line context">${escapeHtml(line || ' ')}</div>`;
+        }
+    }
+
+    const stats = [];
+    if (addCount) stats.push(`+${addCount}`);
+    if (delCount) stats.push(`-${delCount}`);
+
+    return `<div class="diff-panel">
+        <div class="diff-panel-header">
+            <span>${escapeHtml(filePath)}</span>
+            <span style="color:var(--text-secondary)">${stats.join(' / ') || 'no changes'}</span>
+        </div>
+        <div class="diff-content">${linesHtml}</div>
+    </div>`;
+}
+
+function toggleAllDiffs() {
+    const container = document.getElementById('fileListContainer');
+    if (!container) return;
+
+    const fileItems = container.querySelectorAll('.file-item.expandable');
+    const allExpanded = expandedFiles.size >= fileItems.length;
+
+    for (const item of fileItems) {
+        const next = item.nextElementSibling;
+        const fileId = next?.id?.replace('diff-', '');
+        if (!fileId) continue;
+
+        // Reconstruct path from the item text
+        const pathSpan = item.querySelector('span[style*="flex:1"]');
+        const filePath = pathSpan ? pathSpan.textContent : '';
+
+        if (allExpanded) {
+            expandedFiles.delete(filePath);
+            next.style.display = 'none';
+            item.classList.remove('expanded');
+        } else {
+            if (!expandedFiles.has(filePath)) {
+                expandedFiles.add(filePath);
+                next.style.display = 'block';
+                item.classList.add('expanded');
+                loadFileDiff(filePath, fileId);
+            }
+        }
+    }
+
+    // Update button text
+    const btn = container.parentElement.querySelector('.diff-toggle-all');
+    if (btn) {
+        btn.textContent = allExpanded ? 'Expand All' : 'Collapse All';
     }
 }
 
@@ -275,7 +436,8 @@ async function approveChanges() {
         if (data.status === 'committed') {
             closePendingModal();
             checkPendingChanges();
-            showToast('Changes committed & pushed ✓', 'success');
+            const branchInfo = data.branch ? ` → branch: ${data.branch}` : '';
+            showToast(`Changes committed & pushed ✓${branchInfo}`, 'success');
         } else {
             showToast(`Error: ${data.error}`, 'error');
         }
@@ -358,4 +520,244 @@ function showToast(message, type = 'info') {
         toast.style.transition = 'opacity 0.3s ease-out';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
+}
+
+// ── Contribution Management ───────────────────────────────
+
+let currentContributionId = null;
+
+function scrollToContributions() {
+    const el = document.getElementById('contributionsSection');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function checkContributionCount() {
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/count`, {
+            headers: adminHeaders(),
+        });
+        const data = await res.json();
+        const badge = document.getElementById('contributionsBadge');
+        if (data.count > 0) {
+            document.getElementById('contributionsCount').textContent = data.count;
+            badge.style.display = 'inline-flex';
+        } else {
+            badge.style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Contribution count check failed:', e);
+    }
+}
+
+async function loadContributions() {
+    const card = document.getElementById('contributionsCard');
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/pending`, {
+            headers: adminHeaders(),
+        });
+        if (!res.ok) {
+            card.innerHTML = '<p style="color:var(--text-secondary)">Could not load contributions.</p>';
+            return;
+        }
+        const data = await res.json();
+
+        if (!data.contributions || data.contributions.length === 0) {
+            card.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No pending contributions</p><p style="color:var(--text-tertiary);font-size:11px;margin-top:6px">User submissions will appear here for review</p></div>';
+            return;
+        }
+
+        let html = '<div class="contributions-list">';
+        for (const c of data.contributions) {
+            const typeIcons = { document: '📄', code: '💻', plain_text: '📝' };
+            const typeLabels = { document: 'Document', code: 'Code', plain_text: 'Plain Text' };
+            const icon = typeIcons[c.content_type] || '📄';
+            const typeLabel = typeLabels[c.content_type] || c.content_type;
+            const preview = c.content.substring(0, 120).replace(/\n/g, ' ') + (c.content.length > 120 ? '…' : '');
+            const hasFile = c.original_filename ? ' · 📎 ' + escapeHtml(c.original_filename) : '';
+
+            html += `<div class="contribution-card" onclick="openContributionReview('${c.id}')">
+                <div class="contribution-card-header">
+                    <div class="contribution-card-title">${icon} ${escapeHtml(c.title)}</div>
+                    <span class="contribution-type-badge">${typeLabel}</span>
+                </div>
+                <div class="contribution-card-preview">${escapeHtml(preview)}</div>
+                <div class="contribution-card-meta">
+                    <span>By <strong>${escapeHtml(c.submitted_by)}</strong>${hasFile}</span>
+                    <span>${timeAgo(c.submitted_at)}</span>
+                </div>
+            </div>`;
+        }
+        html += '</div>';
+        card.innerHTML = html;
+
+    } catch (e) {
+        card.innerHTML = `<p style="color:var(--danger)">Error loading contributions: ${e.message}</p>`;
+    }
+}
+
+async function openContributionReview(id) {
+    currentContributionId = id;
+    document.getElementById('contributionReviewModal').classList.add('active');
+    const body = document.getElementById('contributionReviewBody');
+    body.innerHTML = '<p style="color:var(--text-secondary)">Loading...</p>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/${id}`, {
+            headers: adminHeaders(),
+        });
+        const c = await res.json();
+
+        const typeIcons = { document: '📄', code: '💻', plain_text: '📝' };
+        const typeLabels = { document: 'Document', code: 'Code', plain_text: 'Plain Text' };
+        const isCode = c.content_type === 'code';
+
+        // Build download button HTML if original file exists
+        let downloadHtml = '';
+        if (c.original_filename) {
+            downloadHtml = `
+            <div class="contribute-field">
+                <label class="contribute-label">Original Document</label>
+                <a href="${API_BASE}/api/contributions/${c.id}/download" class="download-btn" target="_blank">
+                    📥 Download ${escapeHtml(c.original_filename)}
+                </a>
+            </div>`;
+        }
+
+        body.innerHTML = `
+            <div class="contribution-review-meta">
+                <div class="review-meta-item">
+                    <span class="review-meta-label">Submitted by</span>
+                    <span class="review-meta-value">${escapeHtml(c.submitted_by)}</span>
+                </div>
+                <div class="review-meta-item">
+                    <span class="review-meta-label">Type</span>
+                    <span class="review-meta-value">${typeIcons[c.content_type] || '📄'} ${typeLabels[c.content_type] || c.content_type}</span>
+                </div>
+                <div class="review-meta-item">
+                    <span class="review-meta-label">Submitted</span>
+                    <span class="review-meta-value">${timeAgo(c.submitted_at)}</span>
+                </div>
+                <div class="review-meta-item">
+                    <span class="review-meta-label">Status</span>
+                    <span class="contribution-status-pill pending">${c.status}</span>
+                </div>
+            </div>
+
+            ${downloadHtml}
+
+            <div class="contribute-field">
+                <label class="contribute-label">Title</label>
+                <input type="text" class="contribute-input" id="reviewTitle" value="${escapeHtml(c.title)}">
+            </div>
+
+            <div class="contribute-field">
+                <label class="contribute-label">Content <span style="color:var(--text-tertiary);font-weight:400">— editable</span></label>
+                <textarea class="contribute-textarea" id="reviewContent" rows="14" style="${isCode ? "font-family:'IBM Plex Mono',monospace;font-size:12.5px" : ''}">${escapeHtml(c.content)}</textarea>
+            </div>
+        `;
+
+        document.getElementById('contributionAdminNotes').value = c.admin_notes || '';
+
+    } catch (e) {
+        body.innerHTML = `<p style="color:var(--danger)">Error: ${e.message}</p>`;
+    }
+}
+
+function closeContributionReview() {
+    document.getElementById('contributionReviewModal').classList.remove('active');
+    currentContributionId = null;
+}
+
+async function saveContributionEdits() {
+    if (!currentContributionId) return;
+
+    const title = document.getElementById('reviewTitle').value.trim();
+    const content = document.getElementById('reviewContent').value;
+
+    if (!title || !content) {
+        showToast('Title and content cannot be empty', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content }),
+        });
+
+        if (res.ok) {
+            showToast('Edits saved ✓', 'success');
+        } else {
+            const data = await res.json();
+            showToast(`Error: ${data.detail || 'Save failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function approveContribution() {
+    if (!currentContributionId) return;
+
+    // Save any edits first
+    const title = document.getElementById('reviewTitle').value.trim();
+    const content = document.getElementById('reviewContent').value;
+    if (title && content) {
+        await fetch(`${API_BASE}/api/contributions/${currentContributionId}`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content }),
+        });
+    }
+
+    const adminNotes = document.getElementById('contributionAdminNotes').value;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}/approve`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ admin_notes: adminNotes }),
+        });
+        const data = await res.json();
+
+        if (data.status === 'approved') {
+            closeContributionReview();
+            loadContributions();
+            checkContributionCount();
+            checkPendingChanges();
+            showToast(`Approved! Classified as "${data.info_type}" — now in pending changes`, 'success');
+        } else {
+            showToast(`Error: ${data.message || 'Approval failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function rejectContribution() {
+    if (!currentContributionId) return;
+    if (!confirm('Are you sure you want to reject this contribution?')) return;
+
+    const adminNotes = document.getElementById('contributionAdminNotes').value;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}/reject`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ admin_notes: adminNotes }),
+        });
+        const data = await res.json();
+
+        if (data.status === 'rejected') {
+            closeContributionReview();
+            loadContributions();
+            checkContributionCount();
+            showToast('Contribution rejected', 'warning');
+        } else {
+            showToast(`Error: ${data.message || 'Rejection failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
 }

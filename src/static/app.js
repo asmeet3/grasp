@@ -323,3 +323,321 @@ function showToast(message, type = 'info') {
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
+
+// ── Contribution Modal ────────────────────────────────────
+
+let selectedContentType = 'document';
+let selectedFile = null;
+
+function openContributeModal() {
+    document.getElementById('contributeModal').classList.add('active');
+    // Reset form
+    document.getElementById('contributeTitle').value = '';
+    document.getElementById('contributeContent').value = '';
+    // Pre-fill name from localStorage
+    const savedName = localStorage.getItem('grasp_user_name') || '';
+    document.getElementById('contributeName').value = savedName;
+    selectedContentType = 'document';
+    selectedFile = null;
+    document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
+    document.querySelector('.type-pill[data-type="document"]').classList.add('active');
+    updateContentFields();
+    clearFileSelection();
+}
+
+function closeContributeModal() {
+    document.getElementById('contributeModal').classList.remove('active');
+}
+
+function selectContentType(btn) {
+    document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    selectedContentType = btn.dataset.type;
+    updateContentFields();
+}
+
+function updateContentFields() {
+    const fileUploadField = document.getElementById('fileUploadField');
+    const textContentField = document.getElementById('textContentField');
+    const textarea = document.getElementById('contributeContent');
+
+    if (selectedContentType === 'document') {
+        // Show file upload, hide textarea
+        fileUploadField.style.display = '';
+        textContentField.style.display = 'none';
+    } else {
+        // Show textarea, hide file upload
+        fileUploadField.style.display = 'none';
+        textContentField.style.display = '';
+
+        if (selectedContentType === 'code') {
+            textarea.style.fontFamily = "'IBM Plex Mono', monospace";
+            textarea.style.fontSize = '12.5px';
+            textarea.placeholder = 'Paste your code here...';
+        } else {
+            textarea.style.fontFamily = "'Satoshi', sans-serif";
+            textarea.style.fontSize = '14px';
+            textarea.placeholder = 'Write your note here...';
+        }
+    }
+}
+
+// ── File Handling ─────────────────────────────────────────
+
+function handleFileSelect(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    // Validate extension
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['txt', 'md', 'pdf', 'docx'].includes(ext)) {
+        showToast('Unsupported file type. Use .docx, .pdf, .txt, or .md', 'warning');
+        input.value = '';
+        return;
+    }
+
+    // Validate size (10 MB)
+    if (file.size > 10 * 1024 * 1024) {
+        showToast('File too large. Maximum size is 10 MB', 'warning');
+        input.value = '';
+        return;
+    }
+
+    selectedFile = file;
+    document.getElementById('fileDropzone').style.display = 'none';
+    document.getElementById('fileSelected').style.display = 'flex';
+    document.getElementById('fileSelectedName').textContent = file.name;
+
+    // Auto-fill title from filename if empty
+    const titleInput = document.getElementById('contributeTitle');
+    if (!titleInput.value.trim()) {
+        titleInput.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+    }
+}
+
+function clearFileSelection(event) {
+    if (event) event.stopPropagation();
+    selectedFile = null;
+    const fileInput = document.getElementById('contributeFile');
+    if (fileInput) fileInput.value = '';
+    const dropzone = document.getElementById('fileDropzone');
+    const selected = document.getElementById('fileSelected');
+    if (dropzone) dropzone.style.display = '';
+    if (selected) selected.style.display = 'none';
+}
+
+// Drag and drop support
+document.addEventListener('DOMContentLoaded', () => {
+    // Wait a tick for the modal to be in the DOM
+    setTimeout(() => {
+        const dropzone = document.getElementById('fileDropzone');
+        if (!dropzone) return;
+
+        ['dragenter', 'dragover'].forEach(evt => {
+            dropzone.addEventListener(evt, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add('drag-over');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(evt => {
+            dropzone.addEventListener(evt, e => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove('drag-over');
+            });
+        });
+
+        dropzone.addEventListener('drop', e => {
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                // Create a DataTransfer to set the file input
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                document.getElementById('contributeFile').files = dt.files;
+                handleFileSelect(document.getElementById('contributeFile'));
+            }
+        });
+    }, 100);
+});
+
+// ── Submit ────────────────────────────────────────────────
+
+async function submitContribution() {
+    const name = document.getElementById('contributeName').value.trim();
+    const title = document.getElementById('contributeTitle').value.trim();
+
+    // Validate name (mandatory)
+    if (!name) {
+        showToast('Please enter your name', 'warning');
+        document.getElementById('contributeName').focus();
+        return;
+    }
+
+    if (!title) {
+        showToast('Please enter a title', 'warning');
+        document.getElementById('contributeTitle').focus();
+        return;
+    }
+
+    // Save name to localStorage for convenience
+    localStorage.setItem('grasp_user_name', name);
+
+    const btn = document.getElementById('contributeSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
+    try {
+        let res;
+
+        if (selectedContentType === 'document') {
+            // File upload path
+            if (!selectedFile) {
+                showToast('Please select a file to upload', 'warning');
+                btn.disabled = false;
+                btn.textContent = '✦ Submit for Review';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('title', title);
+            formData.append('submitted_by', name);
+
+            res = await fetch(`${API_BASE}/api/contributions/upload`, {
+                method: 'POST',
+                body: formData,
+            });
+        } else {
+            // Text content path (code / plain_text)
+            const content = document.getElementById('contributeContent').value.trim();
+            if (!content) {
+                showToast('Please enter some content', 'warning');
+                document.getElementById('contributeContent').focus();
+                btn.disabled = false;
+                btn.textContent = '✦ Submit for Review';
+                return;
+            }
+
+            res = await fetch(`${API_BASE}/api/contributions/submit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title,
+                    content,
+                    content_type: selectedContentType,
+                    submitted_by: name,
+                }),
+            });
+        }
+
+        const data = await res.json();
+        if (res.ok) {
+            closeContributeModal();
+            showToast(data.message || 'Contribution submitted for review ✓', 'success');
+        } else {
+            showToast(`Error: ${data.detail || 'Submission failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '✦ Submit for Review';
+    }
+}
+
+// ── Theme Toggle ──────────────────────────────────────────
+
+function initTheme() {
+    const saved = localStorage.getItem('grasp_theme');
+    if (saved === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    }
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    if (current === 'light') {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('grasp_theme', 'dark');
+    } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        localStorage.setItem('grasp_theme', 'light');
+    }
+}
+
+// Apply theme immediately (before DOMContentLoaded)
+initTheme();
+
+// ── My Submissions ────────────────────────────────────────
+
+function openMySubmissions() {
+    document.getElementById('mySubmissionsModal').classList.add('active');
+    const savedName = localStorage.getItem('grasp_user_name') || '';
+    document.getElementById('submissionsNameInput').value = savedName;
+    document.getElementById('submissionsResults').innerHTML = '';
+    // Auto-load if we have a saved name
+    if (savedName) {
+        loadMySubmissions();
+    }
+}
+
+function closeMySubmissions() {
+    document.getElementById('mySubmissionsModal').classList.remove('active');
+}
+
+async function loadMySubmissions() {
+    const name = document.getElementById('submissionsNameInput').value.trim();
+    if (!name) {
+        showToast('Please enter your name', 'warning');
+        return;
+    }
+
+    // Save name
+    localStorage.setItem('grasp_user_name', name);
+
+    const results = document.getElementById('submissionsResults');
+    results.innerHTML = '<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">Loading...</p>';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/contributions/my?submitted_by=${encodeURIComponent(name)}`);
+        const data = await res.json();
+
+        if (!data.contributions || data.contributions.length === 0) {
+            results.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No submissions found for this name</p></div>';
+            return;
+        }
+
+        const statusColors = { pending: 'pending', approved: 'approved', rejected: 'rejected' };
+        const typeIcons = { document: '📄', code: '💻', plain_text: '📝' };
+
+        let html = '';
+        for (const c of data.contributions) {
+            const icon = typeIcons[c.content_type] || '📄';
+            const statusClass = statusColors[c.status] || 'pending';
+
+            html += `<div class="submission-item">
+                <div class="submission-item-header">
+                    <span class="submission-item-title">${icon} ${escapeHtml(c.title)}</span>
+                    <span class="contribution-status-pill ${statusClass}">${c.status}</span>
+                </div>
+                <div class="submission-item-meta">
+                    Submitted ${timeAgo(c.submitted_at)}${c.classified_as ? ` · Classified as <strong>${c.classified_as}</strong>` : ''}
+                </div>`;
+
+            if (c.admin_notes) {
+                html += `<div class="submission-admin-notes">
+                    <div class="submission-admin-notes-label">Admin Notes</div>
+                    ${escapeHtml(c.admin_notes)}
+                </div>`;
+            }
+
+            html += '</div>';
+        }
+        results.innerHTML = html;
+    } catch (e) {
+        results.innerHTML = `<p style="color:var(--danger);text-align:center;padding:16px">${e.message}</p>`;
+    }
+}
+

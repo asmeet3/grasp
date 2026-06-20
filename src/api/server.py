@@ -13,9 +13,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
 from sse_starlette.sse import EventSourceResponse
@@ -30,6 +30,13 @@ from .models import (
     RejectResponse,
     SystemStatusResponse,
     SourcesResponse,
+    ContributionSubmitRequest,
+    ContributionSubmitResponse,
+    ContributionResponse,
+    ContributionListResponse,
+    ContributionUpdateRequest,
+    ContributionActionRequest,
+    ContributionActionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +50,7 @@ def create_app(
     vector_store,
     connectors: dict,
     admin_key: str = "",
+    contribution_manager=None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -191,6 +199,212 @@ def create_app(
     async def get_sources():
         """Get document counts per source and type."""
         return SourcesResponse(sources=repo_manager.get_source_stats())
+
+    # ── Contribution endpoints ─────────────────────────────
+
+    @app.post("/api/contributions/submit", response_model=ContributionSubmitResponse)
+    async def submit_contribution(request: ContributionSubmitRequest):
+        """User submits a contribution request (public endpoint)."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        if not request.submitted_by or not request.submitted_by.strip():
+            raise HTTPException(status_code=422, detail="Name is required")
+        result = contribution_manager.submit(
+            title=request.title,
+            content=request.content,
+            content_type=request.content_type,
+            submitted_by=request.submitted_by,
+        )
+        return ContributionSubmitResponse(
+            id=result["id"],
+            status="pending",
+            message="Contribution submitted for review",
+        )
+
+    @app.post("/api/contributions/upload", response_model=ContributionSubmitResponse)
+    async def upload_contribution(
+        file: UploadFile = File(...),
+        title: str = Form(...),
+        submitted_by: str = Form(...),
+    ):
+        """User uploads a document file (.txt, .md, .pdf, .docx) as a contribution."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        if not submitted_by or not submitted_by.strip():
+            raise HTTPException(status_code=422, detail="Name is required")
+
+        # Validate file extension
+        filename = file.filename or ""
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in ("txt", "md", "pdf", "docx"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unsupported file type '.{ext}'. Allowed: .txt, .md, .pdf, .docx",
+            )
+
+        # Read file content
+        file_bytes = await file.read()
+
+        # Extract text based on file type
+        try:
+            if ext in ("txt", "md"):
+                content = file_bytes.decode("utf-8", errors="replace")
+            elif ext == "pdf":
+                import io
+                from PyPDF2 import PdfReader
+                reader = PdfReader(io.BytesIO(file_bytes))
+                pages = []
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text:
+                        pages.append(text)
+                content = "\n\n".join(pages)
+            elif ext == "docx":
+                import io
+                from docx import Document as DocxDocument
+                doc = DocxDocument(io.BytesIO(file_bytes))
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                content = "\n\n".join(paragraphs)
+            else:
+                content = ""
+
+            if not content.strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail="Could not extract any text from the uploaded file",
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"File parsing error: {e}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Failed to parse file: {e}",
+            )
+
+        # Use filename as title if title is empty
+        final_title = title.strip() or filename.rsplit(".", 1)[0]
+
+        result = contribution_manager.submit(
+            title=final_title,
+            content=content,
+            content_type="document",
+            submitted_by=submitted_by,
+            original_filename=filename,
+            original_file_ext=ext,
+        )
+
+        # Save original file bytes alongside the contribution JSON
+        try:
+            original_path = contribution_manager.contributions_dir / f"{result['id']}_original.{ext}"
+            original_path.write_bytes(file_bytes)
+            logger.info(f"Saved original file: {original_path.name}")
+        except Exception as e:
+            logger.warning(f"Could not save original file: {e}")
+
+        return ContributionSubmitResponse(
+            id=result["id"],
+            status="pending",
+            message=f"Document uploaded ({len(content)} chars extracted)",
+        )
+
+    @app.get("/api/contributions/pending", response_model=ContributionListResponse, dependencies=[Depends(require_admin)])
+    async def get_pending_contributions():
+        """List all pending contributions (admin only)."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        pending = contribution_manager.list_pending()
+        return ContributionListResponse(contributions=pending, count=len(pending))
+
+    @app.get("/api/contributions/count", dependencies=[Depends(require_admin)])
+    async def get_contribution_count():
+        """Get count of pending contributions (for badge polling)."""
+        if not contribution_manager:
+            return {"count": 0}
+        return {"count": contribution_manager.count_pending()}
+
+    @app.get("/api/contributions/my")
+    async def get_my_contributions(submitted_by: str = ""):
+        """Public endpoint — list all contributions for a given submitter name."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        name = submitted_by.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="submitted_by is required")
+        all_contributions = contribution_manager.list_all()
+        mine = [c for c in all_contributions if c.get("submitted_by", "").strip().lower() == name.lower()]
+        return {"contributions": mine, "count": len(mine)}
+
+    @app.get("/api/contributions/{contribution_id}/download")
+    async def download_contribution_file(contribution_id: str):
+        """Download the original uploaded file for a contribution."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        contribution = contribution_manager.get(contribution_id)
+        if not contribution:
+            raise HTTPException(status_code=404, detail="Contribution not found")
+        ext = contribution.get("original_file_ext", "")
+        if not ext:
+            raise HTTPException(status_code=404, detail="No original file attached")
+        original_path = contribution_manager.contributions_dir / f"{contribution_id}_original.{ext}"
+        if not original_path.exists():
+            raise HTTPException(status_code=404, detail="Original file not found on disk")
+        original_filename = contribution.get("original_filename", f"{contribution_id}.{ext}")
+        return FileResponse(
+            path=str(original_path),
+            filename=original_filename,
+            media_type="application/octet-stream",
+        )
+
+    @app.get("/api/contributions/{contribution_id}", response_model=ContributionResponse, dependencies=[Depends(require_admin)])
+    async def get_contribution(contribution_id: str):
+        """Get a single contribution by ID (admin only)."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        contribution = contribution_manager.get(contribution_id)
+        if not contribution:
+            raise HTTPException(status_code=404, detail="Contribution not found")
+        return ContributionResponse(**contribution)
+
+    @app.put("/api/contributions/{contribution_id}", response_model=ContributionResponse, dependencies=[Depends(require_admin)])
+    async def update_contribution(contribution_id: str, request: ContributionUpdateRequest):
+        """Admin edits the contribution content before approval."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        result = contribution_manager.update_content(
+            contribution_id,
+            title=request.title,
+            content=request.content,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="Contribution not found or not pending")
+        return ContributionResponse(**result)
+
+    @app.post("/api/contributions/{contribution_id}/approve", response_model=ContributionActionResponse, dependencies=[Depends(require_admin)])
+    async def approve_contribution(contribution_id: str, request: ContributionActionRequest):
+        """Approve a contribution — classify and write to the repo."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        result = await contribution_manager.approve(
+            contribution_id,
+            admin_notes=request.admin_notes,
+        )
+        if "error" in result:
+            return ContributionActionResponse(status="error", message=result["error"])
+        return ContributionActionResponse(**result)
+
+    @app.post("/api/contributions/{contribution_id}/reject", response_model=ContributionActionResponse, dependencies=[Depends(require_admin)])
+    async def reject_contribution(contribution_id: str, request: ContributionActionRequest):
+        """Reject a contribution."""
+        if not contribution_manager:
+            raise HTTPException(status_code=503, detail="Contributions not available")
+        result = contribution_manager.reject(
+            contribution_id,
+            admin_notes=request.admin_notes,
+        )
+        if "error" in result:
+            return ContributionActionResponse(status="error", message=result["error"])
+        return ContributionActionResponse(**result)
 
     # ── Web pages ─────────────────────────────────────────
 

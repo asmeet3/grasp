@@ -1,13 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
+    <meta name="description"
+        content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp — Institutional Brain</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
+
 <body>
     <div class="app">
         <!-- Sidebar -->
@@ -25,7 +29,8 @@
             <div class="status-panel" id="statusPanel">
                 <div class="status-row">
                     <span class="status-label">System</span>
-                    <span><span class="status-dot online" id="statusDot"></span><span id="statusText">Online</span></span>
+                    <span><span class="status-dot online" id="statusDot"></span><span
+                            id="statusText">Online</span></span>
                 </div>
                 <div class="status-row">
                     <span class="status-label">Last Sync</span>
@@ -54,6 +59,12 @@
             </div>
 
             <div class="sidebar-footer">
+                <button class="contribute-btn" onclick="openContributeModal()">
+                    <span>✦</span> Contribute
+                </button>
+                <button class="my-submissions-btn" onclick="openMySubmissions()">
+                    <span>📋</span> My Submissions
+                </button>
                 <a href="/admin">Admin Dashboard →</a>
             </div>
         </aside>
@@ -62,7 +73,13 @@
         <main class="main">
             <header class="main-header">
                 <div></div>
-                <div></div>
+                <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+                    <span class="theme-toggle-icon" id="themeIcon">🌙</span>
+                    <div class="theme-toggle-track">
+                        <div class="theme-toggle-thumb"></div>
+                    </div>
+                    <span class="theme-toggle-icon" id="themeLightIcon">☀️</span>
+                </div>
             </header>
 
             <div class="chat-area" id="chatArea">
@@ -73,28 +90,27 @@
                         <div class="motif-line"></div>
                     </div>
                     <h1>Ask <span class="accent-word">anything</span> about your company</h1>
-                    <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer — combining cached history with live data.</p>
+                    <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
                     <div class="suggestion-chips">
-                        <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
-                        <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
-                        <div class="suggestion-chip stagger-3" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
-                        <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
+                        <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the
+                            current architecture of our backend?</div>
+                        <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are
+                            in progress this sprint?</div>
+                        <div class="suggestion-chip stagger-3" onclick="askQuestion(this.textContent)">Any recent
+                            incidents or outages?</div>
+                        <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions
+                            were made in last week's meetings?</div>
                     </div>
                 </div>
             </div>
 
             <div class="input-area">
                 <div class="input-wrapper">
-                    <textarea
-                        class="input-field"
-                        id="queryInput"
-                        placeholder="Ask about your organization..."
-                        rows="1"
-                        onkeydown="handleInputKeydown(event)"
-                        oninput="autoResize(this)"
-                    ></textarea>
+                    <textarea class="input-field" id="queryInput" placeholder="Ask about your organization..." rows="1"
+                        onkeydown="handleInputKeydown(event)" oninput="autoResize(this)"></textarea>
                     <button class="send-btn" id="sendBtn" onclick="submitQuery()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                            stroke-linecap="round" stroke-linejoin="round">
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                             <polyline points="12 5 19 12 12 19"></polyline>
                         </svg>
@@ -105,6 +121,99 @@
         </main>
     </div>
 
+    <!-- Contribution Modal -->
+    <div class="modal-overlay" id="contributeModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>✦ Contribute Knowledge</h2>
+                <button class="modal-close" onclick="closeContributeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-tertiary);font-size:13px;margin-bottom:20px;line-height:1.6">Submit a
+                    document, code snippet, or note to be added to the knowledge repository. An admin will review your
+                    submission before it's published.</p>
+
+                <div class="contribute-field">
+                    <label class="contribute-label">Your Name <span
+                            style="color:var(--danger);font-weight:700">*</span></label>
+                    <input type="text" class="contribute-input" id="contributeName" placeholder="Enter your name">
+                </div>
+
+                <div class="contribute-field">
+                    <label class="contribute-label">Title <span
+                            style="color:var(--danger);font-weight:700">*</span></label>
+                    <input type="text" class="contribute-input" id="contributeTitle"
+                        placeholder="e.g., Database Migration Guide">
+                </div>
+
+                <div class="contribute-field">
+                    <label class="contribute-label">Content Type</label>
+                    <div class="content-type-selector" id="contentTypeSelector">
+                        <button class="type-pill active" data-type="document" onclick="selectContentType(this)">📄
+                            Document</button>
+                        <button class="type-pill" data-type="code" onclick="selectContentType(this)">💻 Code</button>
+                        <button class="type-pill" data-type="plain_text" onclick="selectContentType(this)">📝 Plain
+                            Text</button>
+                    </div>
+                </div>
+
+                <!-- File upload area (shown when document type is selected) -->
+                <div class="contribute-field" id="fileUploadField">
+                    <label class="contribute-label">Upload File <span
+                            style="color:var(--text-tertiary);font-weight:400">.docx, .pdf, .txt, .md</span></label>
+                    <div class="file-dropzone" id="fileDropzone"
+                        onclick="document.getElementById('contributeFile').click()">
+                        <input type="file" id="contributeFile" accept=".docx,.pdf,.txt,.md" style="display:none"
+                            onchange="handleFileSelect(this)">
+                        <div class="dropzone-icon">📁</div>
+                        <div class="dropzone-text">Click to browse or drag & drop a file</div>
+                        <div class="dropzone-hint">.docx, .pdf, .txt, .md — max 10 MB</div>
+                    </div>
+                    <div class="file-selected" id="fileSelected" style="display:none">
+                        <span class="file-selected-icon">📄</span>
+                        <span class="file-selected-name" id="fileSelectedName"></span>
+                        <button class="file-remove-btn" onclick="clearFileSelection(event)">✕</button>
+                    </div>
+                </div>
+
+                <!-- Textarea (shown when code or plain_text type is selected) -->
+                <div class="contribute-field" id="textContentField" style="display:none">
+                    <label class="contribute-label">Content <span
+                            style="color:var(--danger);font-weight:700">*</span></label>
+                    <textarea class="contribute-textarea" id="contributeContent"
+                        placeholder="Paste or write your content here..." rows="10"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div style="flex:1"></div>
+                <button class="reject-btn" onclick="closeContributeModal()">Cancel</button>
+                <button class="approve-btn" id="contributeSubmitBtn" onclick="submitContribution()">✦ Submit for
+                    Review</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Submissions Modal -->
+    <div class="modal-overlay" id="mySubmissionsModal">
+        <div class="modal" style="max-width:700px">
+            <div class="modal-header">
+                <h2>📋 My Submissions</h2>
+                <button class="modal-close" onclick="closeMySubmissions()">✕</button>
+            </div>
+            <div class="modal-body" id="mySubmissionsBody">
+                <div class="contribute-field">
+                    <label class="contribute-label">Your Name</label>
+                    <div style="display:flex;gap:10px">
+                        <input type="text" class="contribute-input" id="submissionsNameInput" placeholder="Enter the name you submitted with...">
+                        <button class="approve-btn" onclick="loadMySubmissions()" style="white-space:nowrap">Look Up</button>
+                    </div>
+                </div>
+                <div id="submissionsResults"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/app.js"></script>
 </body>
+
 </html>

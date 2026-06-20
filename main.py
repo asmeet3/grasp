@@ -31,6 +31,7 @@ from src.agent.sub_agents import SubAgent, SubAgentDispatcher
 from src.agent.tools import ToolExecutor
 from src.agent.engine import QueryEngine
 from src.api.server import create_app
+from src.contributions import ContributionManager
 
 # ── Logging ────────────────────────────────────────────────
 
@@ -201,6 +202,13 @@ def main():
     )
     logger.info(f"✓ Query engine initialized (model: {settings.agent_model})")
 
+    # 5b. Contribution manager
+    contribution_manager = ContributionManager(
+        state_dir=state_dir,
+        repo_manager=repo_manager,
+    )
+    logger.info("✓ Contribution manager initialized")
+
     # 6. FastAPI app
     app = create_app(
         query_engine=query_engine,
@@ -210,6 +218,7 @@ def main():
         vector_store=vector_store,
         connectors=connectors,
         admin_key=settings.admin_key,
+        contribution_manager=contribution_manager,
     )
 
     # 7. Startup event — start scheduler

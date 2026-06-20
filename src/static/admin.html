@@ -74,8 +74,20 @@
         <main class="main">
             <header class="main-header">
                 <h2 style="font-family:'Instrument Serif',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)">Admin Dashboard</h2>
-                <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
-                    ⚠ <span id="pendingCount">0</span> pending changes
+                <div style="display:flex;gap:12px;align-items:center">
+                    <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+                        <span class="theme-toggle-icon" id="themeIcon">🌙</span>
+                        <div class="theme-toggle-track">
+                            <div class="theme-toggle-thumb"></div>
+                        </div>
+                        <span class="theme-toggle-icon" id="themeLightIcon">☀️</span>
+                    </div>
+                    <div id="contributionsBadge" class="pending-badge contributions-badge" style="display:none" onclick="scrollToContributions()">
+                        ✦ <span id="contributionsCount">0</span> contributions pending
+                    </div>
+                    <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
+                        ⚠ <span id="pendingCount">0</span> pending changes
+                    </div>
                 </div>
             </header>
 
@@ -85,6 +97,11 @@
                     <h3 class="admin-section-title">Sync Status</h3>
                     <div id="syncStatusCard" class="admin-card">
                         <p style="color:var(--text-secondary)">Loading sync status...</p>
+                    </div>
+
+                    <h3 class="admin-section-title" style="margin-top:36px" id="contributionsSection">✦ Contribution Requests</h3>
+                    <div id="contributionsCard" class="admin-card">
+                        <p style="color:var(--text-secondary)">Loading contributions...</p>
                     </div>
 
                     <h3 class="admin-section-title" style="margin-top:36px">Sync History</h3>
@@ -98,7 +115,7 @@
 
     <!-- Pending Changes Modal -->
     <div class="modal-overlay" id="pendingModal">
-        <div class="modal">
+        <div class="modal" style="max-width:900px">
             <div class="modal-header">
                 <h2>📋 Pending Changes</h2>
                 <button class="modal-close" onclick="closePendingModal()">✕</button>
@@ -110,6 +127,27 @@
                 <input class="commit-message-input" id="commitMessage" placeholder="Optional commit message...">
                 <button class="reject-btn" onclick="rejectChanges()">Reject</button>
                 <button class="approve-btn" onclick="approveChanges()">✓ Approve & Push</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contribution Review Modal -->
+    <div class="modal-overlay" id="contributionReviewModal">
+        <div class="modal" style="max-width:800px">
+            <div class="modal-header">
+                <h2>🗒 Review Contribution</h2>
+                <button class="modal-close" onclick="closeContributionReview()">✕</button>
+            </div>
+            <div class="modal-body" id="contributionReviewBody">
+                <p style="color: var(--text-secondary)">Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <div style="flex:1">
+                    <textarea class="admin-notes-textarea" id="contributionAdminNotes" placeholder="Admin notes (optional — visible to the submitter)..." rows="2"></textarea>
+                </div>
+                <button class="reject-btn" onclick="rejectContribution()">✗ Reject</button>
+                <button class="approve-btn" id="saveContributionBtn" onclick="saveContributionEdits()" style="background:var(--accent-primary)">💾 Save Edits</button>
+                <button class="approve-btn" onclick="approveContribution()">✓ Approve & Add</button>
             </div>
         </div>
     </div>
