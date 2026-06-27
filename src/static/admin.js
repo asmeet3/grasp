@@ -50,17 +50,71 @@ async function authenticateAdmin() {
     }
 }
 
+function adminLogout() {
+    sessionStorage.removeItem('grasp_admin_key');
+    adminKey = '';
+    window.location.reload();
+}
+
+function toggleAdminMenu(event) {
+    event.stopPropagation();
+    const dropdown = document.getElementById('adminMenuDropdown');
+    if (!dropdown) return;
+    const isVisible = dropdown.style.display !== 'none';
+    dropdown.style.display = isVisible ? 'none' : 'block';
+}
+
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('adminMenuDropdown');
+    const btn = document.getElementById('adminMenuBtn');
+    if (dropdown && btn && !btn.contains(e.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
 function showAdminDashboard() {
     document.getElementById('authGate').style.display = 'none';
     document.getElementById('adminApp').style.display = 'flex';
     refreshStatus();
     checkPendingChanges();
-    loadSyncHistory();
-    loadContributions();
     checkContributionCount();
+    checkUserPendingCount();
+    
+    // Default to Home screen
+    showAdminScreen('Home');
+
     setInterval(refreshStatus, 15000);
     setInterval(checkPendingChanges, 15000);
     setInterval(checkContributionCount, 15000);
+    setInterval(checkUserPendingCount, 15000);
+}
+
+// ── Screen Routing ────────────────────────────────────────
+
+function showAdminScreen(screenName) {
+    // Hide all screens
+    document.querySelectorAll('.admin-screen').forEach(el => el.style.display = 'none');
+    // Remove active class from all nav items
+    document.querySelectorAll('.admin-nav-item').forEach(el => el.classList.remove('active'));
+
+    const titleEl = document.getElementById('adminScreenTitle');
+
+    if (screenName === 'Home') {
+        document.getElementById('screenHome').style.display = 'block';
+        document.getElementById('navHome').classList.add('active');
+        titleEl.textContent = 'Dashboard';
+        loadSyncHistory();
+    } else if (screenName === 'Users') {
+        document.getElementById('screenUsers').style.display = 'block';
+        document.getElementById('navUsers').classList.add('active');
+        titleEl.textContent = 'User Management';
+        loadUsers();
+    } else if (screenName === 'Contributions') {
+        document.getElementById('screenContributions').style.display = 'block';
+        document.getElementById('navContributions').classList.add('active');
+        titleEl.textContent = 'Contribution Requests';
+        loadContributions();
+    }
 }
 
 // Auto-authenticate if key is stored in session
@@ -522,13 +576,174 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
+// ── User Management ───────────────────────────────────────
+
+async function loadUsers() {
+    const card = document.getElementById('usersCard');
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/users`, {
+            headers: adminHeaders(),
+        });
+        if (!res.ok) {
+            card.innerHTML = '<p style="color:var(--text-secondary)">Could not load users. Check admin key.</p>';
+            return;
+        }
+        const data = await res.json();
+        const users = data.users || [];
+
+        if (!users.length) {
+            card.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No registered users yet</p></div>';
+            return;
+        }
+
+        const statusOrder = { pending_approval: 0, approved: 1, rejected: 2 };
+        users.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+
+        const ALL_ROLES = [
+            'Intern',
+            'Junior Associate',
+            'Associate',
+            'Senior Associate',
+            'Team Lead',
+            'Manager',
+            'Director',
+            'Principal',
+            'Vice President',
+            'Partner',
+        ];
+
+        let html = '<div class="users-list">';
+        for (const u of users) {
+            const statusClass = u.status === 'approved' ? 'approved' : u.status === 'rejected' ? 'rejected' : 'pending';
+            const statusLabel = u.status === 'pending_approval' ? 'Pending' : u.status.charAt(0).toUpperCase() + u.status.slice(1);
+            const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '—';
+            const initials = (u.first_name || '?')[0].toUpperCase();
+            const joinedAt = u.created_at ? timeAgo(u.created_at) : '—';
+            const authIcon = u.auth_method === 'google' ? '🔵' : '✉️';
+
+            html += `<div class="user-card">
+                <div class="user-card-header">
+                    <div class="user-card-avatar">${initials}</div>
+                    <div class="user-card-info">
+                        <div class="user-card-name">${escapeHtml(fullName)}</div>
+                        <div class="user-card-email">${authIcon} ${escapeHtml(u.email)}</div>
+                    </div>
+                    <span class="contribution-status-pill ${statusClass}">${statusLabel}</span>
+                </div>
+                <div class="user-card-meta">
+                    <span>Joined ${joinedAt}</span>
+                    ${u.role ? `<span>Role: <strong>${escapeHtml(u.role)}</strong></span>` : ''}
+                </div>
+                <div class="user-card-actions">`;
+
+            if (u.status === 'pending_approval') {
+                const pendingRoleOptions = `<option value="" disabled selected>— Select Role —</option>` +
+                    ALL_ROLES.map(r => `<option value="${r}">${r}</option>`).join('');
+                html += `<select class="user-role-select" id="role-${u.id}">${pendingRoleOptions}</select>
+                    <button class="approve-btn" style="font-size:12px;padding:6px 14px" onclick="approveUserAction('${u.id}')">✓ Approve</button>
+                    <button class="reject-btn" style="font-size:12px;padding:6px 14px" onclick="rejectUserAction('${u.id}')">✗ Reject</button>`;
+            } else if (u.status === 'approved') {
+                const approvedRoleOptions = ALL_ROLES.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('');
+                html += `<select class="user-role-select" id="role-${u.id}">
+                    ${approvedRoleOptions}
+                </select>
+                    <button class="approve-btn" style="font-size:12px;padding:6px 14px;background:var(--bg-glass);color:var(--text-secondary)" onclick="changeRoleAction('${u.id}')">Update Role</button>
+                    <button class="reject-btn" style="font-size:12px;padding:6px 14px" onclick="rejectUserAction('${u.id}')">Revoke</button>`;
+            } else {
+                html += `<span style="color:var(--text-tertiary);font-size:12px">Account rejected</span>`;
+            }
+
+            html += `</div></div>`;
+        }
+        html += '</div>';
+        card.innerHTML = html;
+
+    } catch (e) {
+        card.innerHTML = `<p style="color:var(--danger)">Error loading users: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function approveUserAction(userId) {
+    const select = document.getElementById(`role-${userId}`);
+    const role = select ? select.value : '';
+
+    // Validate that a role has been selected
+    if (!role) {
+        showToast('Please select a role before approving', 'warning');
+        if (select) {
+            select.classList.add('role-select-error');
+            select.focus();
+            setTimeout(() => select.classList.remove('role-select-error'), 2000);
+        }
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/users/${userId}/approve`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`User approved as ${role} ✓`, 'success');
+            loadUsers();
+            checkUserPendingCount();
+        } else {
+            showToast(`Error: ${data.detail || 'Approval failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function rejectUserAction(userId) {
+    if (!confirm('Are you sure you want to reject/revoke this user?')) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/users/${userId}/reject`, {
+            method: 'POST',
+            headers: adminHeaders(),
+        });
+        if (res.ok) {
+            showToast('User rejected', 'warning');
+            loadUsers();
+            checkUserPendingCount();
+        } else {
+            const data = await res.json();
+            showToast(`Error: ${data.detail || 'Rejection failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+async function changeRoleAction(userId) {
+    const select = document.getElementById(`role-${userId}`);
+    const role = select ? select.value : 'Associate';
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/users/${userId}/role`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Role updated to ${role} ✓`, 'success');
+            loadUsers();
+        } else {
+            showToast(`Error: ${data.detail || 'Update failed'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
 // ── Contribution Management ───────────────────────────────
 
 let currentContributionId = null;
 
 function scrollToContributions() {
-    const el = document.getElementById('contributionsSection');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showAdminScreen('Contributions');
 }
 
 async function checkContributionCount() {
@@ -537,15 +752,43 @@ async function checkContributionCount() {
             headers: adminHeaders(),
         });
         const data = await res.json();
-        const badge = document.getElementById('contributionsBadge');
-        if (data.count > 0) {
-            document.getElementById('contributionsCount').textContent = data.count;
-            badge.style.display = 'inline-flex';
-        } else {
-            badge.style.display = 'none';
+        
+        // Update nav badge instead of inline header badge
+        const badge = document.getElementById('navContributionsBadge');
+        if (badge) {
+            if (data.count > 0) {
+                badge.textContent = data.count;
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
         }
     } catch (e) {
-        console.error('Contribution count check failed:', e);
+        console.error('Failed to check contribution count:', e);
+    }
+}
+
+async function checkUserPendingCount() {
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/users`, {
+            headers: adminHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const users = data.users || [];
+        const pendingCount = users.filter(u => u.status === 'pending_approval').length;
+
+        const badge = document.getElementById('navUsersBadge');
+        if (badge) {
+            if (pendingCount > 0) {
+                badge.textContent = pendingCount;
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to check user pending count:', e);
     }
 }
 
@@ -759,5 +1002,27 @@ async function rejectContribution() {
         }
     } catch (e) {
         showToast(`Error: ${e.message}`, 'error');
+    }
+}
+
+// ── Sidebar Section Toggles ───────────────────────────────
+
+function toggleSidebarSection(section) {
+    const bodyMap = { connectors: 'connectorsSectionBody' };
+    const chevronMap = { connectors: 'connectorsChevron' };
+    const toggleMap = { connectors: 'connectorsToggle' };
+
+    const body = document.getElementById(bodyMap[section]);
+    const chevron = document.getElementById(chevronMap[section]);
+    const toggle = document.getElementById(toggleMap[section]);
+    if (!body) return;
+
+    const isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : '';
+    if (chevron) {
+        chevron.classList.toggle('open', !isOpen);
+    }
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(!isOpen));
     }
 }

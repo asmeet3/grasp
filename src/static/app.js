@@ -3,12 +3,15 @@
 const API_BASE = '';
 let isStreaming = false;
 let queryHistory = JSON.parse(localStorage.getItem('grasp_history') || '[]');
+let currentUser = null;
 
 // ── Initialization ────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkAuth();
     refreshStatus();
     renderHistory();
+    initOnboarding();
     setInterval(refreshStatus, 30000);
 });
 
@@ -334,9 +337,24 @@ function openContributeModal() {
     // Reset form
     document.getElementById('contributeTitle').value = '';
     document.getElementById('contributeContent').value = '';
-    // Pre-fill name from localStorage
-    const savedName = localStorage.getItem('grasp_user_name') || '';
-    document.getElementById('contributeName').value = savedName;
+
+    // If logged in, auto-populate and lock the name field
+    const nameInput = document.getElementById('contributeName');
+    if (currentUser) {
+        const fullName = `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim();
+        nameInput.value = fullName;
+        nameInput.readOnly = true;
+        nameInput.style.opacity = '0.7';
+        nameInput.style.cursor = 'not-allowed';
+    } else {
+        // Pre-fill name from localStorage
+        const savedName = localStorage.getItem('grasp_user_name') || '';
+        nameInput.value = savedName;
+        nameInput.readOnly = false;
+        nameInput.style.opacity = '';
+        nameInput.style.cursor = '';
+    }
+
     selectedContentType = 'document';
     selectedFile = null;
     document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
@@ -554,6 +572,7 @@ function initTheme() {
     if (saved === 'light') {
         document.documentElement.setAttribute('data-theme', 'light');
     }
+    updateThemeIcon();
 }
 
 function toggleTheme() {
@@ -565,6 +584,14 @@ function toggleTheme() {
         document.documentElement.setAttribute('data-theme', 'light');
         localStorage.setItem('grasp_theme', 'light');
     }
+    updateThemeIcon();
+}
+
+function updateThemeIcon() {
+    const icon = document.getElementById('themeIcon');
+    if (!icon) return;
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    icon.textContent = isLight ? '☀️' : '🌙';
 }
 
 // Apply theme immediately (before DOMContentLoaded)
@@ -574,13 +601,8 @@ initTheme();
 
 function openMySubmissions() {
     document.getElementById('mySubmissionsModal').classList.add('active');
-    const savedName = localStorage.getItem('grasp_user_name') || '';
-    document.getElementById('submissionsNameInput').value = savedName;
     document.getElementById('submissionsResults').innerHTML = '';
-    // Auto-load if we have a saved name
-    if (savedName) {
-        loadMySubmissions();
-    }
+    loadMySubmissions();
 }
 
 function closeMySubmissions() {
@@ -588,24 +610,33 @@ function closeMySubmissions() {
 }
 
 async function loadMySubmissions() {
-    const name = document.getElementById('submissionsNameInput').value.trim();
-    if (!name) {
-        showToast('Please enter your name', 'warning');
-        return;
-    }
-
-    // Save name
-    localStorage.setItem('grasp_user_name', name);
-
     const results = document.getElementById('submissionsResults');
     results.innerHTML = '<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">Loading...</p>';
 
     try {
-        const res = await fetch(`${API_BASE}/api/contributions/my?submitted_by=${encodeURIComponent(name)}`);
+        // The server reads the grasp_user cookie automatically when no query param is given
+        const headers = {};
+        const token = localStorage.getItem('grasp_session_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch(`${API_BASE}/api/contributions/my`, {
+            credentials: 'same-origin',
+            headers,
+        });
+
+        if (!res.ok) {
+            // 422 means no cookie/name found — user hasn't submitted anything yet
+            if (res.status === 422) {
+                results.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No submissions yet</p><p style="color:var(--text-tertiary);font-size:11px;margin-top:6px">Submit a contribution first and your history will appear here automatically.</p></div>';
+                return;
+            }
+            throw new Error('Failed to load submissions');
+        }
+
         const data = await res.json();
 
         if (!data.contributions || data.contributions.length === 0) {
-            results.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No submissions found for this name</p></div>';
+            results.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No submissions found</p></div>';
             return;
         }
 
@@ -638,6 +669,163 @@ async function loadMySubmissions() {
         results.innerHTML = html;
     } catch (e) {
         results.innerHTML = `<p style="color:var(--danger);text-align:center;padding:16px">${e.message}</p>`;
+    }
+}
+
+// ── Authentication ────────────────────────────────────────
+
+async function checkAuth() {
+    const token = localStorage.getItem('grasp_session_token');
+    if (!token) {
+        window.location.href = '/login';
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+
+        if (res.status === 401) {
+            localStorage.removeItem('grasp_session_token');
+            localStorage.removeItem('grasp_user');
+            window.location.href = '/login';
+            return;
+        }
+
+        if (res.ok) {
+            currentUser = await res.json();
+            localStorage.setItem('grasp_user', JSON.stringify(currentUser));
+            populateUserProfile(currentUser);
+            showOnboardingIntro();
+        }
+    } catch (e) {
+        // Network error — use cached user data if available
+        const cached = localStorage.getItem('grasp_user');
+        if (cached) {
+            currentUser = JSON.parse(cached);
+            populateUserProfile(currentUser);
+        }
+    }
+}
+
+function populateUserProfile(user) {
+    if (!user) return;
+
+    const section = document.getElementById('userProfileSection');
+    const avatar = document.getElementById('userAvatar');
+    const name = document.getElementById('userProfileName');
+    const role = document.getElementById('userProfileRole');
+
+    if (section) section.style.display = '';
+    if (avatar) avatar.textContent = (user.first_name || '?')[0].toUpperCase();
+    if (name) name.textContent = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
+    if (role && user.role) {
+        const roleClass = getRoleClass(user.role);
+        role.innerHTML = `<span class="role-pill ${roleClass}">${user.role}</span>`;
+    }
+}
+
+function getRoleClass(role) {
+    switch (role) {
+        case 'Intern': return 'role-intern';
+        case 'Associate': return 'role-associate';
+        case 'Senior Associate': return 'role-senior';
+        default: return '';
+    }
+}
+
+function logout() {
+    localStorage.removeItem('grasp_session_token');
+    localStorage.removeItem('grasp_user');
+    currentUser = null;
+    window.location.href = '/login';
+}
+
+// ── User Menu (3-dot) ─────────────────────────────────────
+
+function toggleUserMenu(event) {
+    event.stopPropagation();
+    const dropdown = document.getElementById('userMenuDropdown');
+    if (!dropdown) return;
+    const isVisible = dropdown.style.display !== 'none';
+    dropdown.style.display = isVisible ? 'none' : 'block';
+}
+
+// Close user menu when clicking outside
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('userMenuDropdown');
+    const btn = document.getElementById('userMenuBtn');
+    if (dropdown && btn && !btn.contains(e.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+// ── Sidebar Section Toggles ───────────────────────────────
+
+function toggleSidebarSection(section) {
+    const bodyMap = { connectors: 'connectorsSectionBody', queries: 'queriesSectionBody' };
+    const chevronMap = { connectors: 'connectorsChevron', queries: 'queriesChevron' };
+    const toggleMap = { connectors: 'connectorsToggle', queries: 'queriesToggle' };
+
+    const body = document.getElementById(bodyMap[section]);
+    const chevron = document.getElementById(chevronMap[section]);
+    const toggle = document.getElementById(toggleMap[section]);
+    if (!body) return;
+
+    const isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : '';
+    if (chevron) {
+        chevron.classList.toggle('open', !isOpen);
+    }
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(!isOpen));
+    }
+}
+
+// ── Onboarding Mode ───────────────────────────────────────
+
+function initOnboarding() {
+    const isOnboarding = localStorage.getItem('grasp_onboarding') === 'true';
+    const checkbox = document.getElementById('onboardingCheckbox');
+    if (checkbox) {
+        checkbox.checked = isOnboarding;
+        applyOnboardingState(isOnboarding);
+    }
+}
+
+function toggleOnboarding() {
+    const checkbox = document.getElementById('onboardingCheckbox');
+    const isOn = checkbox ? checkbox.checked : false;
+    localStorage.setItem('grasp_onboarding', isOn.toString());
+    applyOnboardingState(isOn);
+}
+
+function applyOnboardingState(isOn) {
+    const defaultChips = document.getElementById('defaultChips');
+    const onboardingChips = document.getElementById('onboardingChips');
+    const onboardingBanner = document.getElementById('onboardingBanner');
+
+    if (defaultChips) defaultChips.style.display = isOn ? 'none' : '';
+    if (onboardingChips) onboardingChips.style.display = isOn ? '' : 'none';
+    if (onboardingBanner) onboardingBanner.style.display = isOn ? 'flex' : 'none';
+}
+
+function showOnboardingIntro() {
+    const seen = localStorage.getItem('grasp_seen_onboarding_intro');
+    if (!seen) {
+        const modal = document.getElementById('onboardingIntroModal');
+        if (modal) {
+            modal.style.display = 'flex';
+        }
+    }
+}
+
+function dismissOnboardingIntro() {
+    localStorage.setItem('grasp_seen_onboarding_intro', 'true');
+    const modal = document.getElementById('onboardingIntroModal');
+    if (modal) {
+        modal.style.display = 'none';
     }
 }
 

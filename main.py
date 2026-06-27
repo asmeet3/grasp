@@ -32,6 +32,7 @@ from src.agent.tools import ToolExecutor
 from src.agent.engine import QueryEngine
 from src.api.server import create_app
 from src.contributions import ContributionManager
+from src.auth import UserManager
 
 # ── Logging ────────────────────────────────────────────────
 
@@ -209,6 +210,14 @@ def main():
     )
     logger.info("✓ Contribution manager initialized")
 
+    # 5c. User manager
+    user_manager = UserManager(
+        state_dir=state_dir,
+        session_secret=settings.effective_session_secret,
+        google_client_id=settings.google_client_id,
+    )
+    logger.info("✓ User manager initialized")
+
     # 6. FastAPI app
     app = create_app(
         query_engine=query_engine,
@@ -219,6 +228,8 @@ def main():
         connectors=connectors,
         admin_key=settings.admin_key,
         contribution_manager=contribution_manager,
+        user_manager=user_manager,
+        google_client_id=settings.google_client_id,
     )
 
     # 7. Startup event — start scheduler

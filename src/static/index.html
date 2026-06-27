@@ -16,49 +16,79 @@
     <div class="app">
         <!-- Sidebar -->
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="brand">
-                    <div class="brand-icon">G</div>
-                    <div>
-                        <div class="brand-text">Grasp</div>
-                        <div class="brand-subtitle">Institutional Brain</div>
+
+
+            <!-- User profile (populated by JS) -->
+            <div class="user-profile-section" id="userProfileSection" style="display:none">
+                <div class="user-profile-card">
+                    <div class="user-avatar" id="userAvatar">?</div>
+                    <div class="user-profile-info">
+                        <div class="user-profile-name" id="userProfileName">—</div>
+                        <div class="user-profile-role" id="userProfileRole"></div>
+                    </div>
+                    <!-- 3-dot menu -->
+                    <div class="user-menu-wrapper">
+                        <button class="user-menu-btn" id="userMenuBtn" onclick="toggleUserMenu(event)"
+                            aria-label="User options">
+                            <span>⋮</span>
+                        </button>
+                        <div class="user-menu-dropdown" id="userMenuDropdown" style="display:none">
+                            <button class="user-menu-item" onclick="logout()">
+                                <span>↪</span> Sign Out
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="status-panel" id="statusPanel">
-                <div class="status-row">
-                    <span class="status-label">System</span>
-                    <span><span class="status-dot online" id="statusDot"></span><span
-                            id="statusText">Online</span></span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Last Sync</span>
-                    <span id="lastSyncTime">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Documents</span>
-                    <span id="docCount">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Next Sync</span>
-                    <span id="nextSync">—</span>
-                </div>
+            <!-- Hidden status fields (still populated by JS for data) -->
+            <div style="display:none">
+                <span id="statusDot"></span>
+                <span id="statusText"></span>
+                <span id="lastSyncTime"></span>
+                <span id="docCount"></span>
+                <span id="nextSync"></span>
             </div>
 
-            <div class="connectors-list" id="connectorsList">
-                <div class="connectors-title">Connectors</div>
-                <div id="connectorsContainer">
-                    <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
-                </div>
-            </div>
+            <!-- Scrollable nav area -->
+            <div class="sidebar-nav-scroll">
 
-            <div class="history-section">
-                <div class="history-title">Recent Queries</div>
-                <div id="historyContainer"></div>
+                <!-- Connectors dropdown (closed by default) -->
+                <div class="sidebar-section">
+                    <button class="sidebar-section-header" onclick="toggleSidebarSection('connectors')"
+                        aria-expanded="false" id="connectorsToggle">
+                        <span class="sidebar-section-title">Connectors</span>
+                        <span class="sidebar-section-chevron" id="connectorsChevron">›</span>
+                    </button>
+                    <div class="sidebar-section-body" id="connectorsSectionBody" style="display:none">
+                        <div id="connectorsContainer">
+                            <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Queries dropdown (open by default) -->
+                <div class="sidebar-section">
+                    <button class="sidebar-section-header" onclick="toggleSidebarSection('queries')"
+                        aria-expanded="true" id="queriesToggle">
+                        <span class="sidebar-section-title">Recent Queries</span>
+                        <span class="sidebar-section-chevron open" id="queriesChevron">›</span>
+                    </button>
+                    <div class="sidebar-section-body" id="queriesSectionBody">
+                        <div id="historyContainer"></div>
+                    </div>
+                </div>
+
             </div>
 
             <div class="sidebar-footer">
+                <div class="onboarding-toggle" id="onboardingToggle">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="onboardingCheckbox" onchange="toggleOnboarding()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="onboarding-label">🎓 Onboarding Mode</span>
+                </div>
                 <button class="contribute-btn" onclick="openContributeModal()">
                     <span>✦</span> Contribute
                 </button>
@@ -73,13 +103,9 @@
         <main class="main">
             <header class="main-header">
                 <div></div>
-                <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+                <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle theme">
                     <span class="theme-toggle-icon" id="themeIcon">🌙</span>
-                    <div class="theme-toggle-track">
-                        <div class="theme-toggle-thumb"></div>
-                    </div>
-                    <span class="theme-toggle-icon" id="themeLightIcon">☀️</span>
-                </div>
+                </button>
             </header>
 
             <div class="chat-area" id="chatArea">
@@ -91,7 +117,19 @@
                     </div>
                     <h1>Ask <span class="accent-word">anything</span> about your company</h1>
                     <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
-                    <div class="suggestion-chips">
+
+                    <!-- Onboarding banner (hidden by default) -->
+                    <div class="onboarding-banner" id="onboardingBanner" style="display:none">
+                        <div class="onboarding-banner-icon">🎓</div>
+                        <div>
+                            <strong>Welcome aboard!</strong> Onboarding mode is active. These prompts are designed to
+                            quickly
+                            familiarize you with company history, conventions, and current priorities.
+                        </div>
+                    </div>
+
+                    <!-- Default suggestion chips -->
+                    <div class="suggestion-chips" id="defaultChips">
                         <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the
                             current architecture of our backend?</div>
                         <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are
@@ -100,6 +138,20 @@
                             incidents or outages?</div>
                         <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions
                             were made in last week's meetings?</div>
+                    </div>
+
+                    <!-- Onboarding suggestion chips (hidden by default) -->
+                    <div class="suggestion-chips" id="onboardingChips" style="display:none">
+                        <div class="suggestion-chip stagger-1 onboarding-chip" onclick="askQuestion(this.textContent)">
+                            What is the company's history and founding story?</div>
+                        <div class="suggestion-chip stagger-2 onboarding-chip" onclick="askQuestion(this.textContent)">
+                            What are the key conventions and coding standards?</div>
+                        <div class="suggestion-chip stagger-3 onboarding-chip" onclick="askQuestion(this.textContent)">
+                            What projects are currently in progress?</div>
+                        <div class="suggestion-chip stagger-4 onboarding-chip" onclick="askQuestion(this.textContent)">
+                            Who are the key team members and their roles?</div>
+                        <div class="suggestion-chip stagger-5 onboarding-chip" onclick="askQuestion(this.textContent)">
+                            What tools and platforms does the company use?</div>
                     </div>
                 </div>
             </div>
@@ -151,7 +203,6 @@
                     <div class="content-type-selector" id="contentTypeSelector">
                         <button class="type-pill active" data-type="document" onclick="selectContentType(this)">📄
                             Document</button>
-                        <button class="type-pill" data-type="code" onclick="selectContentType(this)">💻 Code</button>
                         <button class="type-pill" data-type="plain_text" onclick="selectContentType(this)">📝 Plain
                             Text</button>
                     </div>
@@ -201,14 +252,48 @@
                 <button class="modal-close" onclick="closeMySubmissions()">✕</button>
             </div>
             <div class="modal-body" id="mySubmissionsBody">
-                <div class="contribute-field">
-                    <label class="contribute-label">Your Name</label>
-                    <div style="display:flex;gap:10px">
-                        <input type="text" class="contribute-input" id="submissionsNameInput" placeholder="Enter the name you submitted with...">
-                        <button class="approve-btn" onclick="loadMySubmissions()" style="white-space:nowrap">Look Up</button>
-                    </div>
-                </div>
                 <div id="submissionsResults"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pending Approval Overlay -->
+    <div class="pending-approval-overlay" id="pendingApprovalOverlay" style="display:none">
+        <div class="pending-approval-card">
+            <div class="pending-approval-icon">⏳</div>
+            <h2>Account Pending Approval</h2>
+            <p>Your account has been created and is awaiting admin approval. You'll be able to use Grasp once an
+                administrator reviews and approves your account.</p>
+            <button class="login-btn login-btn-secondary" onclick="logout()">Sign Out</button>
+        </div>
+    </div>
+
+    <!-- Onboarding Intro Modal -->
+    <div class="modal-overlay" id="onboardingIntroModal"
+        style="display:none; z-index: 10001; background: rgba(11, 13, 16, 0.85);">
+        <!-- Animated arrow pointing to sidebar -->
+        <div class="onboarding-pointer">
+            <div class="onboarding-pointer-arrow">↙</div>
+            <div class="onboarding-pointer-text">Enable it here!</div>
+        </div>
+
+        <div class="modal" style="max-width:480px; position: relative; z-index: 10002; margin-top: -100px;">
+            <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+                <h2 style="font-size: 24px;">Welcome to Grasp 🎓</h2>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
+                    We noticed this is your first time logging in! Grasp features a special <strong>Onboarding
+                        Mode</strong> designed to help new team members quickly get up to speed.
+                </p>
+                <p style="color:var(--text-secondary); line-height: 1.6;">
+                    When enabled, Grasp will suggest onboarding-specific questions to guide your learning journey. You
+                    can toggle it on or off at any time from the bottom of the sidebar.
+                </p>
+            </div>
+            <div class="modal-footer" style="border-top: none; justify-content: center; padding-top: 0;">
+                <button class="approve-btn" style="width: 100%; padding: 12px; font-size: 14px;"
+                    onclick="dismissOnboardingIntro()">Got it, thanks!</button>
             </div>
         </div>
     </div>

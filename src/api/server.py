@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
 from sse_starlette.sse import EventSourceResponse
@@ -37,6 +37,13 @@ from .models import (
     ContributionUpdateRequest,
     ContributionActionRequest,
     ContributionActionResponse,
+    RegisterRequest,
+    GoogleAuthRequest,
+    LoginRequest,
+    AuthResponse,
+    UserListResponse,
+    ApproveUserRequest,
+    UpdateRoleRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +58,8 @@ def create_app(
     connectors: dict,
     admin_key: str = "",
     contribution_manager=None,
+    user_manager=None,
+    google_client_id: str = "",
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -81,6 +90,136 @@ def create_app(
     async def require_admin(key: str = Depends(_admin_key_header)):
         if not admin_key or not key or key != admin_key:
             raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+
+    # ── Session auth dependency ────────────────────────────
+
+    async def get_current_user(request: Request):
+        """Extract and verify session token from Authorization header."""
+        if not user_manager:
+            return None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            return user_manager.verify_token(token)
+        return None
+
+    # ── Auth endpoints ─────────────────────────────────────
+
+    @app.post("/api/auth/register", response_model=AuthResponse)
+    async def register_email(request: RegisterRequest):
+        """Register a new user via email."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        if request.password != request.confirm_password:
+            return AuthResponse(error="Passwords do not match")
+        result = user_manager.register_email(
+            first_name=request.first_name,
+            last_name=request.last_name,
+            dob=request.dob,
+            email=request.email,
+            password=request.password,
+        )
+        if "error" in result:
+            return AuthResponse(error=result["error"], conflict=result.get("conflict"))
+        return AuthResponse(user=result["user"], pending=True)
+
+    @app.post("/api/auth/register/google", response_model=AuthResponse)
+    async def register_google(request: GoogleAuthRequest):
+        """Register or login a user via Google."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = await user_manager.register_google(request.id_token)
+        if "error" in result:
+            return AuthResponse(error=result["error"], conflict=result.get("conflict"))
+        return AuthResponse(
+            user=result.get("user", {}),
+            token=result.get("token"),
+            pending=result.get("pending", False),
+        )
+
+    @app.post("/api/auth/login", response_model=AuthResponse)
+    async def login_email(request: LoginRequest):
+        """Login via email + password."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = user_manager.login_email(request.email, request.password)
+        if "error" in result:
+            return AuthResponse(error=result["error"], conflict=result.get("conflict"))
+        return AuthResponse(
+            user=result.get("user", {}),
+            token=result.get("token"),
+            pending=result.get("pending", False),
+        )
+
+    @app.post("/api/auth/login/google", response_model=AuthResponse)
+    async def login_google(request: GoogleAuthRequest):
+        """Login via Google ID token."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = await user_manager.login_google(request.id_token)
+        if "error" in result:
+            return AuthResponse(error=result["error"], conflict=result.get("conflict"))
+        return AuthResponse(
+            user=result.get("user", {}),
+            token=result.get("token"),
+            pending=result.get("pending", False),
+        )
+
+    @app.get("/api/auth/me")
+    async def get_me(request: Request):
+        """Get current user profile from session token."""
+        user = await get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return user
+
+    @app.get("/api/auth/config")
+    async def get_auth_config():
+        """Return public auth configuration (e.g. whether Google is enabled)."""
+        return {
+            "google_enabled": bool(google_client_id),
+            "google_client_id": google_client_id if google_client_id else None,
+        }
+
+    # ── Admin User Management ──────────────────────────────
+
+    @app.get("/api/admin/users", dependencies=[Depends(require_admin)])
+    async def list_users():
+        """List all registered users."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        users = user_manager.list_users()
+        return {"users": users, "count": len(users)}
+
+    @app.post("/api/admin/users/{user_id}/approve", dependencies=[Depends(require_admin)])
+    async def approve_user(user_id: str, request: ApproveUserRequest):
+        """Approve a pending user and assign a role."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = user_manager.approve_user(user_id, request.role)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.post("/api/admin/users/{user_id}/reject", dependencies=[Depends(require_admin)])
+    async def reject_user(user_id: str):
+        """Reject a pending user."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = user_manager.reject_user(user_id)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.put("/api/admin/users/{user_id}/role", dependencies=[Depends(require_admin)])
+    async def change_user_role(user_id: str, request: UpdateRoleRequest):
+        """Change an approved user's role."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        result = user_manager.update_role(user_id, request.role)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
 
     # ── Query endpoint (SSE streaming) ─────────────────────
 
@@ -202,12 +341,17 @@ def create_app(
 
     # ── Contribution endpoints ─────────────────────────────
 
-    @app.post("/api/contributions/submit", response_model=ContributionSubmitResponse)
-    async def submit_contribution(request: ContributionSubmitRequest):
+    @app.post("/api/contributions/submit")
+    async def submit_contribution(request: ContributionSubmitRequest, req: Request):
         """User submits a contribution request (public endpoint)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        if not request.submitted_by or not request.submitted_by.strip():
+        # Auto-populate name from session if logged in
+        current_user = await get_current_user(req)
+        submitted_by = request.submitted_by
+        if current_user:
+            submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
+        if not submitted_by or not submitted_by.strip():
             raise HTTPException(status_code=422, detail="Name is required")
         result = contribution_manager.submit(
             title=request.title,
@@ -215,21 +359,35 @@ def create_app(
             content_type=request.content_type,
             submitted_by=request.submitted_by,
         )
-        return ContributionSubmitResponse(
-            id=result["id"],
-            status="pending",
-            message="Contribution submitted for review",
+        response = JSONResponse(content={
+            "id": result["id"],
+            "status": "pending",
+            "message": "Contribution submitted for review",
+        })
+        # Set cookie so "My Submissions" can identify the user
+        response.set_cookie(
+            key="grasp_user",
+            value=request.submitted_by.strip(),
+            max_age=60 * 60 * 24 * 365,  # 1 year
+            httponly=False,
+            samesite="lax",
         )
+        return response
 
-    @app.post("/api/contributions/upload", response_model=ContributionSubmitResponse)
+    @app.post("/api/contributions/upload")
     async def upload_contribution(
+        req: Request,
         file: UploadFile = File(...),
         title: str = Form(...),
-        submitted_by: str = Form(...),
+        submitted_by: str = Form(""),
     ):
         """User uploads a document file (.txt, .md, .pdf, .docx) as a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        # Auto-populate name from session if logged in
+        current_user = await get_current_user(req)
+        if current_user:
+            submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
         if not submitted_by or not submitted_by.strip():
             raise HTTPException(status_code=422, detail="Name is required")
 
@@ -302,11 +460,20 @@ def create_app(
         except Exception as e:
             logger.warning(f"Could not save original file: {e}")
 
-        return ContributionSubmitResponse(
-            id=result["id"],
-            status="pending",
-            message=f"Document uploaded ({len(content)} chars extracted)",
+        response = JSONResponse(content={
+            "id": result["id"],
+            "status": "pending",
+            "message": f"Document uploaded ({len(content)} chars extracted)",
+        })
+        # Set cookie so "My Submissions" can identify the user
+        response.set_cookie(
+            key="grasp_user",
+            value=submitted_by.strip(),
+            max_age=60 * 60 * 24 * 365,  # 1 year
+            httponly=False,
+            samesite="lax",
         )
+        return response
 
     @app.get("/api/contributions/pending", response_model=ContributionListResponse, dependencies=[Depends(require_admin)])
     async def get_pending_contributions():
@@ -324,11 +491,17 @@ def create_app(
         return {"count": contribution_manager.count_pending()}
 
     @app.get("/api/contributions/my")
-    async def get_my_contributions(submitted_by: str = ""):
-        """Public endpoint — list all contributions for a given submitter name."""
+    async def get_my_contributions(request: Request, submitted_by: str = ""):
+        """Public endpoint — list all contributions for a given submitter name.
+
+        Accepts the name via query param or ``grasp_user`` cookie.
+        """
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
         name = submitted_by.strip()
+        # Fallback to cookie if no query param provided
+        if not name:
+            name = (request.cookies.get("grasp_user") or "").strip()
         if not name:
             raise HTTPException(status_code=422, detail="submitted_by is required")
         all_contributions = contribution_manager.list_all()
@@ -423,5 +596,13 @@ def create_app(
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
         return HTMLResponse(content="<h1>Grasp Admin</h1><p>Admin page not found.</p>")
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page():
+        """Serve the login/register page."""
+        html_path = static_dir / "login.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content="<h1>Grasp Login</h1><p>Login page not found.</p>")
 
     return app

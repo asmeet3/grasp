@@ -120,3 +120,57 @@ class ContributionActionResponse(BaseModel):
     message: str
     info_type: str | None = None
     error: str | None = None
+
+
+# ── Authentication ─────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    first_name: str = Field(..., description="First name")
+    last_name: str = Field(..., description="Last name")
+    dob: str = Field(..., description="Date of birth (YYYY-MM-DD)")
+    email: str = Field(..., description="Email address")
+    password: str = Field(..., min_length=8, description="Password (min 8 characters)")
+    confirm_password: str = Field(..., description="Password confirmation")
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(..., description="Google ID token from client-side sign-in")
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., description="Email address")
+    password: str = Field(..., description="Password")
+
+
+class AuthResponse(BaseModel):
+    token: str | None = None
+    user: dict = {}
+    pending: bool = False
+    error: str | None = None
+    conflict: str | None = None
+
+
+class UserResponse(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    email: str
+    auth_method: str
+    status: str
+    role: str | None = None
+    created_at: str
+    approved_at: str | None = None
+
+
+class UserListResponse(BaseModel):
+    users: list[UserResponse]
+    count: int
+
+
+class ApproveUserRequest(BaseModel):
+    role: str = Field(..., description="Role to assign: Intern, Associate, or Senior Associate")
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str = Field(..., description="New role: Intern, Associate, or Senior Associate")
+

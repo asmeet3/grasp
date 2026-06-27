@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     host: str = Field("0.0.0.0", description="Server bind host")
     port: int = Field(8000, description="Server bind port")
     admin_key: str = Field(..., description="Secret key for admin endpoints (sync, approve, reject)")
+    google_client_id: str = Field("", description="Google OAuth 2.0 Client ID for sign-in")
+    session_secret: str = Field("", description="Secret for signing session tokens (falls back to admin_key)")
+
+    @property
+    def effective_session_secret(self) -> str:
+        """Return the session signing secret, falling back to admin_key."""
+        return self.session_secret or self.admin_key
 
     # ── Derived paths ──────────────────────────────────────
     @property

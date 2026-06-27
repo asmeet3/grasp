@@ -351,15 +351,33 @@ class RepoManager:
         if not self._repo:
             return ""
         try:
-            return self._repo.git.diff("--", file_path)
+            diff = self._repo.git.diff("--", file_path)
+            if diff:
+                return diff
+            # If diff is empty, the file may be untracked/new — show full content
+            full_path = self.repo_path / file_path
+            if full_path.exists() and full_path.is_file():
+                content = full_path.read_text(encoding="utf-8")
+                lines = content.splitlines()
+                return (
+                    f"--- /dev/null\n"
+                    f"+++ b/{file_path}\n"
+                    f"@@ -0,0 +1,{len(lines)} @@\n"
+                    + "\n".join(f"+{line}" for line in lines)
+                )
+            return ""
         except Exception:
-            # If the file is untracked, show the full content
+            # Fallback: try reading the file directly
             try:
                 full_path = self.repo_path / file_path
-                if full_path.exists():
+                if full_path.exists() and full_path.is_file():
                     content = full_path.read_text(encoding="utf-8")
-                    return f"+++ {file_path} (new file)\n" + "\n".join(
-                        f"+{line}" for line in content.splitlines()
+                    lines = content.splitlines()
+                    return (
+                        f"--- /dev/null\n"
+                        f"+++ b/{file_path}\n"
+                        f"@@ -0,0 +1,{len(lines)} @@\n"
+                        + "\n".join(f"+{line}" for line in lines)
                     )
             except Exception:
                 pass

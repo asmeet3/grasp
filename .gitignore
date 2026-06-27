@@ -14,6 +14,7 @@ venv/
 knowledge_repo/
 chroma_data/
 checkpoints/
+graphify-out
 
 # IDE
 .vscode/

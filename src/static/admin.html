@@ -1,90 +1,131 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
     <title>Grasp — Admin Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
 </head>
+
 <body>
     <!-- Auth Gate -->
     <div class="auth-gate" id="authGate">
         <div class="auth-card">
             <div class="auth-title">Grasp Admin</div>
             <div class="brand-subtitle" style="text-align:center;margin-bottom:24px">Institutional Brain</div>
-            <p style="color:var(--text-tertiary);text-align:center;margin-bottom:20px;font-size:13px;line-height:1.6">Enter the admin key to access the management dashboard.</p>
-            <input type="password" class="admin-key-input" id="adminKeyInput" placeholder="Admin key..." onkeydown="if(event.key==='Enter')authenticateAdmin()">
-            <button class="approve-btn" style="width:100%;margin-top:14px" onclick="authenticateAdmin()">Authenticate</button>
-            <p id="authError" style="color:var(--danger);text-align:center;margin-top:12px;font-size:12px;display:none">Invalid admin key</p>
+            <p style="color:var(--text-tertiary);text-align:center;margin-bottom:20px;font-size:13px;line-height:1.6">
+                Enter the admin key to access the management dashboard.</p>
+            <input type="password" class="admin-key-input" id="adminKeyInput" placeholder="Admin key..."
+                onkeydown="if(event.key==='Enter')authenticateAdmin()">
+            <button class="approve-btn" style="width:100%;margin-top:14px"
+                onclick="authenticateAdmin()">Authenticate</button>
+            <p id="authError" style="color:var(--danger);text-align:center;margin-top:12px;font-size:12px;display:none">
+                Invalid admin key</p>
         </div>
     </div>
 
     <!-- Admin Dashboard (hidden until authenticated) -->
     <div class="app" id="adminApp" style="display:none">
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="brand">
-                    <div class="brand-icon" style="background:linear-gradient(135deg, #d4943c, #c0802e)">A</div>
-                    <div>
-                        <div class="brand-text">Grasp Admin</div>
-                        <div class="brand-subtitle">Management Dashboard</div>
+
+            <!-- Admin profile -->
+            <div class="user-profile-section" id="adminProfileSection">
+                <div class="user-profile-card">
+                    <div class="user-avatar" id="adminAvatar"
+                        style="background:linear-gradient(135deg, #d4943c, #c0802e); color: #fff;">A</div>
+                    <div class="user-profile-info">
+                        <div class="user-profile-name" id="adminProfileName">Admin</div>
+                        <div class="user-profile-role" id="adminProfileRole"><span class="role-pill role-admin">System
+                                Administrator</span></div>
+                    </div>
+                    <!-- 3-dot menu -->
+                    <div class="user-menu-wrapper">
+                        <button class="user-menu-btn" id="adminMenuBtn" onclick="toggleAdminMenu(event)"
+                            aria-label="Admin options">
+                            <span>⋮</span>
+                        </button>
+                        <div class="user-menu-dropdown" id="adminMenuDropdown" style="display:none">
+                            <button class="user-menu-item" onclick="adminLogout()">
+                                <span>↪</span> Sign Out
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="status-panel" id="statusPanel">
-                <div class="status-row">
-                    <span class="status-label">System</span>
-                    <span><span class="status-dot online" id="statusDot"></span><span id="statusText">Online</span></span>
+            <div class="sidebar-nav-scroll">
+                <div class="status-panel" id="statusPanel">
+                    <div class="status-row">
+                        <span class="status-label">System</span>
+                        <span><span class="status-dot online" id="statusDot"></span><span
+                                id="statusText">Online</span></span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Last Sync</span>
+                        <span id="lastSyncTime">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Documents</span>
+                        <span id="docCount">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Next Sync</span>
+                        <span id="nextSync">—</span>
+                    </div>
                 </div>
-                <div class="status-row">
-                    <span class="status-label">Last Sync</span>
-                    <span id="lastSyncTime">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Documents</span>
-                    <span id="docCount">—</span>
-                </div>
-                <div class="status-row">
-                    <span class="status-label">Next Sync</span>
-                    <span id="nextSync">—</span>
-                </div>
-            </div>
 
-            <div class="connectors-list" id="connectorsList">
-                <div class="connectors-title">Connectors</div>
-                <div id="connectorsContainer">
-                    <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                <div class="sidebar-section">
+                    <button class="sidebar-section-header" onclick="toggleSidebarSection('connectors')"
+                        aria-expanded="true" id="connectorsToggle">
+                        <span class="sidebar-section-title">Connectors</span>
+                        <span class="sidebar-section-chevron open" id="connectorsChevron">›</span>
+                    </button>
+                    <div class="sidebar-section-body" id="connectorsSectionBody">
+                        <div id="connectorsContainer">
+                            <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="sync-controls">
-                <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
-                    <span>⟳</span> Trigger Sync
-                </button>
-            </div>
+                <nav class="admin-nav" style="margin-top:20px;">
+                    <a href="#" class="admin-nav-item active" onclick="showAdminScreen('Home'); return false;"
+                        id="navHome">
+                        <span class="admin-nav-icon">📊</span> Dashboard
+                    </a>
+                    <a href="#" class="admin-nav-item" onclick="showAdminScreen('Users'); return false;" id="navUsers">
+                        <span class="admin-nav-icon">👥</span> User Management
+                        <span class="admin-nav-badge" id="navUsersBadge" style="display:none">0</span>
+                    </a>
+                    <a href="#" class="admin-nav-item" onclick="showAdminScreen('Contributions'); return false;"
+                        id="navContributions">
+                        <span class="admin-nav-icon">✦</span> Contributions
+                        <span class="admin-nav-badge" id="navContributionsBadge" style="display:none">0</span>
+                    </a>
+                </nav>
 
-            <div class="sidebar-footer">
-                <a href="/">← Back to User View</a>
-            </div>
+                <div class="sync-controls">
+                    <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
+                        <span>⟳</span> Trigger Sync
+                    </button>
+                </div>
+
+                <div class="sidebar-footer">
+                    <a href="/">← Back to User View</a>
+                </div>
         </aside>
 
         <main class="main">
             <header class="main-header">
-                <h2 style="font-family:'Instrument Serif',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)">Admin Dashboard</h2>
+                <h2 style="font-family:'Instrument Serif',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)"
+                    id="adminScreenTitle">Dashboard</h2>
                 <div style="display:flex;gap:12px;align-items:center">
-                    <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
+                    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle theme">
                         <span class="theme-toggle-icon" id="themeIcon">🌙</span>
-                        <div class="theme-toggle-track">
-                            <div class="theme-toggle-thumb"></div>
-                        </div>
-                        <span class="theme-toggle-icon" id="themeLightIcon">☀️</span>
-                    </div>
-                    <div id="contributionsBadge" class="pending-badge contributions-badge" style="display:none" onclick="scrollToContributions()">
-                        ✦ <span id="contributionsCount">0</span> contributions pending
-                    </div>
+                    </button>
                     <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
                         ⚠ <span id="pendingCount">0</span> pending changes
                     </div>
@@ -92,21 +133,34 @@
             </header>
 
             <div class="chat-area" id="adminContent" style="padding:36px">
-                <!-- Sync Status Card -->
-                <div style="max-width:800px;margin:0 auto">
-                    <h3 class="admin-section-title">Sync Status</h3>
-                    <div id="syncStatusCard" class="admin-card">
-                        <p style="color:var(--text-secondary)">Loading sync status...</p>
+                <div style="max-width:1100px;margin:0 auto">
+                    <!-- Screen: Home (Dashboard) -->
+                    <div id="screenHome" class="admin-screen">
+                        <h3 class="admin-section-title">Sync Status</h3>
+                        <div id="syncStatusCard" class="admin-card">
+                            <p style="color:var(--text-secondary)">Loading sync status...</p>
+                        </div>
+
+                        <h3 class="admin-section-title" style="margin-top:36px">Sync History</h3>
+                        <div id="syncHistoryCard" class="admin-card">
+                            <p style="color:var(--text-secondary)">Loading history...</p>
+                        </div>
                     </div>
 
-                    <h3 class="admin-section-title" style="margin-top:36px" id="contributionsSection">✦ Contribution Requests</h3>
-                    <div id="contributionsCard" class="admin-card">
-                        <p style="color:var(--text-secondary)">Loading contributions...</p>
+                    <!-- Screen: Users -->
+                    <div id="screenUsers" class="admin-screen" style="display:none">
+                        <h3 class="admin-section-title">👥 User Management</h3>
+                        <div id="usersCard" class="admin-card">
+                            <p style="color:var(--text-secondary)">Loading users...</p>
+                        </div>
                     </div>
 
-                    <h3 class="admin-section-title" style="margin-top:36px">Sync History</h3>
-                    <div id="syncHistoryCard" class="admin-card">
-                        <p style="color:var(--text-secondary)">Loading history...</p>
+                    <!-- Screen: Contributions -->
+                    <div id="screenContributions" class="admin-screen" style="display:none">
+                        <h3 class="admin-section-title">✦ Contribution Requests</h3>
+                        <div id="contributionsCard" class="admin-card">
+                            <p style="color:var(--text-secondary)">Loading contributions...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -143,10 +197,12 @@
             </div>
             <div class="modal-footer">
                 <div style="flex:1">
-                    <textarea class="admin-notes-textarea" id="contributionAdminNotes" placeholder="Admin notes (optional — visible to the submitter)..." rows="2"></textarea>
+                    <textarea class="admin-notes-textarea" id="contributionAdminNotes"
+                        placeholder="Admin notes (optional — visible to the submitter)..." rows="2"></textarea>
                 </div>
                 <button class="reject-btn" onclick="rejectContribution()">✗ Reject</button>
-                <button class="approve-btn" id="saveContributionBtn" onclick="saveContributionEdits()" style="background:var(--accent-primary)">💾 Save Edits</button>
+                <button class="approve-btn" id="saveContributionBtn" onclick="saveContributionEdits()"
+                    style="background:var(--accent-primary)">💾 Save Edits</button>
                 <button class="approve-btn" onclick="approveContribution()">✓ Approve & Add</button>
             </div>
         </div>
@@ -154,4 +210,5 @@
 
     <script src="/static/admin.js"></script>
 </body>
+
 </html>
