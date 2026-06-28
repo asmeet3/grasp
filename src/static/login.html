@@ -5,10 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Sign in to Grasp — Your organization's institutional brain.">
-    <title>Grasp — Sign In</title>
+    <title>Grasp - Sign In</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+    <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body class="login-body">
@@ -18,15 +18,28 @@
         <div class="login-bg-orb login-bg-orb-2"></div>
         <div class="login-bg-orb login-bg-orb-3"></div>
 
-        <div class="login-container">
-            <!-- Brand header -->
+        <!-- Left: Brand panel -->
+        <div class="login-panel-left">
             <div class="login-brand">
-                <div class="login-brand-icon">G</div>
-                <div class="login-brand-text">Grasp</div>
-                <div class="login-brand-subtitle">Institutional Brain</div>
+                <img src="/logos/grasp-invert-transparent.png" class="login-brand-logo logo-dark" alt="Grasp">
+                <img src="/logos/grasp-transparent.png" class="login-brand-logo logo-light" alt="Grasp">
             </div>
+            <p class="login-brand-description">Your organization's knowledge — unified, searchable, always current.</p>
+            <div class="login-brand-features">
+                <div class="login-feature"><span class="login-feature-dot"></span>Confluence, Jira, SharePoint, Slack,
+                    Notion</div>
+                <div class="login-feature"><span class="login-feature-dot"></span>AI-powered natural language search
+                </div>
+                <div class="login-feature"><span class="login-feature-dot"></span>Source-cited, trustworthy answers
+                </div>
+            </div>
+            <div class="login-footer">
+                <a href="/admin">Admin Dashboard →</a>
+            </div>
+        </div>
 
-            <!-- Login Card -->
+        <!-- Right: Form panel -->
+        <div class="login-panel-right">
             <div class="login-card" id="loginCard">
                 <div class="login-card-header">
                     <h1 id="authTitle">Welcome back</h1>
@@ -51,13 +64,13 @@
                 <form id="loginForm" onsubmit="handleLogin(event)">
                     <div class="login-field">
                         <label class="login-label" for="loginEmail">Email</label>
-                        <input type="email" class="login-input" id="loginEmail" placeholder="you@company.com"
-                            required autocomplete="email">
+                        <input type="email" class="login-input" id="loginEmail" placeholder="you@company.com" required
+                            autocomplete="email">
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="loginPassword">Password</label>
-                        <input type="password" class="login-input" id="loginPassword" placeholder="••••••••"
-                            required autocomplete="current-password" minlength="8">
+                        <input type="password" class="login-input" id="loginPassword" placeholder="••••••••" required
+                            autocomplete="current-password" minlength="8">
                     </div>
                     <button type="submit" class="login-btn login-btn-primary" id="loginSubmitBtn">
                         Sign In
@@ -69,29 +82,29 @@
                     <div class="login-field-row">
                         <div class="login-field">
                             <label class="login-label" for="regFirstName">First Name</label>
-                            <input type="text" class="login-input" id="regFirstName" placeholder="First name"
-                                required autocomplete="given-name">
+                            <input type="text" class="login-input" id="regFirstName" placeholder="First name" required
+                                autocomplete="given-name">
                         </div>
                         <div class="login-field">
                             <label class="login-label" for="regLastName">Last Name</label>
-                            <input type="text" class="login-input" id="regLastName" placeholder="Last name"
-                                required autocomplete="family-name">
+                            <input type="text" class="login-input" id="regLastName" placeholder="Last name" required
+                                autocomplete="family-name">
                         </div>
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="regDob">Date of Birth</label>
-                        <input type="text" class="login-input" id="regDob" placeholder="DD / MM / YYYY"
-                            required pattern="\d{2}\s*/\s*\d{2}\s*/\s*\d{4}" autocomplete="bday">
+                        <input type="text" class="login-input" id="regDob" placeholder="DD / MM / YYYY" required
+                            pattern="\d{2}\s*/\s*\d{2}\s*/\s*\d{4}" autocomplete="bday">
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="regEmail">Email</label>
-                        <input type="email" class="login-input" id="regEmail" placeholder="you@company.com"
-                            required autocomplete="email">
+                        <input type="email" class="login-input" id="regEmail" placeholder="you@company.com" required
+                            autocomplete="email">
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="regPassword">Password</label>
-                        <input type="password" class="login-input" id="regPassword"
-                            placeholder="Minimum 8 characters" required autocomplete="new-password" minlength="8">
+                        <input type="password" class="login-input" id="regPassword" placeholder="Minimum 8 characters"
+                            required autocomplete="new-password" minlength="8">
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="regConfirmPassword">Confirm Password</label>
@@ -130,11 +143,6 @@
                     <span id="toggleText">Don't have an account?</span>
                     <button class="login-toggle-btn" id="toggleBtn" onclick="toggleAuthMode()">Create one</button>
                 </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="login-footer">
-                <a href="/admin">Admin Dashboard →</a>
             </div>
         </div>
     </div>

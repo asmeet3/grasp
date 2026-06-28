@@ -10,6 +10,7 @@ function initTheme() {
     if (saved === 'light') {
         document.documentElement.setAttribute('data-theme', 'light');
     }
+    document.addEventListener('DOMContentLoaded', updateThemeIcon);
 }
 
 function toggleTheme() {
@@ -21,10 +22,36 @@ function toggleTheme() {
         document.documentElement.setAttribute('data-theme', 'light');
         localStorage.setItem('grasp_theme', 'light');
     }
+    updateThemeIcon();
+}
+
+function updateThemeIcon() {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const menuIcon = document.getElementById('themeMenuIcon');
+    const menuLabel = document.getElementById('themeMenuLabel');
+    if (menuIcon) menuIcon.textContent = isLight ? '☀️' : '🌙';
+    if (menuLabel) menuLabel.textContent = isLight ? 'Dark Mode' : 'Light Mode';
 }
 
 // Apply theme immediately
 initTheme();
+
+// ── Sidebar Collapse ─────────────────────────────────────
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    sidebar.classList.toggle('collapsed');
+    localStorage.setItem('grasp_sidebar_collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+}
+
+(function initSidebar() {
+    const collapsed = localStorage.getItem('grasp_sidebar_collapsed');
+    if (collapsed === '1') {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar) sidebar.classList.add('collapsed');
+    }
+})();
 
 // ── Authentication ────────────────────────────────────────
 
@@ -166,15 +193,14 @@ async function refreshStatus() {
         const container = document.getElementById('connectorsContainer');
         const connectors = data.connector_health || {};
         const names = { confluence: 'Confluence', jira: 'Jira', sharepoint: 'SharePoint', slack: 'Slack', notion: 'Notion' };
-        const icons = { confluence: '📘', jira: '🔷', sharepoint: '📂', slack: '💬', notion: '📝' };
-
         container.innerHTML = Object.entries(names).map(([key, name]) => {
             const health = connectors[key];
             const dotClass = health === true ? 'healthy' : health === false ? 'unhealthy' : 'unknown';
             const pillLabel = health === true ? 'Active' : health === false ? 'Error' : 'N/A';
+            const iconHtml = `<img src="/icons/${key}-dark.svg" class="theme-icon-dark" alt="${name}"><img src="/icons/${key}-light.svg" class="theme-icon-light" alt="${name}">`;
             return `<div class="connector-item">
                 <span class="connector-dot ${dotClass}"></span>
-                ${icons[key]} ${name}
+                ${iconHtml} <span style="margin-left:6px">${name}</span>
                 <span class="connector-status-pill ${dotClass}">${pillLabel}</span>
             </div>`;
         }).join('');

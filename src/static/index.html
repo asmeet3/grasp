@@ -6,26 +6,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
         content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
-    <title>Grasp — Institutional Brain</title>
+    <title>Grasp</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+    <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body>
     <div class="app">
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
 
+            <!-- Sidebar Header: Logo + Collapse -->
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp" class="logo-light">
+                    <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp" class="logo-dark">
+                </div>
+                <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()"
+                    aria-label="Toggle sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <polyline points="11 17 6 12 11 7"></polyline>
+                        <polyline points="18 17 13 12 18 7"></polyline>
+                    </svg>
+                </button>
+            </div>
 
             <!-- User profile (populated by JS) -->
             <div class="user-profile-section" id="userProfileSection" style="display:none">
                 <div class="user-profile-card">
                     <div class="user-avatar" id="userAvatar">?</div>
-                    <div class="user-profile-info">
-                        <div class="user-profile-name" id="userProfileName">—</div>
-                        <div class="user-profile-role" id="userProfileRole"></div>
-                    </div>
+                    <div class="user-profile-name" id="userProfileName">—</div>
                     <!-- 3-dot menu -->
                     <div class="user-menu-wrapper">
                         <button class="user-menu-btn" id="userMenuBtn" onclick="toggleUserMenu(event)"
@@ -33,7 +45,19 @@
                             <span>⋮</span>
                         </button>
                         <div class="user-menu-dropdown" id="userMenuDropdown" style="display:none">
-                            <button class="user-menu-item" onclick="logout()">
+                            <div class="user-menu-role" id="userMenuRole"></div>
+                            <div class="user-menu-divider"></div>
+                            <button class="user-menu-item" onclick="toggleTheme(); event.stopPropagation();">
+                                <span class="theme-menu-icon" id="themeMenuIcon">🌙</span> <span
+                                    id="themeMenuLabel">Light Mode</span>
+                            </button>
+                            <button class="user-menu-item" onclick="openSettingsModal(); closeUserMenuDropdown();">
+                                <img src="/icons/settings-dark.png" class="theme-icon-dark" alt="Settings"><img
+                                    src="/icons/settings-light.png" class="theme-icon-light" alt="Settings"> <span
+                                    style="margin-left:8px">Settings</span>
+                            </button>
+                            <div class="user-menu-divider"></div>
+                            <button class="user-menu-item user-menu-item-danger" onclick="logout()">
                                 <span>↪</span> Sign Out
                             </button>
                         </div>
@@ -87,25 +111,34 @@
                         <input type="checkbox" id="onboardingCheckbox" onchange="toggleOnboarding()">
                         <span class="toggle-slider"></span>
                     </label>
-                    <span class="onboarding-label">🎓 Onboarding Mode</span>
+                    <span class="onboarding-label"><img src="/icons/onboarding-dark.png" class="theme-icon-dark"
+                            alt="Onboarding" style="width:14px;height:14px;margin-right:4px;"><img
+                            src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding"
+                            style="width:14px;height:14px;margin-right:4px;"> Onboarding Mode</span>
                 </div>
                 <button class="contribute-btn" onclick="openContributeModal()">
                     <span>✦</span> Contribute
                 </button>
                 <button class="my-submissions-btn" onclick="openMySubmissions()">
-                    <span>📋</span> My Submissions
+                    <img src="/icons/submission-dark.svg" class="theme-icon-dark" alt="Submissions"><img
+                        src="/icons/submission-light.svg" class="theme-icon-light" alt="Submissions"> <span
+                        style="margin-left:6px">My Submissions</span>
                 </button>
-                <a href="/admin">Admin Dashboard →</a>
             </div>
         </aside>
 
         <!-- Main Content -->
         <main class="main">
+            <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()"
+                aria-label="Expand sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polyline points="13 17 18 12 13 7"></polyline>
+                    <polyline points="6 17 11 12 6 7"></polyline>
+                </svg>
+            </button>
             <header class="main-header">
                 <div></div>
-                <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle theme">
-                    <span class="theme-toggle-icon" id="themeIcon">🌙</span>
-                </button>
             </header>
 
             <div class="chat-area" id="chatArea">
@@ -120,7 +153,10 @@
 
                     <!-- Onboarding banner (hidden by default) -->
                     <div class="onboarding-banner" id="onboardingBanner" style="display:none">
-                        <div class="onboarding-banner-icon">🎓</div>
+                        <div class="onboarding-banner-icon"><img src="/icons/onboarding-dark.png"
+                                class="theme-icon-dark" alt="Onboarding" style="width:24px;height:24px;"><img
+                                src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding"
+                                style="width:24px;height:24px;"></div>
                         <div>
                             <strong>Welcome aboard!</strong> Onboarding mode is active. These prompts are designed to
                             quickly
@@ -270,7 +306,7 @@
 
     <!-- Onboarding Intro Modal -->
     <div class="modal-overlay" id="onboardingIntroModal"
-        style="display:none; z-index: 10001; background: rgba(11, 13, 16, 0.85);">
+        style="display:none; z-index: 10001; background: rgba(12, 12, 14, 0.85);">
         <!-- Animated arrow pointing to sidebar -->
         <div class="onboarding-pointer">
             <div class="onboarding-pointer-arrow">↙</div>
@@ -294,6 +330,161 @@
             <div class="modal-footer" style="border-top: none; justify-content: center; padding-top: 0;">
                 <button class="approve-btn" style="width: 100%; padding: 12px; font-size: 14px;"
                     onclick="dismissOnboardingIntro()">Got it, thanks!</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal settings-modal">
+            <div class="modal-header">
+                <h2>⚙ Settings</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">✕</button>
+            </div>
+            <div class="modal-body settings-modal-body">
+
+                <!-- Profile Picture -->
+                <div class="settings-section">
+                    <div class="settings-section-title">Profile Picture</div>
+                    <div class="settings-avatar-row">
+                        <div class="settings-avatar-preview" id="settingsAvatarPreview">
+                            <span id="settingsAvatarInitial">?</span>
+                            <img id="settingsAvatarImg" src="" alt="Profile" style="display:none">
+                        </div>
+                        <div class="settings-avatar-upload">
+                            <div class="settings-avatar-dropzone" id="settingsAvatarDropzone"
+                                onclick="document.getElementById('settingsAvatarFile').click()"
+                                ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                                ondragleave="this.classList.remove('drag-over')" ondrop="handleAvatarDrop(event)">
+                                <input type="file" id="settingsAvatarFile" accept="image/*" style="display:none"
+                                    onchange="handleProfilePictureUpload(this.files[0])">
+                                <div class="dropzone-icon" style="font-size:20px">🖼</div>
+                                <div class="dropzone-text" style="font-size:12px">Click or drag an image</div>
+                                <div class="dropzone-hint">Must be at least 256 × 256 px</div>
+                            </div>
+                            <div class="settings-avatar-error" id="settingsAvatarError" style="display:none"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-divider"></div>
+
+                <!-- Name & DOB -->
+                <div class="settings-section">
+                    <div class="settings-section-title">Personal Info</div>
+                    <div class="settings-row">
+                        <div class="settings-field">
+                            <label class="contribute-label">First Name</label>
+                            <input type="text" class="contribute-input" id="settingsFirstName" placeholder="First name">
+                        </div>
+                        <div class="settings-field">
+                            <label class="contribute-label">Last Name</label>
+                            <input type="text" class="contribute-input" id="settingsLastName" placeholder="Last name">
+                        </div>
+                    </div>
+                    <div class="settings-field" style="margin-top:12px">
+                        <label class="contribute-label">Date of Birth</label>
+                        <input type="date" class="contribute-input" id="settingsDob">
+                    </div>
+                </div>
+
+                <div class="settings-divider"></div>
+
+                <!-- Change Password -->
+                <div class="settings-section" id="settingsPasswordSection">
+                    <div class="settings-section-title">Change Password</div>
+                    <div class="settings-field">
+                        <label class="contribute-label">Current Password</label>
+                        <input type="password" class="contribute-input" id="settingsCurrentPwd"
+                            placeholder="Enter current password">
+                    </div>
+                    <div class="settings-field" style="margin-top:12px">
+                        <label class="contribute-label">New Password</label>
+                        <input type="password" class="contribute-input" id="settingsNewPwd"
+                            placeholder="Min. 8 characters">
+                    </div>
+                    <div class="settings-field" style="margin-top:12px">
+                        <label class="contribute-label">Confirm New Password</label>
+                        <input type="password" class="contribute-input" id="settingsConfirmPwd"
+                            placeholder="Repeat new password">
+                    </div>
+                    <div class="settings-pwd-error" id="settingsPwdError" style="display:none"></div>
+                </div>
+
+            </div>
+            <div class="modal-footer settings-modal-footer">
+                <div style="flex:1"></div>
+                <button class="reject-btn" onclick="closeSettingsModal()">Cancel</button>
+                <button class="approve-btn" id="settingsSaveBtn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Crop Modal -->
+    <div class="modal-overlay crop-modal-overlay" id="cropModal">
+        <div class="crop-modal-container">
+            <div class="crop-modal-header">
+                <div class="crop-modal-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 2 3 2 3 22 21 22 21 19"></polyline>
+                        <polyline points="21 6 21 3 18 3"></polyline>
+                        <line x1="3" y1="6" x2="8" y2="6"></line>
+                        <line x1="6" y1="3" x2="6" y2="8"></line>
+                        <rect x="8" y="8" width="13" height="13"></rect>
+                    </svg>
+                    Crop Profile Picture
+                </div>
+                <button class="modal-close" onclick="closeCropModal()" aria-label="Close crop">✕</button>
+            </div>
+            <div class="crop-modal-body">
+                <div class="crop-canvas-wrapper" id="cropCanvasWrapper">
+                    <canvas id="cropCanvas"></canvas>
+                    <!-- Overlay mask with circular hole -->
+                    <div class="crop-overlay-mask" id="cropOverlayMask">
+                        <svg class="crop-mask-svg" id="cropMaskSvg" xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <mask id="cropHoleMask">
+                                    <rect width="100%" height="100%" fill="white" />
+                                    <circle id="cropMaskCircle" fill="black" />
+                                </mask>
+                            </defs>
+                            <rect width="100%" height="100%" fill="rgba(0,0,0,0.55)" mask="url(#cropHoleMask)" />
+                            <circle id="cropBorderCircle" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2"
+                                stroke-dasharray="6 4" />
+                        </svg>
+                    </div>
+                </div>
+                <div class="crop-controls">
+                    <div class="crop-zoom-row">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5" stroke-linecap="round">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            <line x1="8" y1="11" x2="14" y2="11" />
+                        </svg>
+                        <input type="range" class="crop-zoom-slider" id="cropZoomSlider" min="1" max="3" step="0.01"
+                            value="1">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5" stroke-linecap="round">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            <line x1="11" y1="8" x2="11" y2="14" />
+                            <line x1="8" y1="11" x2="14" y2="11" />
+                        </svg>
+                    </div>
+                    <p class="crop-hint">Drag to reposition · Scroll or use slider to zoom</p>
+                </div>
+            </div>
+            <div class="crop-modal-footer">
+                <button class="reject-btn" onclick="closeCropModal()">Cancel</button>
+                <button class="crop-confirm-btn" id="cropConfirmBtn" onclick="confirmCrop()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Use This Crop
+                </button>
             </div>
         </div>
     </div>

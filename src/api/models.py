@@ -174,3 +174,18 @@ class ApproveUserRequest(BaseModel):
 class UpdateRoleRequest(BaseModel):
     role: str = Field(..., description="New role: Intern, Associate, or Senior Associate")
 
+
+# ── User Self-Service ──────────────────────────────────────
+
+class UpdateProfileRequest(BaseModel):
+    first_name: str | None = Field(None, description="Updated first name")
+    last_name: str | None = Field(None, description="Updated last name")
+    dob: str | None = Field(None, description="Updated date of birth (YYYY-MM-DD)")
+    profile_picture: str | None = Field(None, description="Base64-encoded PNG data URL (256×256)")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., min_length=8, description="New password (min 8 characters)")
+    confirm_new_password: str = Field(..., description="New password confirmation")
+

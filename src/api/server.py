@@ -44,6 +44,8 @@ from .models import (
     UserListResponse,
     ApproveUserRequest,
     UpdateRoleRequest,
+    UpdateProfileRequest,
+    ChangePasswordRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,16 @@ def create_app(
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    # Icons
+    icons_dir = Path(__file__).parent.parent / "icons"
+    if icons_dir.exists():
+        app.mount("/icons", StaticFiles(directory=str(icons_dir)), name="icons")
+
+    # Logos
+    logos_dir = Path(__file__).parent.parent / "logos"
+    if logos_dir.exists():
+        app.mount("/logos", StaticFiles(directory=str(logos_dir)), name="logos")
 
     # ── Admin auth dependency ──────────────────────────────
 
@@ -180,6 +192,44 @@ def create_app(
             "google_enabled": bool(google_client_id),
             "google_client_id": google_client_id if google_client_id else None,
         }
+
+    @app.put("/api/auth/profile")
+    async def update_profile(request: UpdateProfileRequest, req: Request):
+        """Update the current user's profile (name, dob, profile picture)."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        result = user_manager.update_profile(
+            user_id=user["id"],
+            first_name=request.first_name,
+            last_name=request.last_name,
+            dob=request.dob,
+            profile_picture=request.profile_picture,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result["user"]
+
+    @app.put("/api/auth/password")
+    async def change_password(request: ChangePasswordRequest, req: Request):
+        """Change the current user's password. Invalidates all existing sessions."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        if request.new_password != request.confirm_new_password:
+            raise HTTPException(status_code=422, detail="New passwords do not match")
+        result = user_manager.change_password(
+            user_id=user["id"],
+            current_password=request.current_password,
+            new_password=request.new_password,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return {"message": result["message"], "logout_required": True}
 
     # ── Admin User Management ──────────────────────────────
 

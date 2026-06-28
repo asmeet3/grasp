@@ -146,7 +146,8 @@ class UserManager:
                     "user": self._public_user(existing),
                     "pending": True,
                 }
-            token = self._create_token(existing["id"])
+            pv = existing.get("password_version", 0)
+            token = self._create_token(existing["id"], pv)
             return {"user": self._public_user(existing), "token": token}
 
         user_id = str(uuid.uuid4())[:12]
@@ -195,7 +196,8 @@ class UserManager:
         if user.get("status") == "rejected":
             return {"error": "Your account has been rejected. Please contact an administrator."}
 
-        token = self._create_token(user["id"])
+        pv = user.get("password_version", 0)
+        token = self._create_token(user["id"], pv)
         return {"user": self._public_user(user), "token": token}
 
     async def login_google(self, id_token: str) -> dict[str, Any]:
@@ -225,25 +227,87 @@ class UserManager:
         if user.get("status") == "rejected":
             return {"error": "Your account has been rejected. Please contact an administrator."}
 
-        token = self._create_token(user["id"])
+        pv = user.get("password_version", 0)
+        token = self._create_token(user["id"], pv)
         return {"user": self._public_user(user), "token": token}
 
     # ── Session ────────────────────────────────────────────
 
-    def _create_token(self, user_id: str) -> str:
-        """Create a signed session token."""
-        return self._serializer.dumps({"uid": user_id})
+    def _create_token(self, user_id: str, password_version: int = 0) -> str:
+        """Create a signed session token embedding the password version."""
+        return self._serializer.dumps({"uid": user_id, "pv": password_version})
 
     def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify a session token and return the user, or None."""
         try:
             data = self._serializer.loads(token, max_age=SESSION_MAX_AGE)
             user = self._load(data["uid"])
-            if user and user.get("status") == "approved":
-                return self._public_user(user)
-            return None
+            if not user or user.get("status") != "approved":
+                return None
+            # Invalidate token if password has been changed since it was issued
+            if user.get("password_version", 0) != data.get("pv", 0):
+                return None
+            return self._public_user(user)
         except (BadSignature, SignatureExpired, KeyError):
             return None
+
+    # ── User Self-Service ──────────────────────────────────
+
+    def update_profile(
+        self,
+        user_id: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        dob: str | None = None,
+        profile_picture: str | None = None,
+    ) -> dict[str, Any]:
+        """Update a user's own profile fields. Returns updated public user or error."""
+        user = self._load(user_id)
+        if not user:
+            return {"error": "User not found"}
+
+        if first_name is not None:
+            user["first_name"] = first_name.strip()
+        if last_name is not None:
+            user["last_name"] = last_name.strip()
+        if dob is not None:
+            user["dob"] = dob
+        if profile_picture is not None:
+            user["profile_picture"] = profile_picture  # base64 PNG data URL
+
+        self._save(user)
+        logger.info(f"User {user_id} updated their profile")
+        return {"user": self._public_user(user)}
+
+    def change_password(
+        self,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+    ) -> dict[str, Any]:
+        """Change a user's password and bump the password_version to invalidate sessions."""
+        user = self._load(user_id)
+        if not user:
+            return {"error": "User not found"}
+
+        if user.get("auth_method") == "google":
+            return {"error": "Google-authenticated accounts cannot set a password here."}
+
+        if not _bcrypt.checkpw(
+            current_password.encode("utf-8"),
+            user.get("password_hash", "").encode("utf-8"),
+        ):
+            return {"error": "Current password is incorrect."}
+
+        # Hash new password
+        new_hash = _bcrypt.hashpw(new_password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        user["password_hash"] = new_hash
+        # Increment password_version to invalidate all existing session tokens
+        user["password_version"] = user.get("password_version", 0) + 1
+        self._save(user)
+
+        logger.info(f"User {user_id} changed their password (version={user['password_version']})")
+        return {"message": "Password changed successfully. Please log in again."}
 
     # ── Admin Actions ──────────────────────────────────────
 
@@ -359,10 +423,12 @@ class UserManager:
             "id": user["id"],
             "first_name": user.get("first_name", ""),
             "last_name": user.get("last_name", ""),
+            "dob": user.get("dob", ""),
             "email": user.get("email", ""),
             "auth_method": user.get("auth_method", "email"),
             "status": user.get("status", "pending_approval"),
             "role": user.get("role"),
             "created_at": user.get("created_at", ""),
             "approved_at": user.get("approved_at"),
+            "profile_picture": user.get("profile_picture"),
         }

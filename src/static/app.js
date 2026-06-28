@@ -55,15 +55,14 @@ async function refreshStatus() {
         const container = document.getElementById('connectorsContainer');
         const connectors = data.connector_health || {};
         const names = { confluence: 'Confluence', jira: 'Jira', sharepoint: 'SharePoint', slack: 'Slack', notion: 'Notion' };
-        const icons = { confluence: '📘', jira: '🔷', sharepoint: '📂', slack: '💬', notion: '📝' };
-
         container.innerHTML = Object.entries(names).map(([key, name]) => {
             const health = connectors[key];
             const dotClass = health === true ? 'healthy' : health === false ? 'unhealthy' : 'unknown';
             const pillLabel = health === true ? 'Active' : health === false ? 'Error' : 'N/A';
+            const iconHtml = `<img src="/icons/${key}-dark.svg" class="theme-icon-dark" alt="${name}"><img src="/icons/${key}-light.svg" class="theme-icon-light" alt="${name}">`;
             return `<div class="connector-item">
                 <span class="connector-dot ${dotClass}"></span>
-                ${icons[key]} ${name}
+                ${iconHtml} <span style="margin-left:6px">${name}</span>
                 <span class="connector-status-pill ${dotClass}">${pillLabel}</span>
             </div>`;
         }).join('');
@@ -142,10 +141,10 @@ async function submitQuery() {
 
         function typeWriter() {
             if (!isStreaming) return;
-            
+
             if (displayedText.length < fullText.length) {
                 const diff = fullText.length - displayedText.length;
-                
+
                 // Add characters at a controlled pace to ensure a smooth typing effect
                 // even if the backend sends large chunks at once.
                 let charsToAdd = 1;
@@ -154,9 +153,9 @@ async function submitQuery() {
                 if (diff > 100) charsToAdd = 4;
                 if (diff > 200) charsToAdd = 6;
                 if (diff > 400) charsToAdd = 8;
-                
+
                 displayedText += fullText.slice(displayedText.length, displayedText.length + charsToAdd);
-                
+
                 const cursorHtml = '<span style="display:inline-block;width:6px;height:15px;background:var(--accent-primary);margin-left:4px;vertical-align:middle;animation:pulse 1s infinite"></span>';
                 assistantMsg.innerHTML = renderMarkdown(displayedText) + cursorHtml;
                 chatArea.scrollTop = chatArea.scrollHeight;
@@ -171,7 +170,7 @@ async function submitQuery() {
                 document.getElementById('sendBtn').disabled = false;
             }
         }
-        
+
         requestAnimationFrame(typeWriter);
 
         while (true) {
@@ -588,14 +587,34 @@ function toggleTheme() {
 }
 
 function updateThemeIcon() {
-    const icon = document.getElementById('themeIcon');
-    if (!icon) return;
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-    icon.textContent = isLight ? '☀️' : '🌙';
+    const menuIcon = document.getElementById('themeMenuIcon');
+    const menuLabel = document.getElementById('themeMenuLabel');
+    if (menuIcon) menuIcon.textContent = isLight ? '☀️' : '🌙';
+    if (menuLabel) menuLabel.textContent = isLight ? 'Dark Mode' : 'Light Mode';
 }
 
 // Apply theme immediately (before DOMContentLoaded)
 initTheme();
+
+// ── Sidebar Collapse ─────────────────────────────────────
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    sidebar.classList.toggle('collapsed');
+    localStorage.setItem('grasp_sidebar_collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+}
+
+function initSidebar() {
+    const collapsed = localStorage.getItem('grasp_sidebar_collapsed');
+    if (collapsed === '1') {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar) sidebar.classList.add('collapsed');
+    }
+}
+
+initSidebar();
 
 // ── My Submissions ────────────────────────────────────────
 
@@ -715,22 +734,38 @@ function populateUserProfile(user) {
     const section = document.getElementById('userProfileSection');
     const avatar = document.getElementById('userAvatar');
     const name = document.getElementById('userProfileName');
-    const role = document.getElementById('userProfileRole');
+    const menuRole = document.getElementById('userMenuRole');
 
     if (section) section.style.display = '';
-    if (avatar) avatar.textContent = (user.first_name || '?')[0].toUpperCase();
+
+    // Show profile picture or initial
+    if (avatar) {
+        if (user.profile_picture) {
+            avatar.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+        } else {
+            avatar.textContent = (user.first_name || '?')[0].toUpperCase();
+        }
+    }
+
     if (name) name.textContent = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
-    if (role && user.role) {
+    if (menuRole && user.role) {
         const roleClass = getRoleClass(user.role);
-        role.innerHTML = `<span class="role-pill ${roleClass}">${user.role}</span>`;
+        menuRole.innerHTML = `<span class="role-pill ${roleClass}">${user.role}</span>`;
     }
 }
 
 function getRoleClass(role) {
     switch (role) {
         case 'Intern': return 'role-intern';
+        case 'Junior Associate': return 'role-junior';
         case 'Associate': return 'role-associate';
         case 'Senior Associate': return 'role-senior';
+        case 'Team Lead': return 'role-lead';
+        case 'Manager': return 'role-manager';
+        case 'Director': return 'role-director';
+        case 'Principal': return 'role-principal';
+        case 'Vice President': return 'role-vp';
+        case 'Partner': return 'role-partner';
         default: return '';
     }
 }
@@ -750,6 +785,11 @@ function toggleUserMenu(event) {
     if (!dropdown) return;
     const isVisible = dropdown.style.display !== 'none';
     dropdown.style.display = isVisible ? 'none' : 'block';
+}
+
+function closeUserMenuDropdown() {
+    const dropdown = document.getElementById('userMenuDropdown');
+    if (dropdown) dropdown.style.display = 'none';
 }
 
 // Close user menu when clicking outside
@@ -829,3 +869,485 @@ function dismissOnboardingIntro() {
     }
 }
 
+// ── Settings Modal ──────────────────────────────────────
+
+/** Pending profile picture data URL (256×256 PNG) waiting to be saved. */
+let _pendingProfilePicture = null;
+
+function openSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
+
+    // Reset state
+    _pendingProfilePicture = null;
+    clearSettingsAvatarError();
+    document.getElementById('settingsPwdError').style.display = 'none';
+    document.getElementById('settingsCurrentPwd').value = '';
+    document.getElementById('settingsNewPwd').value = '';
+    document.getElementById('settingsConfirmPwd').value = '';
+
+    // Pre-fill with current user data
+    if (currentUser) {
+        document.getElementById('settingsFirstName').value = currentUser.first_name || '';
+        document.getElementById('settingsLastName').value = currentUser.last_name || '';
+        document.getElementById('settingsDob').value = currentUser.dob || '';
+
+        // Avatar preview
+        const initial = document.getElementById('settingsAvatarInitial');
+        const img = document.getElementById('settingsAvatarImg');
+        if (currentUser.profile_picture) {
+            img.src = currentUser.profile_picture;
+            img.style.display = '';
+            if (initial) initial.style.display = 'none';
+        } else {
+            img.style.display = 'none';
+            img.src = '';
+            if (initial) {
+                initial.style.display = '';
+                initial.textContent = (currentUser.first_name || '?')[0].toUpperCase();
+            }
+        }
+
+        // Hide password section for Google users
+        const pwdSection = document.getElementById('settingsPasswordSection');
+        if (pwdSection) {
+            pwdSection.style.display = currentUser.auth_method === 'google' ? 'none' : '';
+        }
+    }
+
+    modal.classList.add('active');
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) modal.classList.remove('active');
+    _pendingProfilePicture = null;
+}
+
+function clearSettingsAvatarError() {
+    const err = document.getElementById('settingsAvatarError');
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+}
+
+function showSettingsAvatarError(msg) {
+    const err = document.getElementById('settingsAvatarError');
+    if (err) { err.textContent = msg; err.style.display = ''; }
+}
+
+// ── Interactive Crop Modal ─────────────────────────────────
+
+/** Crop modal state */
+const _crop = {
+    img: null,          // HTMLImageElement of the full-res original
+    zoom: 1,            // current zoom multiplier (1 = fit-to-canvas)
+    panX: 0,            // image center X offset in canvas px
+    panY: 0,            // image center Y offset in canvas px
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+    canvasSize: 0,      // width=height of the square canvas in CSS px
+    baseScale: 1,       // scale so that the image fills the canvas at zoom=1
+};
+
+function openCropModal(img) {
+    _crop.img = img;
+
+    const modal = document.getElementById('cropModal');
+    // Show the modal first so getBoundingClientRect returns real dimensions
+    modal.classList.add('active');
+
+    // Defer sizing until the next frame (after the modal is painted)
+    requestAnimationFrame(() => {
+        const canvas = document.getElementById('cropCanvas');
+        const wrapper = document.getElementById('cropCanvasWrapper');
+
+        // Size the canvas to match the wrapper's rendered square
+        const wRect = wrapper.getBoundingClientRect();
+        const size = Math.min(wRect.width || 460, wRect.height || 460);
+        _crop.canvasSize = size;
+        canvas.width = size;
+        canvas.height = size;
+        canvas.style.width = size + 'px';
+        canvas.style.height = size + 'px';
+
+        // Compute base scale so the image fills the canvas (cover)
+        const scaleX = size / img.naturalWidth;
+        const scaleY = size / img.naturalHeight;
+        _crop.baseScale = Math.max(scaleX, scaleY);
+
+        // Center
+        _crop.zoom = 1;
+        _crop.panX = 0;
+        _crop.panY = 0;
+
+        // Reset slider
+        const slider = document.getElementById('cropZoomSlider');
+        if (slider) { slider.value = 1; }
+
+        // Update SVG mask circle to match canvas center
+        _updateCropMask(size);
+
+        renderCropCanvas();
+        _attachCropEvents();
+    });
+}
+
+function _updateCropMask(size) {
+    const r = size * 0.44; // circle is 88% of canvas size
+    const cx = size / 2;
+    const cy = size / 2;
+    const circle = document.getElementById('cropMaskCircle');
+    const border = document.getElementById('cropBorderCircle');
+    if (circle) { circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', r); }
+    if (border)  { border.setAttribute('cx', cx); border.setAttribute('cy', cy); border.setAttribute('r', r); }
+}
+
+function renderCropCanvas() {
+    const canvas = document.getElementById('cropCanvas');
+    if (!canvas || !_crop.img) return;
+    const ctx = canvas.getContext('2d');
+    const s = _crop.canvasSize;
+    ctx.clearRect(0, 0, s, s);
+
+    const scale = _crop.baseScale * _crop.zoom;
+    const imgW = _crop.img.naturalWidth * scale;
+    const imgH = _crop.img.naturalHeight * scale;
+
+    // Image is drawn centered + panned
+    const dx = (s - imgW) / 2 + _crop.panX;
+    const dy = (s - imgH) / 2 + _crop.panY;
+
+    ctx.drawImage(_crop.img, dx, dy, imgW, imgH);
+}
+
+function closeCropModal() {
+    const modal = document.getElementById('cropModal');
+    if (modal) modal.classList.remove('active');
+    _detachCropEvents();
+    // Reset the file input so the same file can be re-selected
+    const input = document.getElementById('settingsAvatarFile');
+    if (input) input.value = '';
+}
+
+function confirmCrop() {
+    if (!_crop.img) return;
+
+    const s = _crop.canvasSize;
+    const r = s * 0.44;  // must match _updateCropMask
+    const cx = s / 2;
+    const cy = s / 2;
+
+    // Extract the circular crop region into a 256×256 output canvas
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = 256;
+    outCanvas.height = 256;
+    const outCtx = outCanvas.getContext('2d');
+
+    // Scale from canvas coords to output coords
+    const outR = 128; // 256/2
+    const ratio = outR / r;
+
+    // Compute where the circle region sits in image space
+    const scale = _crop.baseScale * _crop.zoom;
+    const imgW = _crop.img.naturalWidth * scale;
+    const imgH = _crop.img.naturalHeight * scale;
+    const imgLeft = (s - imgW) / 2 + _crop.panX;
+    const imgTop  = (s - imgH) / 2 + _crop.panY;
+
+    // Top-left of the circular region in canvas space
+    const regionLeft = cx - r;
+    const regionTop  = cy - r;
+
+    // In image coordinates
+    const srcX = (regionLeft - imgLeft) / scale;
+    const srcY = (regionTop  - imgTop)  / scale;
+    const srcW = (r * 2) / scale;
+    const srcH = (r * 2) / scale;
+
+    // Clip to circle then draw
+    outCtx.beginPath();
+    outCtx.arc(128, 128, 128, 0, Math.PI * 2);
+    outCtx.clip();
+    outCtx.drawImage(_crop.img, srcX, srcY, srcW, srcH, 0, 0, 256, 256);
+
+    _pendingProfilePicture = outCanvas.toDataURL('image/png');
+
+    // Update the settings modal preview
+    const previewImg  = document.getElementById('settingsAvatarImg');
+    const previewInit = document.getElementById('settingsAvatarInitial');
+    if (previewImg) {
+        previewImg.src = _pendingProfilePicture;
+        previewImg.style.display = '';
+    }
+    if (previewInit) previewInit.style.display = 'none';
+
+    // Subtle pulse on the avatar preview
+    const previewEl = document.getElementById('settingsAvatarPreview');
+    if (previewEl) {
+        previewEl.classList.remove('crop-confirmed');
+        void previewEl.offsetWidth; // reflow
+        previewEl.classList.add('crop-confirmed');
+    }
+
+    clearSettingsAvatarError();
+
+    // Close crop modal
+    const modal = document.getElementById('cropModal');
+    if (modal) modal.classList.remove('active');
+    _detachCropEvents();
+}
+
+// ── Crop canvas event wiring ───────────────────────────────
+
+function _onCropMouseDown(e) {
+    _crop.dragging = true;
+    _crop.lastX = e.clientX;
+    _crop.lastY = e.clientY;
+}
+
+function _onCropMouseMove(e) {
+    if (!_crop.dragging) return;
+    const dx = e.clientX - _crop.lastX;
+    const dy = e.clientY - _crop.lastY;
+    _crop.lastX = e.clientX;
+    _crop.lastY = e.clientY;
+    _clampAndPan(dx, dy);
+}
+
+function _onCropMouseUp() { _crop.dragging = false; }
+
+function _onCropTouchStart(e) {
+    if (e.touches.length === 1) {
+        _crop.dragging = true;
+        _crop.lastX = e.touches[0].clientX;
+        _crop.lastY = e.touches[0].clientY;
+    }
+}
+
+function _onCropTouchMove(e) {
+    if (!_crop.dragging || e.touches.length !== 1) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - _crop.lastX;
+    const dy = e.touches[0].clientY - _crop.lastY;
+    _crop.lastX = e.touches[0].clientX;
+    _crop.lastY = e.touches[0].clientY;
+    _clampAndPan(dx, dy);
+}
+
+function _onCropTouchEnd() { _crop.dragging = false; }
+
+function _onCropWheel(e) {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    _setZoom(_crop.zoom + delta * _crop.zoom);
+}
+
+function _clampAndPan(dx, dy) {
+    _crop.panX += dx;
+    _crop.panY += dy;
+    _clampPan();
+    renderCropCanvas();
+}
+
+function _clampPan() {
+    if (!_crop.img) return;
+    const s = _crop.canvasSize;
+    const scale = _crop.baseScale * _crop.zoom;
+    const imgW = _crop.img.naturalWidth * scale;
+    const imgH = _crop.img.naturalHeight * scale;
+    // Keep the image covering the canvas at all times
+    const maxPanX = Math.max(0, (imgW - s) / 2);
+    const maxPanY = Math.max(0, (imgH - s) / 2);
+    _crop.panX = Math.max(-maxPanX, Math.min(maxPanX, _crop.panX));
+    _crop.panY = Math.max(-maxPanY, Math.min(maxPanY, _crop.panY));
+}
+
+function _setZoom(z) {
+    _crop.zoom = Math.min(3, Math.max(1, z));
+    _clampPan();
+    renderCropCanvas();
+    const slider = document.getElementById('cropZoomSlider');
+    if (slider) slider.value = _crop.zoom;
+}
+
+function _attachCropEvents() {
+    const wrapper = document.getElementById('cropCanvasWrapper');
+    if (!wrapper) return;
+    wrapper.addEventListener('mousedown',  _onCropMouseDown);
+    wrapper.addEventListener('wheel',      _onCropWheel, { passive: false });
+    wrapper.addEventListener('touchstart', _onCropTouchStart, { passive: true });
+    wrapper.addEventListener('touchmove',  _onCropTouchMove,  { passive: false });
+    wrapper.addEventListener('touchend',   _onCropTouchEnd);
+    document.addEventListener('mousemove', _onCropMouseMove);
+    document.addEventListener('mouseup',   _onCropMouseUp);
+
+    const slider = document.getElementById('cropZoomSlider');
+    if (slider) slider.addEventListener('input', _onSliderInput);
+}
+
+function _detachCropEvents() {
+    const wrapper = document.getElementById('cropCanvasWrapper');
+    if (wrapper) {
+        wrapper.removeEventListener('mousedown',  _onCropMouseDown);
+        wrapper.removeEventListener('wheel',      _onCropWheel);
+        wrapper.removeEventListener('touchstart', _onCropTouchStart);
+        wrapper.removeEventListener('touchmove',  _onCropTouchMove);
+        wrapper.removeEventListener('touchend',   _onCropTouchEnd);
+    }
+    document.removeEventListener('mousemove', _onCropMouseMove);
+    document.removeEventListener('mouseup',   _onCropMouseUp);
+    const slider = document.getElementById('cropZoomSlider');
+    if (slider) slider.removeEventListener('input', _onSliderInput);
+}
+
+function _onSliderInput(e) {
+    _setZoom(parseFloat(e.target.value));
+}
+
+// ── Profile Picture Upload → opens Crop Modal ─────────────
+
+/**
+ * Validates an image file (≥256×256) then opens the interactive crop modal.
+ */
+function handleProfilePictureUpload(file) {
+    clearSettingsAvatarError();
+    _pendingProfilePicture = null;
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+        showSettingsAvatarError('Please upload a valid image file.');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            if (img.naturalWidth < 256 || img.naturalHeight < 256) {
+                showSettingsAvatarError(
+                    `Image too small (${img.naturalWidth}×${img.naturalHeight} px). ` +
+                    'Please upload an image that is at least 256 × 256 px.'
+                );
+                const input = document.getElementById('settingsAvatarFile');
+                if (input) input.value = '';
+                return;
+            }
+            // Open the interactive crop modal
+            openCropModal(img);
+        };
+        img.onerror = () => showSettingsAvatarError('Could not read the image. Please try a different file.');
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function handleAvatarDrop(event) {
+    event.preventDefault();
+    document.getElementById('settingsAvatarDropzone').classList.remove('drag-over');
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) handleProfilePictureUpload(file);
+}
+
+
+async function saveSettings() {
+    const btn = document.getElementById('settingsSaveBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    const token = localStorage.getItem('grasp_session_token');
+    let profileSaved = false;
+    let passwordChanged = false;
+    let errors = [];
+
+    // ── 1. Save profile (name / dob / picture) ─────────────────────
+    try {
+        const profilePayload = {
+            first_name: document.getElementById('settingsFirstName').value.trim() || null,
+            last_name: document.getElementById('settingsLastName').value.trim() || null,
+            dob: document.getElementById('settingsDob').value || null,
+            profile_picture: _pendingProfilePicture || null,
+        };
+
+        const profileRes = await fetch(`${API_BASE}/api/auth/profile`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(profilePayload),
+        });
+
+        if (profileRes.ok) {
+            const updated = await profileRes.json();
+            currentUser = { ...currentUser, ...updated };
+            localStorage.setItem('grasp_user', JSON.stringify(currentUser));
+            populateUserProfile(currentUser);
+            profileSaved = true;
+        } else {
+            const err = await profileRes.json();
+            errors.push(err.detail || 'Failed to save profile');
+        }
+    } catch (e) {
+        errors.push(`Profile save error: ${e.message}`);
+    }
+
+    // ── 2. Change password (only if fields are filled) ─────────────
+    const currentPwd = document.getElementById('settingsCurrentPwd').value;
+    const newPwd = document.getElementById('settingsNewPwd').value;
+    const confirmPwd = document.getElementById('settingsConfirmPwd').value;
+    const pwdError = document.getElementById('settingsPwdError');
+
+    if (currentPwd || newPwd || confirmPwd) {
+        // Validate client-side first
+        if (!currentPwd) {
+            errors.push('Please enter your current password.');
+        } else if (newPwd.length < 8) {
+            errors.push('New password must be at least 8 characters.');
+        } else if (newPwd !== confirmPwd) {
+            errors.push('New passwords do not match.');
+        } else {
+            try {
+                const pwdRes = await fetch(`${API_BASE}/api/auth/password`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        current_password: currentPwd,
+                        new_password: newPwd,
+                        confirm_new_password: confirmPwd,
+                    }),
+                });
+
+                if (pwdRes.ok) {
+                    passwordChanged = true;
+                } else {
+                    const err = await pwdRes.json();
+                    errors.push(err.detail || 'Failed to change password.');
+                }
+            } catch (e) {
+                errors.push(`Password change error: ${e.message}`);
+            }
+        }
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+
+    if (errors.length > 0) {
+        if (pwdError) {
+            pwdError.textContent = errors.join(' ');
+            pwdError.style.display = '';
+        }
+        showToast(errors.join(' '), 'error');
+        return;
+    }
+
+    closeSettingsModal();
+
+    if (passwordChanged) {
+        showToast('Password changed. Please sign in again.', 'success');
+        setTimeout(() => logout(), 1500);
+    } else if (profileSaved) {
+        showToast('Settings saved ✓', 'success');
+    }
+}

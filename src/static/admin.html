@@ -5,10 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
-    <title>Grasp — Admin Dashboard</title>
+    <title>Grasp - Admin Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+    <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body>
@@ -16,7 +16,6 @@
     <div class="auth-gate" id="authGate">
         <div class="auth-card">
             <div class="auth-title">Grasp Admin</div>
-            <div class="brand-subtitle" style="text-align:center;margin-bottom:24px">Institutional Brain</div>
             <p style="color:var(--text-tertiary);text-align:center;margin-bottom:20px;font-size:13px;line-height:1.6">
                 Enter the admin key to access the management dashboard.</p>
             <input type="password" class="admin-key-input" id="adminKeyInput" placeholder="Admin key..."
@@ -30,18 +29,30 @@
 
     <!-- Admin Dashboard (hidden until authenticated) -->
     <div class="app" id="adminApp" style="display:none">
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
+
+            <!-- Sidebar Header: Logo + Collapse -->
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp" class="logo-light">
+                    <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp" class="logo-dark">
+                </div>
+                <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()"
+                    aria-label="Toggle sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <polyline points="11 17 6 12 11 7"></polyline>
+                        <polyline points="18 17 13 12 18 7"></polyline>
+                    </svg>
+                </button>
+            </div>
 
             <!-- Admin profile -->
             <div class="user-profile-section" id="adminProfileSection">
                 <div class="user-profile-card">
                     <div class="user-avatar" id="adminAvatar"
-                        style="background:linear-gradient(135deg, #d4943c, #c0802e); color: #fff;">A</div>
-                    <div class="user-profile-info">
-                        <div class="user-profile-name" id="adminProfileName">Admin</div>
-                        <div class="user-profile-role" id="adminProfileRole"><span class="role-pill role-admin">System
-                                Administrator</span></div>
-                    </div>
+                        style="background:linear-gradient(135deg, #00CCFF, #0098c0); color: #fff;">A</div>
+                    <div class="user-profile-name" id="adminProfileName">Admin</div>
                     <!-- 3-dot menu -->
                     <div class="user-menu-wrapper">
                         <button class="user-menu-btn" id="adminMenuBtn" onclick="toggleAdminMenu(event)"
@@ -49,7 +60,15 @@
                             <span>⋮</span>
                         </button>
                         <div class="user-menu-dropdown" id="adminMenuDropdown" style="display:none">
-                            <button class="user-menu-item" onclick="adminLogout()">
+                            <div class="user-menu-role"><span class="role-pill role-admin">System Administrator</span>
+                            </div>
+                            <div class="user-menu-divider"></div>
+                            <button class="user-menu-item" onclick="toggleTheme(); event.stopPropagation();">
+                                <span class="theme-menu-icon" id="themeMenuIcon">🌙</span> <span
+                                    id="themeMenuLabel">Light Mode</span>
+                            </button>
+                            <div class="user-menu-divider"></div>
+                            <button class="user-menu-item user-menu-item-danger" onclick="adminLogout()">
                                 <span>↪</span> Sign Out
                             </button>
                         </div>
@@ -94,10 +113,14 @@
                 <nav class="admin-nav" style="margin-top:20px;">
                     <a href="#" class="admin-nav-item active" onclick="showAdminScreen('Home'); return false;"
                         id="navHome">
-                        <span class="admin-nav-icon">📊</span> Dashboard
+                        <span class="admin-nav-icon"><img src="/icons/dashboard-dark.svg" class="theme-icon-dark"
+                                alt="Dashboard"><img src="/icons/dashboard-light.svg" class="theme-icon-light"
+                                alt="Dashboard"></span> Dashboard
                     </a>
                     <a href="#" class="admin-nav-item" onclick="showAdminScreen('Users'); return false;" id="navUsers">
-                        <span class="admin-nav-icon">👥</span> User Management
+                        <span class="admin-nav-icon"><img src="/icons/usermanagement-dark.svg" class="theme-icon-dark"
+                                alt="Users"><img src="/icons/usermanagement-light.svg" class="theme-icon-light"
+                                alt="Users"></span> User Management
                         <span class="admin-nav-badge" id="navUsersBadge" style="display:none">0</span>
                     </a>
                     <a href="#" class="admin-nav-item" onclick="showAdminScreen('Contributions'); return false;"
@@ -113,19 +136,21 @@
                     </button>
                 </div>
 
-                <div class="sidebar-footer">
-                    <a href="/">← Back to User View</a>
-                </div>
         </aside>
 
         <main class="main">
+            <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()"
+                aria-label="Expand sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <polyline points="13 17 18 12 13 7"></polyline>
+                    <polyline points="6 17 11 12 6 7"></polyline>
+                </svg>
+            </button>
             <header class="main-header">
-                <h2 style="font-family:'Instrument Serif',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)"
+                <h2 style="font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:400;color:var(--text-primary)"
                     id="adminScreenTitle">Dashboard</h2>
                 <div style="display:flex;gap:12px;align-items:center">
-                    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle theme">
-                        <span class="theme-toggle-icon" id="themeIcon">🌙</span>
-                    </button>
                     <div id="pendingBadge" class="pending-badge" style="display:none" onclick="openPendingModal()">
                         ⚠ <span id="pendingCount">0</span> pending changes
                     </div>
@@ -149,7 +174,10 @@
 
                     <!-- Screen: Users -->
                     <div id="screenUsers" class="admin-screen" style="display:none">
-                        <h3 class="admin-section-title">👥 User Management</h3>
+                        <h3 class="admin-section-title"><img src="/icons/usermanagement-dark.svg"
+                                class="theme-icon-dark" alt="Users"><img src="/icons/usermanagement-light.svg"
+                                class="theme-icon-light" alt="Users"> <span style="margin-left:6px">User
+                                Management</span></h3>
                         <div id="usersCard" class="admin-card">
                             <p style="color:var(--text-secondary)">Loading users...</p>
                         </div>

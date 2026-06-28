@@ -1,4 +1,4 @@
-# Grasp (v1.6.1)
+# Grasp (v1.6.2)
 
 Grasp is a self-hosted knowledge retrieval system that connects to your company's Confluence, Jira, SharePoint, Slack, and Notion instances. It periodically syncs content from these platforms into a local Git repository and a ChromaDB vector index, then uses Claude to answer natural-language questions about that content.
 

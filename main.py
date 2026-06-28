@@ -36,13 +36,25 @@ from src.auth import UserManager
 
 # ── Logging ────────────────────────────────────────────────
 
+import io as _io
+
+# Force UTF-8 on stdout so the │ character in log lines doesn't crash on
+# Windows consoles that default to CP1252.
+_utf8_stdout = _io.TextIOWrapper(
+    sys.stdout.buffer,
+    encoding="utf-8",
+    errors="replace",
+    line_buffering=True,
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s │ %(name)-30s │ %(levelname)-7s │ %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[logging.StreamHandler(_utf8_stdout)],
 )
 logger = logging.getLogger("grasp")
+
 
 
 def build_connectors(settings) -> dict[str, BaseConnector]:
