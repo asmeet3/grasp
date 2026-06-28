@@ -67,9 +67,8 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": "Optional: filter by information type.",
                     "enum": [
-                        "architecture", "features", "operations", "testing",
-                        "decisions", "strategy", "incidents", "discussions",
-                        "references", "general",
+                        "decisions", "projects", "processes", "products",
+                        "people", "topics",
                     ],
                 },
                 "n_results": {
@@ -92,7 +91,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Relative path to the file in the knowledge repo (e.g., 'architecture/confluence/API_Design.md').",
+                    "description": "Relative path to the file in the knowledge repo (e.g., 'knowledge/decisions/2024-API_Design.md').",
                 }
             },
             "required": ["file_path"],

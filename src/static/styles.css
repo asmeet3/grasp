@@ -3097,7 +3097,8 @@ body::before {
 
 .onboarding-banner {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
   gap: 14px;
   padding: 16px 20px;
   background: var(--accent-glow);
@@ -3108,6 +3109,7 @@ body::before {
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.6;
+  text-align: center;
   animation: fadeSlideIn 0.4s ease;
 }
 

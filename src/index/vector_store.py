@@ -52,11 +52,13 @@ class VectorStore:
 
     # ── Indexing ───────────────────────────────────────────
 
-    def index_document(self, doc: Document, info_type: str = "general"):
+    def index_document(self, doc: Document, info_type: str = "topics"):
         """Index a document, chunking if necessary."""
         from ..connectors.base import sanitize_filename
 
-        repo_path = f"{info_type}/{doc.source}/{sanitize_filename(doc.title)}.md"
+        date_prefix = doc.updated_at.strftime("%Y")
+        slug = sanitize_filename(doc.title)
+        repo_path = f"knowledge/{info_type}/{date_prefix}-{slug}.md"
 
         chunks = self._chunk_text(doc.content)
         if not chunks:
