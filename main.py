@@ -33,6 +33,7 @@ from src.agent.engine import QueryEngine
 from src.api.server import create_app
 from src.contributions import ContributionManager
 from src.auth import UserManager
+from src.database import create_engine, init_db
 
 # ── Logging ────────────────────────────────────────────────
 
@@ -164,7 +165,11 @@ def main():
         logger.error("  Copy .env.example to .env and fill in your credentials")
         sys.exit(1)
 
-    # 2. Initialize components
+    # 2. Initialize database engine
+    db_engine = create_engine(settings.database_url)
+    logger.info(f"✓ Database engine created ({settings.database_url.split('@')[-1] if '@' in settings.database_url else 'local'})")
+
+    # 3. Initialize components
     connectors = build_connectors(settings)
 
     repo_manager = RepoManager(
@@ -179,28 +184,29 @@ def main():
     vector_store = VectorStore(persist_dir=settings.chroma_path)
     logger.info(f"✓ Vector store initialized ({vector_store.document_count} chunks indexed)")
 
-    checkpoint_manager = CheckpointManager(settings.checkpoints_path)
-    logger.info("✓ Checkpoint manager initialized")
+    checkpoint_manager = CheckpointManager(engine=db_engine)
+    logger.info("✓ Checkpoint manager initialized (PostgreSQL)")
 
-    # 3. Sync orchestrator
+    # 4. Sync orchestrator
     state_dir = settings.repo_path / ".grasp_state"
+    state_dir.mkdir(parents=True, exist_ok=True)
     orchestrator = SyncOrchestrator(
         connectors=connectors,
         repo_manager=repo_manager,
         vector_store=vector_store,
         checkpoints=checkpoint_manager,
-        state_dir=state_dir,
+        engine=db_engine,
     )
-    logger.info("✓ Sync orchestrator initialized")
+    logger.info("✓ Sync orchestrator initialized (PostgreSQL)")
 
-    # 4. Scheduler
+    # 5. Scheduler
     scheduler = SyncScheduler(
         orchestrator=orchestrator,
         hours=settings.sync_cron_hours,
         minute=settings.sync_cron_minute,
     )
 
-    # 5. Query engine
+    # 6. Query engine
     dispatcher = build_sub_agent_dispatcher(connectors, vector_store)
     tool_executor = ToolExecutor(
         dispatcher=dispatcher,
@@ -215,22 +221,23 @@ def main():
     )
     logger.info(f"✓ Query engine initialized (model: {settings.agent_model})")
 
-    # 5b. Contribution manager
+    # 6b. Contribution manager
     contribution_manager = ContributionManager(
-        state_dir=state_dir,
+        engine=db_engine,
         repo_manager=repo_manager,
-    )
-    logger.info("✓ Contribution manager initialized")
-
-    # 5c. User manager
-    user_manager = UserManager(
         state_dir=state_dir,
+    )
+    logger.info("✓ Contribution manager initialized (PostgreSQL)")
+
+    # 6c. User manager
+    user_manager = UserManager(
+        engine=db_engine,
         session_secret=settings.effective_session_secret,
         google_client_id=settings.google_client_id,
     )
-    logger.info("✓ User manager initialized")
+    logger.info("✓ User manager initialized (PostgreSQL)")
 
-    # 6. FastAPI app
+    # 7. FastAPI app
     app = create_app(
         query_engine=query_engine,
         sync_orchestrator=orchestrator,
@@ -244,9 +251,10 @@ def main():
         google_client_id=settings.google_client_id,
     )
 
-    # 7. Startup event — start scheduler
+    # 8. Startup event — init DB tables + start scheduler
     @app.on_event("startup")
     async def on_startup():
+        await init_db(db_engine)
         loop = asyncio.get_event_loop()
         scheduler.start(loop=loop)
         logger.info("✓ Scheduler started")
@@ -258,9 +266,11 @@ def main():
         for connector in connectors.values():
             if hasattr(connector, 'close'):
                 await connector.close()
+        # Dispose the database engine
+        await db_engine.dispose()
         logger.info("Shutdown complete")
 
-    # 8. Launch
+    # 9. Launch
     logger.info(f"Starting server on {settings.host}:{settings.port}")
     logger.info(f"Dashboard: http://localhost:{settings.port}")
     logger.info("=" * 60)

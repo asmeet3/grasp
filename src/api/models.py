@@ -189,3 +189,7 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8, description="New password (min 8 characters)")
     confirm_new_password: str = Field(..., description="New password confirmation")
 
+
+class DeleteAccountRequest(BaseModel):
+    password: str | None = Field(None, description="Current password (required for email accounts, omit for Google)")
+

@@ -714,6 +714,7 @@ async function checkAuth() {
 
         if (res.ok) {
             currentUser = await res.json();
+            // Always overwrite cache with fresh server data
             localStorage.setItem('grasp_user', JSON.stringify(currentUser));
             populateUserProfile(currentUser);
             showOnboardingIntro();
@@ -724,9 +725,26 @@ async function checkAuth() {
         if (cached) {
             currentUser = JSON.parse(cached);
             populateUserProfile(currentUser);
+            // Silently retry in background so stale data (e.g. missing profile_picture) self-corrects
+            setTimeout(async () => {
+                try {
+                    const retryRes = await fetch(`${API_BASE}/api/auth/me`, {
+                        headers: { 'Authorization': `Bearer ${token}` },
+                    });
+                    if (retryRes.ok) {
+                        const freshUser = await retryRes.json();
+                        localStorage.setItem('grasp_user', JSON.stringify(freshUser));
+                        if (JSON.stringify(freshUser) !== JSON.stringify(currentUser)) {
+                            currentUser = freshUser;
+                            populateUserProfile(currentUser);
+                        }
+                    }
+                } catch (_) { /* ignore */ }
+            }, 3000);
         }
     }
 }
+
 
 function populateUserProfile(user) {
     if (!user) return;
@@ -912,6 +930,22 @@ function openSettingsModal() {
         const pwdSection = document.getElementById('settingsPasswordSection');
         if (pwdSection) {
             pwdSection.style.display = currentUser.auth_method === 'google' ? 'none' : '';
+        }
+
+        // Hide avatar upload for Google users (synced automatically)
+        const avatarUpload = document.getElementById('settingsAvatarUploadContainer');
+        const avatarGoogleHint = document.getElementById('settingsGoogleAvatarHint');
+        if (avatarUpload) {
+            avatarUpload.style.display = currentUser.auth_method === 'google' ? 'none' : '';
+        }
+        if (avatarGoogleHint) {
+            avatarGoogleHint.style.display = currentUser.auth_method === 'google' ? '' : 'none';
+        }
+
+        // Show DOB hint for Google users (Google doesn't provide DOB)
+        const dobHint = document.getElementById('settingsGoogleDobHint');
+        if (dobHint) {
+            dobHint.style.display = currentUser.auth_method === 'google' && !currentUser.dob ? '' : 'none';
         }
     }
 
@@ -1351,3 +1385,96 @@ async function saveSettings() {
         showToast('Settings saved ✓', 'success');
     }
 }
+
+// ── Delete Account ────────────────────────────────────────
+
+function openDeleteAccountModal() {
+    const modal = document.getElementById('deleteAccountModal');
+    if (!modal) return;
+
+    // Reset state
+    const pwdField = document.getElementById('deleteAccountPwdField');
+    const typeField = document.getElementById('deleteAccountTypeField');
+    const pwdInput = document.getElementById('deleteAccountPwd');
+    const typeInput = document.getElementById('deleteAccountTypeInput');
+    const errEl = document.getElementById('deleteAccountError');
+
+    if (pwdInput) pwdInput.value = '';
+    if (typeInput) typeInput.value = '';
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+    // Show the right confirmation field based on auth method
+    const isGoogle = currentUser && currentUser.auth_method === 'google';
+    if (pwdField) pwdField.style.display = isGoogle ? 'none' : '';
+    if (typeField) typeField.style.display = isGoogle ? '' : 'none';
+
+    modal.classList.add('active');
+}
+
+function closeDeleteAccountModal() {
+    const modal = document.getElementById('deleteAccountModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function confirmDeleteAccount() {
+    const btn = document.getElementById('deleteAccountConfirmBtn');
+    const errEl = document.getElementById('deleteAccountError');
+
+    const showErr = (msg) => {
+        if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+    };
+
+    const isGoogle = currentUser && currentUser.auth_method === 'google';
+
+    // Client-side validation
+    if (isGoogle) {
+        const typeInput = document.getElementById('deleteAccountTypeInput');
+        if (!typeInput || typeInput.value.trim() !== 'DELETE') {
+            showErr('Please type DELETE exactly to confirm.');
+            return;
+        }
+    } else {
+        const pwdInput = document.getElementById('deleteAccountPwd');
+        if (!pwdInput || !pwdInput.value) {
+            showErr('Please enter your password to confirm.');
+            return;
+        }
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    if (errEl) { errEl.style.display = 'none'; }
+
+    try {
+        const token = localStorage.getItem('grasp_session_token');
+        const payload = {};
+        if (!isGoogle) {
+            payload.password = document.getElementById('deleteAccountPwd').value;
+        }
+
+        const res = await fetch(`${API_BASE}/api/auth/account`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+            // Clear session and redirect
+            localStorage.removeItem('grasp_session_token');
+            localStorage.removeItem('grasp_user');
+            currentUser = null;
+            showToast('Your account has been deleted.', 'success');
+            setTimeout(() => { window.location.href = '/login'; }, 1200);
+        } else {
+            const err = await res.json();
+            showErr(err.detail || 'Failed to delete account. Please try again.');
+            if (btn) { btn.disabled = false; btn.textContent = 'Yes, Delete My Account'; }
+        }
+    } catch (e) {
+        showErr(`Error: ${e.message}`);
+        if (btn) { btn.disabled = false; btn.textContent = 'Yes, Delete My Account'; }
+    }
+}
+

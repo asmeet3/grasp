@@ -1,6 +1,24 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: grasp-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: grasp
+      POSTGRES_PASSWORD: grasp
+      POSTGRES_DB: grasp
+    volumes:
+      - grasp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grasp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   grasp:
     build: .
     container_name: grasp
@@ -13,9 +31,14 @@ services:
       # Persist data across container restarts
       - grasp_repo:/app/knowledge_repo
       - grasp_chroma:/app/chroma_data
-      - grasp_checkpoints:/app/checkpoints
+      - grasp_state:/app/knowledge_repo/.grasp_state
     environment:
       - PYTHONUNBUFFERED=1
+      # Override DATABASE_URL to use the Docker-internal hostname
+      - DATABASE_URL=postgresql+asyncpg://grasp:grasp@db:5432/grasp
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/status')"]
       interval: 30s
@@ -24,6 +47,7 @@ services:
       start_period: 30s
 
 volumes:
+  grasp_pgdata:
   grasp_repo:
   grasp_chroma:
-  grasp_checkpoints:
+  grasp_state:

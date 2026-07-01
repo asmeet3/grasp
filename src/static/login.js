@@ -110,6 +110,10 @@ function toggleAuthMode() {
         toggleBtn.textContent = 'Create one';
         if (googleBtnText) googleBtnText.textContent = 'Sign in with Google';
     }
+    
+    if (typeof renderGoogleButton === 'function') {
+        renderGoogleButton();
+    }
 }
 
 function showLogin() {
@@ -120,7 +124,7 @@ function showLogin() {
     document.getElementById('registerForm').style.display = 'none';
     document.getElementById('pendingMsg').style.display = 'none';
     document.getElementById('authDivider').style.display = '';
-    document.getElementById('googleBtnContainer').style.display = '';
+    document.getElementById('googleSignInBtn').style.display = '';
     document.getElementById('authToggle').style.display = '';
 
     // Reset titles
@@ -130,6 +134,10 @@ function showLogin() {
     if (googleBtnText) googleBtnText.textContent = 'Sign in with Google';
 
     hideError();
+    
+    if (typeof renderGoogleButton === 'function') {
+        renderGoogleButton();
+    }
 }
 
 // ── Error Display ─────────────────────────────────────────
@@ -153,7 +161,7 @@ function showPending() {
     document.getElementById('loginForm').style.display = 'none';
     document.getElementById('registerForm').style.display = 'none';
     document.getElementById('authDivider').style.display = 'none';
-    document.getElementById('googleBtnContainer').style.display = 'none';
+    document.getElementById('googleSignInBtn').style.display = 'none';
     document.getElementById('authToggle').style.display = 'none';
     document.getElementById('pendingMsg').style.display = 'block';
     document.getElementById('authTitle').textContent = 'Almost there';
@@ -298,35 +306,39 @@ function initGoogleSignIn() {
         client_id: googleClientId,
         callback: handleGoogleCredential,
     });
+    
+    renderGoogleButton();
 }
 
-function handleGoogleSignIn() {
-    if (!googleClientId) {
-        showError('Google Sign-In is not configured. Please contact your administrator to set up a Google Client ID.');
-        return;
-    }
-    if (!window.google) {
-        showError('Google Sign-In library failed to load. Please refresh the page.');
-        return;
-    }
+function renderGoogleButton() {
+    if (!googleClientId || !window.google) return;
+    const overlay = document.getElementById('googleBtnOverlay');
+    const wrapper = document.getElementById('googleSignInBtn');
+    if (!overlay || !wrapper) return;
 
-    window.google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            // Fallback: use the popup flow
-            window.google.accounts.id.renderButton(
-                document.createElement('div'),
-                { type: 'standard' }
-            );
-            // Try prompt again or use alternative
-            showError('Please allow pop-ups for Google sign-in');
+    // Render the official Google button into the invisible overlay
+    overlay.innerHTML = '';
+
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+
+    window.google.accounts.id.renderButton(
+        overlay,
+        { 
+            theme: isDark ? 'filled_black' : 'outline',
+            size: 'large',
+            shape: 'rectangular',
+            type: 'standard',
+            text: isRegisterMode ? 'signup_with' : 'signin_with',
+            width: wrapper.offsetWidth || 360,
         }
-    });
+    );
+
+    // Reveal the wrapper
+    wrapper.style.display = '';
 }
 
 async function handleGoogleCredential(response) {
     hideError();
-    const btn = document.getElementById('googleSignInBtn');
-    btn.disabled = true;
 
     try {
         const endpoint = isRegisterMode
@@ -358,7 +370,5 @@ async function handleGoogleCredential(response) {
         }
     } catch (e) {
         showError('Google sign-in failed. Please try again.');
-    } finally {
-        btn.disabled = false;
     }
 }

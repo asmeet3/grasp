@@ -2,20 +2,24 @@
 
 Handles full sync (checkpointed), incremental sync, parallel worker
 execution, and pending changeset generation for human approval.
+
+Sync state (last sync, sync log) is persisted in PostgreSQL.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import traceback
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from ..connectors.base import BaseConnector, Document
+from ..database import sync_state_table
 from ..index.vector_store import VectorStore
 from ..repo.manager import RepoManager
 from .checkpoints import CheckpointManager
@@ -60,14 +64,13 @@ class SyncOrchestrator:
         repo_manager: RepoManager,
         vector_store: VectorStore,
         checkpoints: CheckpointManager,
-        state_dir: Path,
+        engine: AsyncEngine,
     ):
         self.connectors = connectors
         self.repo_manager = repo_manager
         self.vector_store = vector_store
         self.checkpoints = checkpoints
-        self.state_dir = state_dir
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.engine = engine
 
         self._sync_running = False
         self._worker_statuses: dict[str, WorkerStatus] = {}
@@ -82,16 +85,22 @@ class SyncOrchestrator:
     def worker_statuses(self) -> dict[str, dict]:
         return {name: ws.to_dict() for name, ws in self._worker_statuses.items()}
 
-    def get_last_sync(self) -> dict | None:
-        """Read the last sync state."""
-        path = self.state_dir / "last_sync.json"
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+    async def get_last_sync(self) -> dict | None:
+        """Read the last sync state from the database."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(sync_state_table)
+                .order_by(sync_state_table.c.timestamp.desc())
+                .limit(1)
+            )
+            row = result.mappings().first()
+        if row:
+            return self._row_to_sync_dict(row)
         return None
 
-    def needs_full_sync(self) -> bool:
+    async def needs_full_sync(self) -> bool:
         """Check if a full (initial) sync is required."""
-        return self.get_last_sync() is None
+        return (await self.get_last_sync()) is None
 
     async def run_sync(self) -> dict:
         """Run a sync — full or incremental depending on state.
@@ -106,13 +115,13 @@ class SyncOrchestrator:
         self._worker_statuses = {}
 
         try:
-            if self.needs_full_sync():
+            if await self.needs_full_sync():
                 logger.info("Starting FULL sync (no previous sync found)")
                 result = await self._full_sync()
             else:
-                last_sync = self.get_last_sync()
+                last_sync = await self.get_last_sync()
                 since_str = last_sync["timestamp"]
-                since = datetime.fromisoformat(since_str)
+                since = datetime.fromisoformat(since_str) if isinstance(since_str, str) else since_str
 
                 # Check which connectors failed last time
                 last_workers = last_sync.get("workers", {})
@@ -132,7 +141,7 @@ class SyncOrchestrator:
                     result = await self._incremental_sync(since)
 
             # Save sync state
-            self._save_sync_state(result)
+            await self._save_sync_state(result)
 
             # Generate pending changeset for human approval
             self.repo_manager.stage_pending()
@@ -150,7 +159,7 @@ class SyncOrchestrator:
         """Run a full sync with all connectors in parallel."""
         tasks = []
         for name, connector in self.connectors.items():
-            checkpoint = self.checkpoints.load_checkpoint(name)
+            checkpoint = await self.checkpoints.load_checkpoint(name)
             ws = WorkerStatus(name)
             self._worker_statuses[name] = ws
             tasks.append(self._run_full_worker(connector, ws, checkpoint))
@@ -170,7 +179,7 @@ class SyncOrchestrator:
             else:
                 total_docs += ws.docs_fetched
                 worker_results[name] = {"status": "completed", "docs": ws.docs_fetched}
-                self.checkpoints.clear_checkpoint(name)
+                await self.checkpoints.clear_checkpoint(name)
 
         return {
             "type": "full",
@@ -187,7 +196,7 @@ class SyncOrchestrator:
             self._worker_statuses[name] = ws
 
             if name in full_sync_connectors:
-                checkpoint = self.checkpoints.load_checkpoint(name)
+                checkpoint = await self.checkpoints.load_checkpoint(name)
                 tasks.append(self._run_full_worker(connector, ws, checkpoint))
             else:
                 tasks.append(self._run_incremental_worker(connector, ws, since))
@@ -206,7 +215,7 @@ class SyncOrchestrator:
                 total_docs += ws.docs_fetched
                 worker_results[name] = {"status": "completed", "docs": ws.docs_fetched}
                 if name in full_sync_connectors:
-                    self.checkpoints.clear_checkpoint(name)
+                    await self.checkpoints.clear_checkpoint(name)
 
         return {
             "type": "mixed",
@@ -232,7 +241,7 @@ class SyncOrchestrator:
 
                 # Save checkpoint after each batch
                 state = connector.get_checkpoint_state()
-                self.checkpoints.save_checkpoint(connector.name, state)
+                await self.checkpoints.save_checkpoint(connector.name, state)
 
             ws.status = "completed"
         except Exception as e:
@@ -313,31 +322,74 @@ class SyncOrchestrator:
 
     # ── State management ───────────────────────────────────
 
-    def _save_sync_state(self, result: dict):
-        """Save the sync result as last_sync state."""
-        path = self.state_dir / "last_sync.json"
-        path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    async def _save_sync_state(self, result: dict):
+        """Save the sync result to the database."""
+        # Extract fields for the table columns
+        sync_type = result.get("type", "unknown")
+        timestamp_str = result.get("timestamp", datetime.now(timezone.utc).isoformat())
+        timestamp = (
+            datetime.fromisoformat(timestamp_str)
+            if isinstance(timestamp_str, str)
+            else timestamp_str
+        )
+        total_docs = result.get("total_docs", 0)
+        workers = result.get("workers", {})
+        # Store additional fields (since, full_connectors, etc.) in details
+        details = {k: v for k, v in result.items() if k not in ("type", "timestamp", "total_docs", "workers")}
 
-        # Append to sync log
-        log_path = self.state_dir / "sync_log.json"
-        log_entries = []
-        if log_path.exists():
-            try:
-                log_entries = json.loads(log_path.read_text(encoding="utf-8"))
-            except Exception:
-                log_entries = []
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                sync_state_table.insert().values(
+                    sync_type=sync_type,
+                    timestamp=timestamp,
+                    total_docs=total_docs,
+                    workers=workers,
+                    details=details,
+                )
+            )
 
-        log_entries.append(result)
-        # Keep last 100 entries
-        log_entries = log_entries[-100:]
-        log_path.write_text(json.dumps(log_entries, indent=2, default=str), encoding="utf-8")
+        # Prune old entries: keep only last 100
+        async with self.engine.begin() as conn:
+            # Get the id of the 100th most recent entry
+            result_rows = await conn.execute(
+                select(sync_state_table.c.id)
+                .order_by(sync_state_table.c.timestamp.desc())
+                .offset(100)
+                .limit(1)
+            )
+            cutoff_row = result_rows.scalar_one_or_none()
+            if cutoff_row is not None:
+                from sqlalchemy import delete
+                await conn.execute(
+                    delete(sync_state_table).where(
+                        sync_state_table.c.id <= cutoff_row
+                    )
+                )
 
-    def get_sync_history(self) -> list[dict]:
+    async def get_sync_history(self) -> list[dict]:
         """Return the sync history log."""
-        log_path = self.state_dir / "sync_log.json"
-        if log_path.exists():
-            try:
-                return json.loads(log_path.read_text(encoding="utf-8"))
-            except Exception:
-                return []
-        return []
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(sync_state_table)
+                .order_by(sync_state_table.c.timestamp.desc())
+                .limit(100)
+            )
+            rows = result.mappings().all()
+        # Return in chronological order (oldest first) to match old behavior
+        return [self._row_to_sync_dict(row) for row in reversed(rows)]
+
+    @staticmethod
+    def _row_to_sync_dict(row) -> dict:
+        """Convert a sync_state DB row to the dict format used by the API."""
+        row_dict = dict(row)
+        result = {
+            "type": row_dict.get("sync_type", "unknown"),
+            "timestamp": row_dict["timestamp"].isoformat() if hasattr(row_dict.get("timestamp"), "isoformat") else str(row_dict.get("timestamp", "")),
+            "total_docs": row_dict.get("total_docs", 0),
+            "workers": row_dict.get("workers", {}),
+        }
+        # Merge in any extra details (since, full_connectors, etc.)
+        details = row_dict.get("details", {})
+        if details:
+            result.update(details)
+        return result

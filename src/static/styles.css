@@ -2407,21 +2407,150 @@ body::before {
   border-color: var(--border-hover);
 }
 
-.login-btn-google {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
+/* ── Google Sign-In Button Wrapper ── */
+.google-btn-wrapper {
+  position: relative;
+  width: 100%;
 }
 
-.login-btn-google:hover:not(:disabled) {
-  background: var(--bg-tertiary);
-  border-color: var(--border-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+.google-btn-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  opacity: 0.0001;
+  z-index: 1;
 }
 
-.login-btn-google svg {
-  flex-shrink: 0;
+.google-btn-overlay > div,
+.google-btn-overlay iframe {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 44px;
+}
+
+/* ── Custom Google Sign-In Button (gsi-material-button) ── */
+.gsi-material-button {
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -webkit-appearance: none;
+  background-color: #131314;
+  background-image: none;
+  border: 1px solid #8e918f;
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  color: #e3e3e3;
+  cursor: pointer;
+  font-family: 'Roboto', arial, sans-serif;
+  font-size: 14px;
+  height: 44px;
+  letter-spacing: 0.25px;
+  outline: none;
+  overflow: hidden;
+  padding: 0 12px;
+  position: relative;
+  text-align: center;
+  transition: background-color .218s, border-color .218s, box-shadow .218s;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: 100%;
+  min-width: min-content;
+}
+
+.gsi-material-button .gsi-material-button-icon {
+  height: 20px;
+  margin-right: 10px;
+  min-width: 20px;
+  width: 20px;
+}
+
+.gsi-material-button .gsi-material-button-content-wrapper {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  height: 100%;
+  justify-content: center;
+  position: relative;
+  width: 100%;
+}
+
+.gsi-material-button .gsi-material-button-contents {
+  flex-grow: 0;
+  font-family: 'Roboto', arial, sans-serif;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.gsi-material-button .gsi-material-button-state {
+  transition: opacity .218s;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.gsi-material-button:disabled {
+  cursor: default;
+  background-color: #13131461;
+  border-color: #8e918f1f;
+}
+
+.gsi-material-button:disabled .gsi-material-button-state {
+  background-color: #e3e3e31f;
+}
+
+.gsi-material-button:disabled .gsi-material-button-contents {
+  opacity: 38%;
+}
+
+.gsi-material-button:disabled .gsi-material-button-icon {
+  opacity: 38%;
+}
+
+.gsi-material-button:not(:disabled):active .gsi-material-button-state,
+.gsi-material-button:not(:disabled):focus .gsi-material-button-state {
+  background-color: white;
+  opacity: 12%;
+}
+
+.gsi-material-button:not(:disabled):hover {
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 1px 3px 1px rgba(60, 64, 67, .15);
+}
+
+.gsi-material-button:not(:disabled):hover .gsi-material-button-state {
+  background-color: white;
+  opacity: 8%;
+}
+
+/* Light theme override for Google button */
+[data-theme="light"] .gsi-material-button {
+  background-color: white;
+  border-color: #747775;
+  color: #1f1f1f;
+}
+
+[data-theme="light"] .gsi-material-button:disabled {
+  background-color: #ffffff61;
+  border-color: #1f1f1f1f;
+}
+
+[data-theme="light"] .gsi-material-button:not(:disabled):active .gsi-material-button-state,
+[data-theme="light"] .gsi-material-button:not(:disabled):focus .gsi-material-button-state {
+  background-color: #303030;
+  opacity: 12%;
+}
+
+[data-theme="light"] .gsi-material-button:not(:disabled):hover .gsi-material-button-state {
+  background-color: #303030;
+  opacity: 8%;
 }
 
 .login-divider {
@@ -3678,6 +3807,73 @@ body::before {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ── Danger Zone (Delete Account) ─────────────────────── */
+
+.settings-danger-zone {
+  border: 1px solid var(--danger-bg);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  background: color-mix(in srgb, var(--danger) 4%, transparent);
+}
+
+.delete-account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1.5px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+}
+
+.delete-account-btn:hover {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 2px 12px var(--danger-bg);
+}
+
+/* Warning box inside the confirm modal */
+.delete-account-warning {
+  background: var(--danger-bg);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--danger);
+  line-height: 1.6;
+}
+
+/* Final confirm button */
+.delete-account-confirm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.18s, box-shadow 0.18s;
+}
+
+.delete-account-confirm-btn:hover {
+  opacity: 0.87;
+  box-shadow: 0 3px 14px var(--danger-bg);
+}
+
+.delete-account-confirm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Responsive */

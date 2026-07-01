@@ -351,7 +351,7 @@
                             <span id="settingsAvatarInitial">?</span>
                             <img id="settingsAvatarImg" src="" alt="Profile" style="display:none">
                         </div>
-                        <div class="settings-avatar-upload">
+                        <div class="settings-avatar-upload" id="settingsAvatarUploadContainer">
                             <div class="settings-avatar-dropzone" id="settingsAvatarDropzone"
                                 onclick="document.getElementById('settingsAvatarFile').click()"
                                 ondragover="event.preventDefault(); this.classList.add('drag-over')"
@@ -363,6 +363,9 @@
                                 <div class="dropzone-hint">Must be at least 256 × 256 px</div>
                             </div>
                             <div class="settings-avatar-error" id="settingsAvatarError" style="display:none"></div>
+                        </div>
+                        <div id="settingsGoogleAvatarHint" style="display:none; font-size:12px; color:var(--text-tertiary); line-height:1.5; align-self: center; margin-left: 12px;">
+                            Synced from Google
                         </div>
                     </div>
                 </div>
@@ -385,6 +388,9 @@
                     <div class="settings-field" style="margin-top:12px">
                         <label class="contribute-label">Date of Birth</label>
                         <input type="date" class="contribute-input" id="settingsDob">
+                        <div id="settingsGoogleDobHint" style="display:none;margin-top:6px;font-size:12px;color:var(--text-tertiary);line-height:1.5">
+                            Google doesn't share date of birth — you can enter it here manually.
+                        </div>
                     </div>
                 </div>
 
@@ -411,11 +417,88 @@
                     <div class="settings-pwd-error" id="settingsPwdError" style="display:none"></div>
                 </div>
 
+                <div class="settings-divider"></div>
+
+                <!-- Delete Account -->
+                <div class="settings-section settings-danger-zone">
+                    <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;line-height:1.6">
+                        Permanently delete your account and all associated data. This action cannot be undone.
+                    </p>
+                    <button class="delete-account-btn" id="deleteAccountBtn" onclick="openDeleteAccountModal()">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6l-1 14H6L5 6"></path>
+                            <path d="M10 11v6"></path>
+                            <path d="M14 11v6"></path>
+                            <path d="M9 6V4h6v2"></path>
+                        </svg>
+                        Delete My Account
+                    </button>
+                </div>
+
             </div>
             <div class="modal-footer settings-modal-footer">
                 <div style="flex:1"></div>
                 <button class="reject-btn" onclick="closeSettingsModal()">Cancel</button>
                 <button class="approve-btn" id="settingsSaveBtn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Account Confirmation Modal -->
+    <div class="modal-overlay" id="deleteAccountModal">
+        <div class="modal" style="max-width:460px">
+            <div class="modal-header" style="border-bottom-color:var(--danger-bg)">
+                <h2 style="color:var(--danger)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                        stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    Delete Account
+                </h2>
+                <button class="modal-close" onclick="closeDeleteAccountModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="delete-account-warning">
+                    <strong>⚠ This action is permanent and cannot be undone.</strong><br>
+                    Your account, profile, and all associated data will be deleted immediately.
+                </div>
+
+                <!-- Password confirmation for email accounts -->
+                <div id="deleteAccountPwdField" style="display:none;margin-top:18px">
+                    <label class="contribute-label">Confirm with your password</label>
+                    <input type="password" class="contribute-input" id="deleteAccountPwd"
+                        placeholder="Enter your current password" style="margin-top:6px">
+                </div>
+
+                <!-- Type-to-confirm for Google accounts -->
+                <div id="deleteAccountTypeField" style="display:none;margin-top:18px">
+                    <label class="contribute-label">Type <strong
+                            style="color:var(--danger);font-family:monospace">DELETE</strong> to confirm</label>
+                    <input type="text" class="contribute-input" id="deleteAccountTypeInput" placeholder="DELETE"
+                        style="margin-top:6px">
+                </div>
+
+                <div class="settings-pwd-error" id="deleteAccountError" style="display:none;margin-top:12px"></div>
+            </div>
+            <div class="modal-footer">
+                <div style="flex:1"></div>
+                <button class="reject-btn" onclick="closeDeleteAccountModal()">Cancel</button>
+                <button class="delete-account-confirm-btn" id="deleteAccountConfirmBtn"
+                    onclick="confirmDeleteAccount()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6l-1 14H6L5 6"></path>
+                        <path d="M10 11v6"></path>
+                        <path d="M14 11v6"></path>
+                        <path d="M9 6V4h6v2"></path>
+                    </svg>
+                    Yes, Delete My Account
+                </button>
             </div>
         </div>
     </div>

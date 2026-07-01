@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     google_client_id: str = Field("", description="Google OAuth 2.0 Client ID for sign-in")
     session_secret: str = Field("", description="Secret for signing session tokens (falls back to admin_key)")
 
+    # ── Database ───────────────────────────────────────────
+    database_url: str = Field(
+        "postgresql+asyncpg://grasp:grasp@localhost:5432/grasp",
+        description="PostgreSQL connection URL",
+    )
+
     @property
     def effective_session_secret(self) -> str:
         """Return the session signing secret, falling back to admin_key."""

@@ -1,63 +1,87 @@
 """Checkpoint persistence for resumable sync operations.
 
-Saves and loads connector state to/from JSON files so that
+Saves and loads connector state to/from PostgreSQL so that
 interrupted full syncs can resume from the last successful batch.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
+from datetime import datetime, timezone
+
+from sqlalchemy import select, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from ..database import checkpoints_table
 
 logger = logging.getLogger(__name__)
 
 
 class CheckpointManager:
-    """Manages checkpoint files for sync resume capability."""
+    """Manages checkpoint records in PostgreSQL for sync resume capability."""
 
-    def __init__(self, checkpoints_dir: Path):
-        self.checkpoints_dir = checkpoints_dir
-        self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, engine: AsyncEngine):
+        self.engine = engine
 
-    def _path_for(self, connector: str) -> Path:
-        return self.checkpoints_dir / f"{connector}.json"
-
-    def save_checkpoint(self, connector: str, state: dict) -> None:
-        """Save checkpoint state for a connector."""
-        path = self._path_for(connector)
+    async def save_checkpoint(self, connector: str, state: dict) -> None:
+        """Save checkpoint state for a connector (upsert)."""
         try:
-            path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+            stmt = pg_insert(checkpoints_table).values(
+                connector=connector,
+                state=state,
+                updated_at=datetime.now(timezone.utc),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["connector"],
+                set_={"state": state, "updated_at": datetime.now(timezone.utc)},
+            )
+            async with self.engine.begin() as conn:
+                await conn.execute(stmt)
             logger.debug(f"Checkpoint saved for {connector}")
         except Exception as e:
             logger.error(f"Failed to save checkpoint for {connector}: {e}")
 
-    def load_checkpoint(self, connector: str) -> dict | None:
+    async def load_checkpoint(self, connector: str) -> dict | None:
         """Load checkpoint state for a connector. Returns None if not found."""
-        path = self._path_for(connector)
-        if not path.exists():
-            return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            logger.info(f"Loaded checkpoint for {connector}")
-            return data
+            async with self.engine.begin() as conn:
+                result = await conn.execute(
+                    select(checkpoints_table.c.state).where(
+                        checkpoints_table.c.connector == connector
+                    )
+                )
+                row = result.scalar_one_or_none()
+            if row is not None:
+                logger.info(f"Loaded checkpoint for {connector}")
+                return row
+            return None
         except Exception as e:
             logger.error(f"Failed to load checkpoint for {connector}: {e}")
             return None
 
-    def clear_checkpoint(self, connector: str) -> None:
-        """Remove checkpoint file for a connector."""
-        path = self._path_for(connector)
-        if path.exists():
-            path.unlink()
-            logger.debug(f"Checkpoint cleared for {connector}")
+    async def clear_checkpoint(self, connector: str) -> None:
+        """Remove checkpoint for a connector."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                delete(checkpoints_table).where(
+                    checkpoints_table.c.connector == connector
+                )
+            )
+        logger.debug(f"Checkpoint cleared for {connector}")
 
-    def has_checkpoint(self, connector: str) -> bool:
+    async def has_checkpoint(self, connector: str) -> bool:
         """Check if a checkpoint exists for a connector."""
-        return self._path_for(connector).exists()
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(checkpoints_table.c.connector).where(
+                    checkpoints_table.c.connector == connector
+                )
+            )
+            return result.first() is not None
 
-    def clear_all(self) -> None:
-        """Remove all checkpoint files."""
-        for path in self.checkpoints_dir.glob("*.json"):
-            path.unlink()
+    async def clear_all(self) -> None:
+        """Remove all checkpoint records."""
+        async with self.engine.begin() as conn:
+            await conn.execute(delete(checkpoints_table))
         logger.info("All checkpoints cleared")

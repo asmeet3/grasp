@@ -1,21 +1,24 @@
 """Authentication & User Management — handles registration, login, and roles.
 
-Supports email and Google sign-in. Users are stored as JSON files under
-.grasp_state/users/. New accounts require admin approval before access.
+Supports email and Google sign-in. Users are stored in PostgreSQL.
+New accounts require admin approval before access.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import httpx
 import bcrypt as _bcrypt
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from sqlalchemy import select, delete, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from .database import users_table
 
 logger = logging.getLogger(__name__)
 
@@ -36,45 +39,48 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 
 class UserManager:
-    """Manages user accounts stored as JSON files."""
+    """Manages user accounts stored in PostgreSQL."""
 
-    def __init__(self, state_dir: Path, session_secret: str, google_client_id: str = ""):
-        self.users_dir = state_dir / "users"
-        self.users_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, engine: AsyncEngine, session_secret: str, google_client_id: str = ""):
+        self.engine = engine
         self.session_secret = session_secret
         self.google_client_id = google_client_id
         self._serializer = URLSafeTimedSerializer(session_secret)
 
     # ── Persistence ────────────────────────────────────────
 
-    def _user_path(self, user_id: str) -> Path:
-        return self.users_dir / f"{user_id}.json"
+    async def _load(self, user_id: str) -> dict[str, Any] | None:
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(users_table).where(users_table.c.id == user_id)
+            )
+            row = result.mappings().first()
+            return dict(row) if row else None
 
-    def _load(self, user_id: str) -> dict[str, Any] | None:
-        path = self._user_path(user_id)
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return None
+    async def _save(self, user: dict[str, Any]) -> None:
+        stmt = pg_insert(users_table).values(**user)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={k: v for k, v in user.items() if k != "id"},
+        )
+        async with self.engine.begin() as conn:
+            await conn.execute(stmt)
 
-    def _save(self, user: dict[str, Any]) -> None:
-        path = self._user_path(user["id"])
-        path.write_text(json.dumps(user, indent=2), encoding="utf-8")
-
-    def _find_by_email(self, email: str) -> dict[str, Any] | None:
+    async def _find_by_email(self, email: str) -> dict[str, Any] | None:
         """Find a user by email (case-insensitive)."""
         email_lower = email.strip().lower()
-        for filepath in self.users_dir.glob("*.json"):
-            try:
-                data = json.loads(filepath.read_text(encoding="utf-8"))
-                if data.get("email", "").lower() == email_lower:
-                    return data
-            except Exception:
-                continue
-        return None
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(users_table).where(
+                    func.lower(users_table.c.email) == email_lower
+                )
+            )
+            row = result.mappings().first()
+            return dict(row) if row else None
 
     # ── Registration ───────────────────────────────────────
 
-    def register_email(
+    async def register_email(
         self,
         first_name: str,
         last_name: str,
@@ -86,7 +92,7 @@ class UserManager:
         email = email.strip().lower()
 
         # Check for existing account
-        existing = self._find_by_email(email)
+        existing = await self._find_by_email(email)
         if existing:
             if existing.get("auth_method") == "google":
                 return {
@@ -112,14 +118,14 @@ class UserManager:
             "auth_method": "email",
             "status": "pending_approval",
             "role": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc),
             "approved_at": None,
             "google_id": None,
         }
 
-        self._save(user)
+        await self._save(user)
         logger.info(f"New email registration: {email} (id={user_id})")
-        return {"user": self._public_user(user)}
+        return {"user": self._public_user(user), "pending": True}
 
     async def register_google(self, id_token: str) -> dict[str, Any]:
         """Register/login a user via Google ID token. Returns user or error."""
@@ -131,21 +137,25 @@ class UserManager:
         given_name = token_info.get("given_name", "")
         family_name = token_info.get("family_name", "")
         google_id = token_info.get("sub", "")
+        profile_picture = token_info.get("picture", "")
 
         # Check for existing account
-        existing = self._find_by_email(email)
+        existing = await self._find_by_email(email)
         if existing:
             if existing.get("auth_method") == "email":
                 return {
                     "error": "This email is already registered with an email account. Please sign in using your email and password.",
                     "conflict": "email",
                 }
-            # Already a Google user — treat as login
+            # Already a Google user — treat as login, refresh profile from Google
             if existing.get("status") == "pending_approval":
+                # Still refresh picture/name even for pending users
+                await self._refresh_google_profile(existing, given_name, family_name, google_id, profile_picture)
                 return {
                     "user": self._public_user(existing),
                     "pending": True,
                 }
+            await self._refresh_google_profile(existing, given_name, family_name, google_id, profile_picture)
             pv = existing.get("password_version", 0)
             token = self._create_token(existing["id"], pv)
             return {"user": self._public_user(existing), "token": token}
@@ -161,20 +171,21 @@ class UserManager:
             "auth_method": "google",
             "status": "pending_approval",
             "role": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc),
             "approved_at": None,
             "google_id": google_id,
+            "profile_picture": profile_picture,
         }
 
-        self._save(user)
+        await self._save(user)
         logger.info(f"New Google registration: {email} (id={user_id})")
-        return {"user": self._public_user(user)}
+        return {"user": self._public_user(user), "pending": True}
 
     # ── Login ──────────────────────────────────────────────
 
-    def login_email(self, email: str, password: str) -> dict[str, Any]:
+    async def login_email(self, email: str, password: str) -> dict[str, Any]:
         """Authenticate via email + password. Returns user + token or error."""
-        user = self._find_by_email(email.strip().lower())
+        user = await self._find_by_email(email.strip().lower())
         if not user:
             return {"error": "No account found with this email."}
 
@@ -207,7 +218,7 @@ class UserManager:
             return token_info
 
         email = token_info["email"].lower()
-        user = self._find_by_email(email)
+        user = await self._find_by_email(email)
 
         if not user:
             return {"error": "No account found. Please register first."}
@@ -219,6 +230,13 @@ class UserManager:
             }
 
         if user.get("status") == "pending_approval":
+            await self._refresh_google_profile(
+                user,
+                given_name=token_info.get("given_name", ""),
+                family_name=token_info.get("family_name", ""),
+                google_id=token_info.get("sub", ""),
+                profile_picture=token_info.get("picture", ""),
+            )
             return {
                 "user": self._public_user(user),
                 "pending": True,
@@ -227,6 +245,14 @@ class UserManager:
         if user.get("status") == "rejected":
             return {"error": "Your account has been rejected. Please contact an administrator."}
 
+        # Refresh profile fields from the fresh Google token before issuing session
+        await self._refresh_google_profile(
+            user,
+            given_name=token_info.get("given_name", ""),
+            family_name=token_info.get("family_name", ""),
+            google_id=token_info.get("sub", ""),
+            profile_picture=token_info.get("picture", ""),
+        )
         pv = user.get("password_version", 0)
         token = self._create_token(user["id"], pv)
         return {"user": self._public_user(user), "token": token}
@@ -237,11 +263,44 @@ class UserManager:
         """Create a signed session token embedding the password version."""
         return self._serializer.dumps({"uid": user_id, "pv": password_version})
 
-    def verify_token(self, token: str) -> dict[str, Any] | None:
+    async def _refresh_google_profile(
+        self,
+        user: dict[str, Any],
+        given_name: str,
+        family_name: str,
+        google_id: str,
+        profile_picture: str,
+    ) -> None:
+        """Update a Google user's profile fields from a fresh Google token and persist.
+
+        Only updates fields that Google provides — never touches ``dob``, ``role``,
+        ``status``, or any other admin-managed field.
+        Only overwrites stored values if the incoming value is non-empty,
+        so manually-set fields (e.g. a custom profile picture) are preserved
+        unless Google explicitly supplies a replacement.
+        """
+        changed = False
+        if given_name and user.get("first_name") != given_name:
+            user["first_name"] = given_name
+            changed = True
+        if family_name and user.get("last_name") != family_name:
+            user["last_name"] = family_name
+            changed = True
+        if google_id and user.get("google_id") != google_id:
+            user["google_id"] = google_id
+            changed = True
+        if profile_picture and user.get("profile_picture") != profile_picture:
+            user["profile_picture"] = profile_picture
+            changed = True
+        if changed:
+            await self._save(user)
+            logger.debug(f"Refreshed Google profile for user {user['id']}")
+
+    async def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify a session token and return the user, or None."""
         try:
             data = self._serializer.loads(token, max_age=SESSION_MAX_AGE)
-            user = self._load(data["uid"])
+            user = await self._load(data["uid"])
             if not user or user.get("status") != "approved":
                 return None
             # Invalidate token if password has been changed since it was issued
@@ -253,7 +312,7 @@ class UserManager:
 
     # ── User Self-Service ──────────────────────────────────
 
-    def update_profile(
+    async def update_profile(
         self,
         user_id: str,
         first_name: str | None = None,
@@ -262,7 +321,7 @@ class UserManager:
         profile_picture: str | None = None,
     ) -> dict[str, Any]:
         """Update a user's own profile fields. Returns updated public user or error."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
@@ -275,18 +334,18 @@ class UserManager:
         if profile_picture is not None:
             user["profile_picture"] = profile_picture  # base64 PNG data URL
 
-        self._save(user)
+        await self._save(user)
         logger.info(f"User {user_id} updated their profile")
         return {"user": self._public_user(user)}
 
-    def change_password(
+    async def change_password(
         self,
         user_id: str,
         current_password: str,
         new_password: str,
     ) -> dict[str, Any]:
         """Change a user's password and bump the password_version to invalidate sessions."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
@@ -304,16 +363,48 @@ class UserManager:
         user["password_hash"] = new_hash
         # Increment password_version to invalidate all existing session tokens
         user["password_version"] = user.get("password_version", 0) + 1
-        self._save(user)
+        await self._save(user)
 
         logger.info(f"User {user_id} changed their password (version={user['password_version']})")
         return {"message": "Password changed successfully. Please log in again."}
 
+    async def delete_account(
+        self,
+        user_id: str,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """Permanently delete a user account.
+
+        For email accounts, ``password`` must be provided and verified.
+        For Google accounts, no password is required (they are verified via
+        Google token on login — we trust the active session).
+        """
+        user = await self._load(user_id)
+        if not user:
+            return {"error": "User not found"}
+
+        if user.get("auth_method") == "email":
+            if not password:
+                return {"error": "Please enter your password to confirm account deletion."}
+            if not _bcrypt.checkpw(
+                password.encode("utf-8"),
+                user.get("password_hash", "").encode("utf-8"),
+            ):
+                return {"error": "Incorrect password. Account was not deleted."}
+
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                delete(users_table).where(users_table.c.id == user_id)
+            )
+
+        logger.info(f"User {user_id} ({user.get('email', '')}) deleted their account")
+        return {"message": "Account deleted successfully."}
+
     # ── Admin Actions ──────────────────────────────────────
 
-    def approve_user(self, user_id: str, role: str) -> dict[str, Any]:
+    async def approve_user(self, user_id: str, role: str) -> dict[str, Any]:
         """Approve a user and assign a role."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
@@ -322,27 +413,27 @@ class UserManager:
 
         user["status"] = "approved"
         user["role"] = role
-        user["approved_at"] = datetime.now(timezone.utc).isoformat()
-        self._save(user)
+        user["approved_at"] = datetime.now(timezone.utc)
+        await self._save(user)
 
         logger.info(f"User {user_id} ({user['email']}) approved with role '{role}'")
         return {"user": self._public_user(user), "message": f"User approved as {role}"}
 
-    def reject_user(self, user_id: str) -> dict[str, Any]:
+    async def reject_user(self, user_id: str) -> dict[str, Any]:
         """Reject a pending user."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
         user["status"] = "rejected"
-        self._save(user)
+        await self._save(user)
 
         logger.info(f"User {user_id} ({user['email']}) rejected")
         return {"message": "User rejected"}
 
-    def update_role(self, user_id: str, new_role: str) -> dict[str, Any]:
+    async def update_role(self, user_id: str, new_role: str) -> dict[str, Any]:
         """Change an approved user's role."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
@@ -351,7 +442,7 @@ class UserManager:
 
         old_role = user.get("role")
         user["role"] = new_role
-        self._save(user)
+        await self._save(user)
 
         logger.info(f"User {user_id} role changed: {old_role} → {new_role}")
         return {
@@ -359,21 +450,18 @@ class UserManager:
             "message": f"Role changed from {old_role} to {new_role}",
         }
 
-    def list_users(self) -> list[dict[str, Any]]:
+    async def list_users(self) -> list[dict[str, Any]]:
         """List all registered users."""
-        users = []
-        for filepath in self.users_dir.glob("*.json"):
-            try:
-                data = json.loads(filepath.read_text(encoding="utf-8"))
-                users.append(self._public_user(data))
-            except Exception as e:
-                logger.warning(f"Failed to load user {filepath.name}: {e}")
-        users.sort(key=lambda u: u.get("created_at", ""), reverse=True)
-        return users
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(users_table).order_by(users_table.c.created_at.desc())
+            )
+            rows = result.mappings().all()
+        return [self._public_user(dict(row)) for row in rows]
 
-    def get_user(self, user_id: str) -> dict[str, Any] | None:
+    async def get_user(self, user_id: str) -> dict[str, Any] | None:
         """Get a single user by ID (public view)."""
-        user = self._load(user_id)
+        user = await self._load(user_id)
         if user:
             return self._public_user(user)
         return None
@@ -409,6 +497,7 @@ class UserManager:
                 "given_name": info.get("given_name", ""),
                 "family_name": info.get("family_name", ""),
                 "sub": info.get("sub", ""),
+                "picture": info.get("picture", ""),
             }
         except Exception as e:
             logger.error(f"Google token verification failed: {e}")
@@ -419,6 +508,13 @@ class UserManager:
     @staticmethod
     def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         """Return a user dict with sensitive fields stripped."""
+        created_at = user.get("created_at", "")
+        approved_at = user.get("approved_at")
+        # Convert datetime objects to ISO strings for JSON serialization
+        if hasattr(created_at, "isoformat"):
+            created_at = created_at.isoformat()
+        if hasattr(approved_at, "isoformat"):
+            approved_at = approved_at.isoformat()
         return {
             "id": user["id"],
             "first_name": user.get("first_name", ""),
@@ -428,7 +524,7 @@ class UserManager:
             "auth_method": user.get("auth_method", "email"),
             "status": user.get("status", "pending_approval"),
             "role": user.get("role"),
-            "created_at": user.get("created_at", ""),
-            "approved_at": user.get("approved_at"),
+            "created_at": created_at,
+            "approved_at": approved_at,
             "profile_picture": user.get("profile_picture"),
         }

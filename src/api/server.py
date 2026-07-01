@@ -46,6 +46,7 @@ from .models import (
     UpdateRoleRequest,
     UpdateProfileRequest,
     ChangePasswordRequest,
+    DeleteAccountRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ def create_app(
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
-            return user_manager.verify_token(token)
+            return await user_manager.verify_token(token)
         return None
 
     # ── Auth endpoints ─────────────────────────────────────
@@ -124,7 +125,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="Authentication not available")
         if request.password != request.confirm_password:
             return AuthResponse(error="Passwords do not match")
-        result = user_manager.register_email(
+        result = await user_manager.register_email(
             first_name=request.first_name,
             last_name=request.last_name,
             dob=request.dob,
@@ -154,7 +155,7 @@ def create_app(
         """Login via email + password."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = user_manager.login_email(request.email, request.password)
+        result = await user_manager.login_email(request.email, request.password)
         if "error" in result:
             return AuthResponse(error=result["error"], conflict=result.get("conflict"))
         return AuthResponse(
@@ -201,7 +202,7 @@ def create_app(
         user = await get_current_user(req)
         if not user:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        result = user_manager.update_profile(
+        result = await user_manager.update_profile(
             user_id=user["id"],
             first_name=request.first_name,
             last_name=request.last_name,
@@ -222,10 +223,30 @@ def create_app(
             raise HTTPException(status_code=401, detail="Not authenticated")
         if request.new_password != request.confirm_new_password:
             raise HTTPException(status_code=422, detail="New passwords do not match")
-        result = user_manager.change_password(
+        result = await user_manager.change_password(
             user_id=user["id"],
             current_password=request.current_password,
             new_password=request.new_password,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return {"message": result["message"], "logout_required": True}
+
+    @app.delete("/api/auth/account")
+    async def delete_account(request: DeleteAccountRequest, req: Request):
+        """Permanently delete the current user's account.
+
+        Email accounts must supply their password for verification.
+        Google accounts are verified through their active session token.
+        """
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        result = await user_manager.delete_account(
+            user_id=user["id"],
+            password=request.password,
         )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
@@ -238,7 +259,7 @@ def create_app(
         """List all registered users."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        users = user_manager.list_users()
+        users = await user_manager.list_users()
         return {"users": users, "count": len(users)}
 
     @app.post("/api/admin/users/{user_id}/approve", dependencies=[Depends(require_admin)])
@@ -246,7 +267,7 @@ def create_app(
         """Approve a pending user and assign a role."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = user_manager.approve_user(user_id, request.role)
+        result = await user_manager.approve_user(user_id, request.role)
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
@@ -256,7 +277,7 @@ def create_app(
         """Reject a pending user."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = user_manager.reject_user(user_id)
+        result = await user_manager.reject_user(user_id)
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
@@ -266,7 +287,7 @@ def create_app(
         """Change an approved user's role."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = user_manager.update_role(user_id, request.role)
+        result = await user_manager.update_role(user_id, request.role)
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
@@ -317,7 +338,7 @@ def create_app(
 
         return SystemStatusResponse(
             status="syncing" if sync_orchestrator.is_running else "online",
-            last_sync=sync_orchestrator.get_last_sync(),
+            last_sync=await sync_orchestrator.get_last_sync(),
             next_scheduled=sync_scheduler.next_run_time,
             connector_health=_health_cache,
             document_stats=repo_manager.get_source_stats(),
@@ -339,7 +360,7 @@ def create_app(
         """Get current sync status including worker progress."""
         return SyncStatusResponse(
             is_running=sync_orchestrator.is_running,
-            last_sync=sync_orchestrator.get_last_sync(),
+            last_sync=await sync_orchestrator.get_last_sync(),
             next_scheduled=sync_scheduler.next_run_time,
             workers=sync_orchestrator.worker_statuses if sync_orchestrator.is_running else None,
         )
@@ -347,7 +368,7 @@ def create_app(
     @app.get("/api/sync/history", dependencies=[Depends(require_admin)])
     async def sync_history():
         """Get sync history log."""
-        return sync_orchestrator.get_sync_history()
+        return await sync_orchestrator.get_sync_history()
 
     # ── Pending changes endpoints ──────────────────────────
 
@@ -403,7 +424,7 @@ def create_app(
             submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
         if not submitted_by or not submitted_by.strip():
             raise HTTPException(status_code=422, detail="Name is required")
-        result = contribution_manager.submit(
+        result = await contribution_manager.submit(
             title=request.title,
             content=request.content,
             content_type=request.content_type,
@@ -493,7 +514,7 @@ def create_app(
         # Use filename as title if title is empty
         final_title = title.strip() or filename.rsplit(".", 1)[0]
 
-        result = contribution_manager.submit(
+        result = await contribution_manager.submit(
             title=final_title,
             content=content,
             content_type="document",
@@ -530,7 +551,7 @@ def create_app(
         """List all pending contributions (admin only)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        pending = contribution_manager.list_pending()
+        pending = await contribution_manager.list_pending()
         return ContributionListResponse(contributions=pending, count=len(pending))
 
     @app.get("/api/contributions/count", dependencies=[Depends(require_admin)])
@@ -538,7 +559,7 @@ def create_app(
         """Get count of pending contributions (for badge polling)."""
         if not contribution_manager:
             return {"count": 0}
-        return {"count": contribution_manager.count_pending()}
+        return {"count": await contribution_manager.count_pending()}
 
     @app.get("/api/contributions/my")
     async def get_my_contributions(request: Request, submitted_by: str = ""):
@@ -554,7 +575,7 @@ def create_app(
             name = (request.cookies.get("grasp_user") or "").strip()
         if not name:
             raise HTTPException(status_code=422, detail="submitted_by is required")
-        all_contributions = contribution_manager.list_all()
+        all_contributions = await contribution_manager.list_all()
         mine = [c for c in all_contributions if c.get("submitted_by", "").strip().lower() == name.lower()]
         return {"contributions": mine, "count": len(mine)}
 
@@ -563,7 +584,7 @@ def create_app(
         """Download the original uploaded file for a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        contribution = contribution_manager.get(contribution_id)
+        contribution = await contribution_manager.get(contribution_id)
         if not contribution:
             raise HTTPException(status_code=404, detail="Contribution not found")
         ext = contribution.get("original_file_ext", "")
@@ -584,7 +605,7 @@ def create_app(
         """Get a single contribution by ID (admin only)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        contribution = contribution_manager.get(contribution_id)
+        contribution = await contribution_manager.get(contribution_id)
         if not contribution:
             raise HTTPException(status_code=404, detail="Contribution not found")
         return ContributionResponse(**contribution)
@@ -594,7 +615,7 @@ def create_app(
         """Admin edits the contribution content before approval."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        result = contribution_manager.update_content(
+        result = await contribution_manager.update_content(
             contribution_id,
             title=request.title,
             content=request.content,
@@ -621,7 +642,7 @@ def create_app(
         """Reject a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        result = contribution_manager.reject(
+        result = await contribution_manager.reject(
             contribution_id,
             admin_notes=request.admin_notes,
         )
