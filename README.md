@@ -1,22 +1,81 @@
 # Grasp
 
-Grasp is a self-hosted knowledge retrieval system that connects to your company's Confluence, Jira, SharePoint, Slack, and Notion instances. It periodically syncs content from these platforms into a local Git repository and a ChromaDB vector index, then uses Claude to answer natural-language questions about that content.
+Grasp is a self-hosted knowledge retrieval system that connects to your company's Confluence, Jira, SharePoint, Slack, and Notion instances. It periodically syncs content from these platforms into a local Git repository and a ChromaDB vector index (powered by OpenAI `text-embedding-3-large`), then uses Claude to answer natural-language questions about that content.
 
-At query time, Grasp searches both the local index and the live platform APIs in parallel, then synthesizes a single answer with source citations.
+At query time, Grasp searches both the local vector index and the live platform APIs in parallel, then synthesizes a single answer with source citations.
 
 ## How It Works
 
 Grasp has two main operating modes:
 
-**Sync** — A background scheduler pulls documents from all configured platforms on a cron schedule (configurable, defaults to five times per day). Documents are classified into one of ten information types using Claude Haiku, written to a Git repository as Markdown files with YAML frontmatter, and indexed into ChromaDB. The initial sync supports checkpointing so it can resume if interrupted. Subsequent syncs are incremental, fetching only documents modified since the last run. After each sync, changes are staged for human review before being committed and pushed.
+**Sync** — A background scheduler pulls documents from all configured platforms on a cron schedule (configurable, defaults to five times per day). Documents are classified into one of six knowledge types using Claude Haiku, written to a Git repository as Markdown files with YAML frontmatter, and indexed into ChromaDB using OpenAI `text-embedding-3-large` embeddings. Content is split using a recursive markdown-aware chunker that respects document structure (headers → code blocks → paragraphs → sentences → words) before embedding. The initial sync supports checkpointing so it can resume if interrupted. Subsequent syncs are incremental, fetching only documents modified since the last run. After each sync, changes are staged for human review before being committed and pushed.
 
 **Query** — When a user asks a question, Grasp fans out search requests to the local vector index and all configured platform APIs concurrently. A coordinator agent (Claude Sonnet) receives the aggregated results and synthesizes an answer. If the initial results are insufficient, the agent can make up to four follow-up tool calls to read specific files, run filtered searches, or query individual platforms directly. Responses are streamed to the client via SSE.
+
+## RAG Pipeline Architecture
+
+Grasp combines vector search with live API search for comprehensive coverage.
+
+### Ingestion Pipeline
+
+```
+Platform APIs (Confluence, Jira, Slack, etc.)
+  │
+  ▼  [HTML → Markdown conversion]
+Document (title, content, metadata, URL)
+  │
+  ├──▶ sources/{platform}/{date}/file.md    (raw, append-only)
+  ├──▶ knowledge/{type}/{year}-{slug}.md    (classified by Claude Haiku)
+  ├──▶ _index/ updated (graph, tags, freshness)
+  └──▶ ChromaDB (recursive chunked → embedded via text-embedding-3-large)
+```
+
+**Recursive chunking**: Documents are split using a 7-level separator hierarchy that preserves semantic boundaries:
+
+| Priority | Separator | Purpose |
+|----------|-----------|--------|
+| 1 | `# `, `## `, `### ` | Markdown section boundaries |
+| 2 | ` ``` ` | Code block fences |
+| 3 | `---`, `***` | Horizontal rules |
+| 4 | `\n\n` | Paragraph breaks |
+| 5 | `\n` | Line breaks |
+| 6 | `. `, `! `, `? ` | Sentence endings |
+| 7 | ` ` (space) | Word boundaries |
+
+Chunks are capped at 1500 characters with 200-character overlaps on clean word boundaries. Each chunk is stored in ChromaDB with metadata linking it back to the full document (`repo_path`, `doc_id`, `source`, `url`, etc.).
+
+### Query Pipeline
+
+```
+User Question
+  │
+  ├──▶ Vector RAG (ChromaDB)          ← semantic search over all synced history
+  │      Returns top ~10 unique docs (deduplicated, best chunk per doc)
+  │
+  └──▶ Keyword RAG (Live APIs)        ← CQL/JQL/native search, last few hours
+         Confluence, Jira, Slack, SharePoint, Notion (parallel)
+  │
+  ▼  [All results aggregated]
+Claude Sonnet (Coordinator Agent)
+  │
+  ├── Synthesizes answer from all results
+  ├── Can call read_repo_file(path) to read full documents
+  ├── Can call search_knowledge_repo(query, filters) for targeted follow-ups
+  ├── Can call individual live search tools for platform-specific queries
+  └── Up to 4 follow-up tool rounds
+  │
+  ▼
+Streamed response via SSE (with source citations)
+```
+
+**Two-stage retrieval**: The vector search returns chunk previews (400 chars each). If Claude judges a chunk insufficient, it calls `read_repo_file` with the chunk's `repo_path` metadata to read the full document from the local Git repo — no GitHub or network call involved.
 
 ## Requirements
 
 - Python 3.11+
 - PostgreSQL database
 - An Anthropic API key
+- An OpenAI API key (for `text-embedding-3-large` embeddings)
 - Credentials for at least one supported platform (Confluence, Jira, SharePoint, Slack, or Notion)
 
 ## Setup
@@ -51,6 +110,7 @@ All configuration is done through environment variables in `.env`. See `.env.exa
 | Variable | Description |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
+| `OPENAI_API_KEY` | OpenAI API key for `text-embedding-3-large` embeddings |
 | `ADMIN_KEY` | Secret key for admin API endpoints |
 | `DATABASE_URL` | PostgreSQL connection URL (e.g. `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp`) |
 
@@ -80,6 +140,12 @@ Configure only the platforms you use. Grasp auto-detects which connectors are av
 | `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` | SharePoint |
 | `SLACK_BOT_TOKEN` | Slack |
 | `NOTION_API_KEY` | Notion |
+
+### Optional — Embeddings
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_MODEL` | `text-embedding-3-large` | OpenAI embedding model name |
 
 ### Optional — Sync Schedule
 
@@ -160,18 +226,16 @@ All admin endpoints require the `X-Admin-Key` header.
 
 ## Authentication & Access Control
 
-Grasp has a full user authentication system backed by PostgreSQL.
-
-- **Registration**: Users can sign up with email/password or via Google OAuth. New accounts are held in `pending_approval` status until an admin approves them.
+- **Registration**: Users sign up with email/password or via Google OAuth. New accounts are held in `pending_approval` status until an admin approves them.
 - **Roles**: Admins assign one of ten predefined roles on approval (Intern, Junior Associate, Associate, Senior Associate, Team Lead, Manager, Director, Principal, Vice President, Partner).
 - **Sessions**: Authenticated via signed bearer tokens (7-day expiry). Password changes invalidate all existing sessions.
 - **Google sign-in**: Enabled when `GOOGLE_CLIENT_ID` is set. The `GET /api/auth/config` endpoint exposes this to the frontend.
 
 ## Contributions
 
-Users can submit content to be added to the knowledge repository without needing connector access.
+Users can submit content to the knowledge repository without connector access.
 
-- Submit text, code snippets, or upload files (.txt, .md, .pdf, .docx). PDFs and DOCX files are parsed server-side with text extraction.
+- Submit text, code snippets, or upload files (.txt, .md, .pdf, .docx). PDFs and DOCX files are parsed server-side.
 - Submitted contributions enter a `pending` queue visible in the admin dashboard.
 - Admins can edit the content, add notes, then approve or reject. Approved contributions are classified by Claude Haiku and written into the Git-backed knowledge repo.
 
@@ -225,7 +289,7 @@ src/
   repo/
     manager.py                   Git repo management, document classification, change approval
   index/
-    vector_store.py              ChromaDB indexing and semantic search
+    vector_store.py              ChromaDB indexing, OpenAI embeddings, recursive markdown chunking, and semantic search
   agent/
     engine.py                    Claude-powered query coordinator with tool use
     sub_agents.py                Parallel search fan-out with timeout and error handling
@@ -248,7 +312,8 @@ src/
 | Component | Technology |
 |---|---|
 | LLM | Anthropic Claude (Sonnet 4.6 for queries, Haiku 4.6 for classification) |
-| Vector database | ChromaDB |
+| Embeddings | OpenAI `text-embedding-3-large` (3072 dimensions) |
+| Vector database | ChromaDB (cosine similarity) |
 | Relational database | PostgreSQL (async via SQLAlchemy + asyncpg) |
 | Git operations | GitPython |
 | Scheduler | APScheduler 3.x |

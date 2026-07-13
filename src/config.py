@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     agent_model: str = Field("claude-sonnet-4-6", description="Model for agentic reasoning")
     classifier_model: str = Field("claude-haiku-4-5-20251001", description="Model for content classification")
 
+    # ── OpenAI (Embeddings) ────────────────────────────────
+    openai_api_key: str = Field("", description="OpenAI API key for embeddings")
+    embedding_model: str = Field("text-embedding-3-large", description="OpenAI embedding model name")
+
     # ── GitHub Repository ──────────────────────────────────
     github_repo_path: str = Field("./knowledge_repo", description="Local path for the knowledge repo")
     github_remote_url: str = Field("", description="Remote Git URL for push")

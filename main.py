@@ -181,7 +181,11 @@ def main():
     )
     logger.info(f"✓ Repository manager initialized at {settings.repo_path}")
 
-    vector_store = VectorStore(persist_dir=settings.chroma_path)
+    vector_store = VectorStore(
+        persist_dir=settings.chroma_path,
+        openai_api_key=settings.openai_api_key,
+        embedding_model=settings.embedding_model,
+    )
     logger.info(f"✓ Vector store initialized ({vector_store.document_count} chunks indexed)")
 
     checkpoint_manager = CheckpointManager(engine=db_engine)
