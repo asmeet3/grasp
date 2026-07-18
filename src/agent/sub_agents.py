@@ -113,37 +113,58 @@ class SubAgent:
 
 
 class SubAgentDispatcher:
-    """Dispatches multiple sub-agents in parallel and aggregates results."""
+    """Dispatches sub-agents using a two-branch parallel fan-out.
 
-    def __init__(self):
-        self.sub_agents: list[SubAgent] = []
+    Branch 1: Vector DB search with the original user query.
+    Branch 2: Shorten query → search all live platforms with each
+              shortened sub-query → deduplicate results.
+    """
+
+    def __init__(self, query_shortener=None):
+        self.repo_agents: list[SubAgent] = []
+        self.live_agents: list[SubAgent] = []
+        self.query_shortener = query_shortener  # Optional QueryShortener
 
     def register(self, agent: SubAgent):
-        """Register a sub-agent for parallel dispatch."""
-        self.sub_agents.append(agent)
+        """Register a sub-agent for parallel dispatch.
+
+        Agents whose name ends with ``_live`` are classified as live
+        platform agents; everything else is treated as a repo agent.
+        """
+        if agent.name.endswith("_live"):
+            self.live_agents.append(agent)
+        else:
+            self.repo_agents.append(agent)
 
     async def fan_out(self, query: str) -> list[SubAgentResult]:
-        """Execute all sub-agents in parallel and return aggregated results."""
-        if not self.sub_agents:
+        """Two-branch parallel fan-out.
+
+        Branch 1 (repo): search vector DB with the *original* query.
+        Branch 2 (live): shorten query → search all platforms with each
+        shortened sub-query → deduplicate across results.
+
+        Both branches run concurrently.
+        """
+        all_agents = self.repo_agents + self.live_agents
+        if not all_agents:
             return []
 
-        logger.info(f"Dispatching {len(self.sub_agents)} sub-agents for query: '{query[:80]}...'")
+        logger.info(
+            f"Fan-out: {len(self.repo_agents)} repo agent(s), "
+            f"{len(self.live_agents)} live agent(s) for query: '{query[:80]}...'"
+        )
         start = time.time()
 
-        tasks = [agent.execute(query) for agent in self.sub_agents]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Launch both branches in parallel
+        branch_1 = self._repo_branch(query)
+        branch_2 = self._live_branch(query)
 
-        # Convert exceptions to SubAgentResult
-        final_results: list[SubAgentResult] = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                agent = self.sub_agents[i]
-                final_results.append(SubAgentResult(
-                    source=agent.source,
-                    error=str(result),
-                ))
-            else:
-                final_results.append(result)
+        repo_results, live_results = await asyncio.gather(
+            branch_1, branch_2, return_exceptions=False
+        )
+
+        # Merge
+        final_results: list[SubAgentResult] = repo_results + live_results
 
         total_ms = (time.time() - start) * 1000
         total_results = sum(len(r.results) for r in final_results)
@@ -156,6 +177,134 @@ class SubAgentDispatcher:
         )
 
         return final_results
+
+    # ── Branch 1: Repo / Vector DB ─────────────────────────
+
+    async def _repo_branch(self, query: str) -> list[SubAgentResult]:
+        """Search vector DB with the original query."""
+        if not self.repo_agents:
+            return []
+
+        tasks = [agent.execute(query) for agent in self.repo_agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        return self._collect(results, self.repo_agents)
+
+    # ── Branch 2: Shorten → Live Search → Dedup ────────────
+
+    async def _live_branch(self, query: str) -> list[SubAgentResult]:
+        """Shorten query, fan-out to live platforms, deduplicate."""
+        if not self.live_agents:
+            return []
+
+        # Step 1: Shorten the query into sub-queries
+        if self.query_shortener:
+            short_queries = await self.query_shortener.shorten(query)
+            logger.info(f"Shortened queries for live search: {short_queries}")
+        else:
+            # No shortener configured — use original query as-is
+            short_queries = [query]
+
+        # Step 2: For each shortened query, search all live platforms
+        tasks = []
+        for sq in short_queries:
+            for agent in self.live_agents:
+                tasks.append(agent.execute(sq))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Build an agent list that mirrors the task order (for error mapping)
+        agent_order = []
+        for _ in short_queries:
+            agent_order.extend(self.live_agents)
+
+        collected = self._collect(results, agent_order)
+
+        # Step 3: Deduplicate across all live results
+        return self._deduplicate_by_source(collected)
+
+    # ── Helpers ─────────────────────────────────────────────
+
+    @staticmethod
+    def _collect(
+        results: list, agents: list[SubAgent]
+    ) -> list[SubAgentResult]:
+        """Convert raw gather results (including exceptions) to SubAgentResults."""
+        final: list[SubAgentResult] = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                agent = agents[i]
+                final.append(SubAgentResult(
+                    source=agent.source,
+                    error=str(result),
+                ))
+            else:
+                final.append(result)
+        return final
+
+    @staticmethod
+    def _deduplicate_by_source(
+        results: list[SubAgentResult],
+    ) -> list[SubAgentResult]:
+        """Merge results per source and deduplicate documents.
+
+        Multiple shortened queries hitting the same platform may return
+        overlapping documents.  We group by source, then deduplicate by
+        ``doc_id`` (falling back to ``url``).
+        """
+        from collections import defaultdict
+
+        # Group all result dicts by source
+        source_docs: dict[str, list[dict]] = defaultdict(list)
+        source_elapsed: dict[str, float] = defaultdict(float)
+        source_error: dict[str, str | None] = {}
+
+        for result in results:
+            if result.error:
+                # Keep the first error per source
+                source_error.setdefault(result.source, result.error)
+                source_elapsed[result.source] = max(
+                    source_elapsed[result.source], result.elapsed_ms
+                )
+                continue
+
+            source_docs[result.source].extend(result.results)
+            source_elapsed[result.source] = max(
+                source_elapsed[result.source], result.elapsed_ms
+            )
+
+        # Deduplicate within each source
+        merged: list[SubAgentResult] = []
+        all_sources = set(source_docs.keys()) | set(source_error.keys())
+
+        for source in all_sources:
+            docs = source_docs.get(source, [])
+            seen: set[str] = set()
+            unique_docs: list[dict] = []
+
+            for doc in docs:
+                key = doc.get("doc_id") or doc.get("url") or ""
+                if key and key in seen:
+                    continue
+                if key:
+                    seen.add(key)
+                unique_docs.append(doc)
+
+            dedup_count = len(docs) - len(unique_docs)
+            if dedup_count > 0:
+                logger.info(
+                    f"Deduplicated {dedup_count} docs from {source} "
+                    f"({len(docs)} → {len(unique_docs)})"
+                )
+
+            merged.append(SubAgentResult(
+                source=source,
+                results=unique_docs,
+                error=source_error.get(source) if not unique_docs else None,
+                elapsed_ms=source_elapsed.get(source, 0.0),
+            ))
+
+        return merged
 
     def format_all_results(self, results: list[SubAgentResult]) -> str:
         """Format all sub-agent results into a single context string."""

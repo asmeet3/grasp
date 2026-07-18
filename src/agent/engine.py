@@ -33,22 +33,29 @@ You have access to tools that let you search both a comprehensive knowledge repo
 
 ## How to Answer Questions
 
-1. **Start with fan_out_search**: For any new question, ALWAYS begin by calling `fan_out_search` with a well-crafted query. This searches ALL sources simultaneously in parallel — it's the fastest way to gather broad context.
+1. **Start with fan_out_search**: For any new question, ALWAYS begin by calling `fan_out_search` with a well-crafted query. This performs a two-branch parallel search:
+   - **Branch 1**: Searches the ChromaDB knowledge repository with your original query for deep historical context.
+   - **Branch 2**: Automatically shortens your query into concise sub-queries and searches all live platforms (Jira, Confluence, SharePoint, Slack, Notion) for documents posted in the past 4 hours. Results are deduplicated automatically.
 
-2. **Analyze the results**: Review what came back from all sources. Identify the most relevant information.
+2. **Analyze the results**: Review what came back from both the repository (historical) and live platforms (recent). Identify the most relevant information from each.
 
-3. **Deep-dive if needed**: If the fan-out results aren't sufficient, use targeted tools:
-   - `read_repo_file` to get the full content of a relevant document
-   - `search_knowledge_repo` with specific filters (source, info_type) for targeted vector search
-   - Individual platform search tools for focused follow-ups
+3. **Self-assessment — do you need full documents?**: After reviewing the fan-out results, ask yourself:
+   - Are there search result snippets that are clearly truncated where the full content would **materially change or improve** your answer?
+   - Are there `repo_path` values in the results metadata pointing to documents you need to read in full?
+   If YES, use `read_full_documents` to batch-retrieve the full content of those documents. This is your **one final deep-dive** — use it only when truly needed, not by default.
 
-4. **Synthesize your answer**: Combine information from multiple sources into a comprehensive, well-structured response.
+4. **Targeted follow-ups (if needed)**: If the fan-out and full-doc retrieval aren't sufficient, use targeted tools:
+   - `read_repo_file` to get a specific file from the repo
+   - `search_knowledge_repo` with filters (source, info_type) for focused vector search
+   - Individual platform search tools for further live follow-ups
+
+5. **Synthesize your answer**: Combine information from multiple sources into a comprehensive, well-structured response.
 
 ## Response Guidelines
-- **Cite your sources**: Always mention where information came from (e.g., "According to a Confluence page on API Design..." or "A recent Slack discussion in #engineering mentioned..."). Include URLs when available.
-- **Be comprehensive but concise**: Cover all relevant aspects without unnecessary padding.
-- **Distinguish between historical and live data**: If information comes from the cached repository vs. a live query, note the freshness.
-- **Acknowledge uncertainty**: If you can't find sufficient information, say so clearly rather than guessing.
+- **Always cite your sources**: For every piece of information, mention where it came from and include the URL when available. Format as: "According to [Document Title](URL)..." or "A recent Jira issue [PROJ-123](URL) mentions...". Never give unsourced claims.
+- **Be comprehensive but concise**: Cover all relevant aspects thoroughly without unnecessary padding.  Give the user a complete picture — do not give half answers.
+- **Distinguish between historical and live data**: Clearly note whether information comes from the cached knowledge repository (historical) or from a live platform query (recent, last 4 hours).
+- **Acknowledge uncertainty**: If you cannot find sufficient information, say so clearly rather than guessing. Never fabricate sources or URLs.
 - **Use structured formatting**: Use headings, bullet points, and bold text to make answers scannable.
 """
 
@@ -56,7 +63,7 @@ You have access to tools that let you search both a comprehensive knowledge repo
 class QueryEngine:
     """The coordinator agent that orchestrates query answering."""
 
-    MAX_ROUNDS = 4  # Max follow-up rounds after initial fan-out
+    MAX_ROUNDS = 1  # Max follow-up rounds after initial fan-out (round 1=fan-out, 2=synthesis, 3=optional follow-up)
 
     def __init__(
         self,
@@ -120,22 +127,32 @@ class QueryEngine:
 
         # Phase 2 & 3: Claude synthesis + optional follow-ups
         for round_num in range(self.MAX_ROUNDS + 1):
-            logger.info(f"Agent round {round_num + 1}")
+            logger.info(f"Agent round {round_num + 2}")  # +2 because fan-out is round 1
 
             try:
-                response = await self.client.messages.create(
+                # Use streaming so text tokens flow to the browser in real-time.
+                # When Claude calls a tool we collect the full response (needed to
+                # reconstruct the tool_use block), execute it, then stream again.
+                async with self.client.messages.stream(
                     model=self.model,
                     max_tokens=4096,
                     system=SYSTEM_PROMPT,
                     tools=TOOL_DEFINITIONS,
                     messages=messages,
-                )
+                ) as stream:
+                    # Stream text tokens to the browser as they arrive
+                    async for text in stream.text_stream:
+                        yield text
+
+                    # Get the final completed message (needed for tool_use blocks)
+                    response = await stream.get_final_message()
+
             except Exception as e:
                 logger.error(f"Claude API error: {e}")
                 yield f"\n\n*Error communicating with AI: {e}*"
                 return
 
-            # Process the response
+            # Process non-text blocks (tool_use) from the completed response
             has_tool_use = False
             assistant_content = []
             tool_results = []
@@ -143,10 +160,7 @@ class QueryEngine:
             for block in response.content:
                 assistant_content.append(block)
 
-                if block.type == "text":
-                    yield block.text
-
-                elif block.type == "tool_use":
+                if block.type == "tool_use":
                     has_tool_use = True
                     logger.info(f"Tool call: {block.name}({json.dumps(block.input)[:200]})")
 
@@ -182,6 +196,23 @@ class QueryEngine:
 
             # Claude finished (stop_reason == "end_turn")
             break
+        else:
+            # Loop exhausted all rounds while Claude was still calling tools.
+            # Run one final round WITHOUT tools so Claude is forced to produce
+            # a text synthesis from the gathered context.
+            logger.info("Max rounds reached — forcing final synthesis (no tools)")
+            try:
+                async with self.client.messages.stream(
+                    model=self.model,
+                    max_tokens=4096,
+                    system=SYSTEM_PROMPT,
+                    messages=messages,
+                ) as stream:
+                    async for text in stream.text_stream:
+                        yield text
+            except Exception as e:
+                logger.error(f"Claude API error in final synthesis: {e}")
+                yield f"\n\n*Error communicating with AI: {e}*"
 
         elapsed = time.time() - start_time
         logger.info(f"Query completed in {elapsed:.1f}s")

@@ -47,6 +47,11 @@ class JiraConnector(BaseConnector):
         """POST request for Enhanced JQL search endpoint."""
         client = await self._get_client()
         response = await self.rate_limiter.execute(client, "POST", url, json=json_body)
+        if response.status_code >= 400:
+            self.logger.error(
+                f"Jira API error {response.status_code} for POST {url}: {response.text[:500]}"
+            )
+            response.raise_for_status()
         return response.json()
 
     # ── Full retrieval ─────────────────────────────────────
@@ -120,22 +125,29 @@ class JiraConnector(BaseConnector):
 
             data = await self._api_post(url, json_body=body)
 
+            issues = data.get("issues", [])
+            # Always read the next page token before processing, so an empty
+            # batch (e.g., all parse failures) doesn't silently kill pagination.
+            next_page_token = data.get("nextPageToken")
+            self._checkpoint = {"next_page_token": next_page_token}
+
+            if not issues and not next_page_token:
+                # Jira returned nothing and there's no next page — we're done.
+                break
+
             batch: list[Document] = []
-            for issue in data.get("issues", []):
+            for issue in issues:
                 doc = self._issue_to_document(issue)
                 if doc:
                     batch.append(doc)
                     total_fetched += 1
 
             if batch:
-                next_page_token = data.get("nextPageToken")
-                self._checkpoint = {"next_page_token": next_page_token}
                 yield batch
 
             if max_results and total_fetched >= max_results:
                 return
 
-            next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
 

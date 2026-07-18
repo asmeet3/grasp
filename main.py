@@ -28,6 +28,7 @@ from src.sync.scheduler import SyncScheduler
 from src.repo.manager import RepoManager
 from src.index.vector_store import VectorStore
 from src.agent.sub_agents import SubAgent, SubAgentDispatcher
+from src.agent.query_shortener import QueryShortener
 from src.agent.tools import ToolExecutor
 from src.agent.engine import QueryEngine
 from src.api.server import create_app
@@ -113,9 +114,10 @@ def build_connectors(settings) -> dict[str, BaseConnector]:
 def build_sub_agent_dispatcher(
     connectors: dict[str, BaseConnector],
     vector_store: VectorStore,
+    query_shortener: QueryShortener | None = None,
 ) -> SubAgentDispatcher:
     """Build the sub-agent dispatcher for parallel query fan-out."""
-    dispatcher = SubAgentDispatcher()
+    dispatcher = SubAgentDispatcher(query_shortener=query_shortener)
 
     # Repo search sub-agent (wraps vector store)
     async def repo_search(query: str) -> list[Document]:
@@ -211,7 +213,14 @@ def main():
     )
 
     # 6. Query engine
-    dispatcher = build_sub_agent_dispatcher(connectors, vector_store)
+    query_shortener = QueryShortener(
+        anthropic_api_key=settings.anthropic_api_key,
+        model=settings.query_shortener_model,
+        system_prompt=settings.query_shortener_system_prompt,
+    )
+    logger.info(f"✓ Query shortener initialized (model: {settings.query_shortener_model})")
+
+    dispatcher = build_sub_agent_dispatcher(connectors, vector_store, query_shortener)
     tool_executor = ToolExecutor(
         dispatcher=dispatcher,
         vector_store=vector_store,

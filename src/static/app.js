@@ -163,6 +163,9 @@ async function submitQuery() {
             } else if (!isDone) {
                 requestAnimationFrame(typeWriter);
             } else {
+                if (!fullText.trim()) {
+                    fullText = '*No response was generated. Please try again.*';
+                }
                 assistantMsg.innerHTML = renderMarkdown(fullText);
                 chatArea.scrollTop = chatArea.scrollHeight;
                 addToHistory(question, fullText);
@@ -173,7 +176,8 @@ async function submitQuery() {
 
         requestAnimationFrame(typeWriter);
 
-        while (true) {
+        let streamFinished = false;
+        while (!streamFinished) {
             const { done, value } = await reader.read();
             if (done) {
                 isDone = true;
@@ -189,6 +193,8 @@ async function submitQuery() {
             for (const line of lines) {
                 if (line.startsWith('event: done')) {
                     lastWasData = false;
+                    streamFinished = true;
+                    isDone = true;
                     break;
                 } else if (line.startsWith('event: error')) {
                     lastWasData = false;

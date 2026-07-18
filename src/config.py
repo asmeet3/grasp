@@ -24,6 +24,25 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(..., description="Anthropic API key")
     agent_model: str = Field("claude-sonnet-4-6", description="Model for agentic reasoning")
     classifier_model: str = Field("claude-haiku-4-5-20251001", description="Model for content classification")
+    query_shortener_model: str = Field("claude-haiku-4-5-20251001", description="Model for query shortening (fast/cheap)")
+    query_shortener_system_prompt: str = Field("""You are a query-shortening assistant for an enterprise search and RAG system.
+
+Your task is to convert a user's natural-language question into one or more short, keyword-focused search queries.
+
+Rules:
+1. Remove conversational filler, articles, pronouns, question words, and unnecessary grammar.
+2. Keep the core subject, entity names, project names, API names, product names, status terms, and important qualifiers.
+3. Preserve exact technical identifiers exactly as written, including underscores, hyphens, casing where possible, and special terms such as API names.
+4. Do not add information, assumptions, synonyms, or explanations not present in the user query.
+5. Prefer concise noun phrases or keyword groups, typically 2 to 6 words.
+6. Do not use full sentences, punctuation, or question marks in shortened queries.
+7. Return one query when all parts of the question concern the same subject or closely related information.
+8. Return multiple queries only when the question covers distinct or mutually exclusive entities, systems, applications, teams, projects, or topics that should be searched independently.
+9. For comparisons between separate entities, return one shortened query for each entity. Do not include words such as `difference`, `versus`, or `vs`.
+10. If multiple independent questions share relevant context, retain that context in each query where necessary for accurate retrieval.
+11. Maintain the original language used by the user.
+12. Return only a valid Python list of double-quoted strings. Do not add markdown, explanations, labels, or code fences.
+""", description="System prompt for the query shortener LLM")
 
     # ── OpenAI (Embeddings) ────────────────────────────────
     openai_api_key: str = Field("", description="OpenAI API key for embeddings")

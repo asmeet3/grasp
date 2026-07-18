@@ -28,10 +28,12 @@ TOOL_DEFINITIONS = [
     {
         "name": "fan_out_search",
         "description": (
-            "Search ALL sources simultaneously: the knowledge repository (ChromaDB) and "
-            "all 5 live platforms (Confluence, Jira, SharePoint, Slack, Notion). "
-            "This is the fastest way to gather broad context — all searches run in parallel. "
-            "Use this as your FIRST action for any new question."
+            "Search ALL sources simultaneously using a two-branch strategy: "
+            "(1) the knowledge repository (ChromaDB) is searched with the original query, "
+            "(2) the query is shortened into concise sub-queries and used to search live "
+            "platforms (Confluence, Jira, SharePoint, Slack, Notion) for docs from the past "
+            "4 hours — results are deduplicated automatically. "
+            "This is the fastest way to gather broad context. Use as your FIRST action."
         ),
         "input_schema": {
             "type": "object",
@@ -95,6 +97,29 @@ TOOL_DEFINITIONS = [
                 }
             },
             "required": ["file_path"],
+        },
+    },
+    {
+        "name": "read_full_documents",
+        "description": (
+            "Batch-read the full content of documents identified by their repo_path from "
+            "previous search results. Use this ONLY when the fan-out search returned "
+            "truncated snippets and you believe the full document content would materially "
+            "improve your answer. This is your final deep-dive tool — use it sparingly."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "List of repo_path strings from search result metadata "
+                        "(e.g., ['knowledge/decisions/2024-API_Design.md', ...]). Max 5."
+                    ),
+                }
+            },
+            "required": ["repo_paths"],
         },
     },
     {
@@ -184,6 +209,8 @@ class ToolExecutor:
                 )
             elif tool_name == "read_repo_file":
                 return self._read_file(tool_input["file_path"])
+            elif tool_name == "read_full_documents":
+                return self._read_full_documents(tool_input["repo_paths"])
             elif tool_name == "search_confluence_live":
                 return await self._search_live("confluence", tool_input["query"])
             elif tool_name == "search_jira_live":
@@ -236,6 +263,31 @@ class ToolExecutor:
         if content:
             return f"Content of {file_path}:\n\n{content}"
         return f"File not found: {file_path}"
+
+    def _read_full_documents(self, repo_paths: list[str]) -> str:
+        """Batch-read full documents from the knowledge repository.
+
+        Used for the follow-up round when Sonnet determines that
+        truncated snippets need full context.
+        """
+        MAX_DOCS = 5
+        paths = repo_paths[:MAX_DOCS]
+
+        parts = []
+        for path in paths:
+            content = self.repo_manager.get_file_content(path)
+            if content:
+                parts.append(f"--- Full Document: {path} ---\n\n{content}")
+            else:
+                parts.append(f"--- {path}: NOT FOUND ---")
+
+        if not parts:
+            return "No documents could be read from the provided paths."
+
+        return (
+            f"Retrieved {len(parts)} full document(s):\n\n"
+            + "\n\n".join(parts)
+        )
 
     async def _search_live(self, platform: str, query: str) -> str:
         """Search a specific platform live."""
