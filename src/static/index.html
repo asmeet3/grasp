@@ -91,15 +91,15 @@
                     </div>
                 </div>
 
-                <!-- Recent Queries dropdown (open by default) -->
+                <!-- Recent Chats dropdown (open by default) -->
                 <div class="sidebar-section">
-                    <button class="sidebar-section-header" onclick="toggleSidebarSection('queries')"
-                        aria-expanded="true" id="queriesToggle">
-                        <span class="sidebar-section-title">Recent Queries</span>
-                        <span class="sidebar-section-chevron open" id="queriesChevron">›</span>
+                    <button class="sidebar-section-header" onclick="toggleSidebarSection('chats')"
+                        aria-expanded="true" id="chatsToggle">
+                        <span class="sidebar-section-title">Recent Chats</span>
+                        <span class="sidebar-section-chevron open" id="chatsChevron">›</span>
                     </button>
-                    <div class="sidebar-section-body" id="queriesSectionBody">
-                        <div id="historyContainer"></div>
+                    <div class="sidebar-section-body" id="chatsSectionBody">
+                        <div id="chatListContainer"></div>
                     </div>
                 </div>
 
@@ -139,6 +139,14 @@
             </button>
             <header class="main-header">
                 <div></div>
+                <button class="new-chat-fab" id="newChatFab" onclick="startNewChat()" aria-label="New Chat">
+                    <svg class="new-chat-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span class="new-chat-fab-label">New Chat</span>
+                </button>
             </header>
 
             <div class="chat-area" id="chatArea">
@@ -499,6 +507,24 @@
                     </svg>
                     Yes, Delete My Account
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Chat Confirmation Modal -->
+    <div class="modal-overlay" id="deleteChatModal">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+                <h2>Delete Chat</h2>
+                <button class="modal-close" onclick="closeDeleteChatModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); margin:0;">Are you sure you want to delete this chat?</p>
+            </div>
+            <div class="modal-footer" style="padding-top:15px;">
+                <div style="flex:1"></div>
+                <button class="reject-btn" onclick="closeDeleteChatModal()">No</button>
+                <button class="approve-btn" onclick="confirmDeleteChat()">Yes</button>
             </div>
         </div>
     </div>

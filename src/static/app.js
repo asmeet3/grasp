@@ -2,18 +2,49 @@
 
 const API_BASE = '';
 let isStreaming = false;
-let queryHistory = JSON.parse(localStorage.getItem('grasp_history') || '[]');
 let currentUser = null;
+
+// ── Chat Thread State ─────────────────────────────────────
+let chatThreads = JSON.parse(localStorage.getItem('grasp_chats') || '[]');
+let currentChatId = null;  // null = welcome screen / fresh state
+let chatToDelete = null;
+
+// Migrate: clear old format if present
+if (localStorage.getItem('grasp_history')) {
+    localStorage.removeItem('grasp_history');
+}
 
 // ── Initialization ────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
+    await fetchChats();
     refreshStatus();
-    renderHistory();
+    renderChatList();
     initOnboarding();
     setInterval(refreshStatus, 30000);
 });
+
+async function fetchChats() {
+    const token = localStorage.getItem('grasp_session_token');
+    if (!token) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/chats`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            // Restore legacy createdAt properties if needed
+            chatThreads = data.threads.map(t => ({
+                ...t,
+                createdAt: t.created_at || t.createdAt
+            }));
+            localStorage.setItem('grasp_chats', JSON.stringify(chatThreads));
+        }
+    } catch (e) {
+        console.error('Failed to fetch chats', e);
+    }
+}
 
 // ── Status Polling ────────────────────────────────────────
 
@@ -105,6 +136,12 @@ async function submitQuery() {
     const welcome = document.getElementById('welcome');
     if (welcome) welcome.remove();
 
+    // If no active chat, create one
+    if (!currentChatId) {
+        const chat = createChatThread(question);
+        currentChatId = chat.id;
+    }
+
     const chatArea = document.getElementById('chatArea');
 
     // User message
@@ -121,12 +158,16 @@ async function submitQuery() {
 
     chatArea.scrollTop = chatArea.scrollHeight;
 
+    // Build history from current chat thread (prior messages only)
+    const currentChat = chatThreads.find(c => c.id === currentChatId);
+    const history = currentChat ? currentChat.messages.map(m => ({ role: m.role, content: m.content })) : [];
+
     // Stream response via SSE
     try {
         const response = await fetch(`${API_BASE}/api/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question }),
+            body: JSON.stringify({ question, history: history.length > 0 ? history : null }),
         });
 
         const reader = response.body.getReader();
@@ -139,6 +180,9 @@ async function submitQuery() {
 
         assistantMsg.innerHTML = '';
 
+        let lastRenderTime = 0;
+        const RENDER_INTERVAL = 80; // ms — throttle markdown re-renders
+
         function typeWriter() {
             if (!isStreaming) return;
 
@@ -147,28 +191,40 @@ async function submitQuery() {
 
                 // Add characters at a controlled pace to ensure a smooth typing effect
                 // even if the backend sends large chunks at once.
-                let charsToAdd = 1;
-                if (diff > 20) charsToAdd = 2;
-                if (diff > 50) charsToAdd = 3;
-                if (diff > 100) charsToAdd = 4;
-                if (diff > 200) charsToAdd = 6;
-                if (diff > 400) charsToAdd = 8;
+                let charsToAdd = 2;
+                if (diff > 20) charsToAdd = 4;
+                if (diff > 50) charsToAdd = 8;
+                if (diff > 100) charsToAdd = 12;
+                if (diff > 200) charsToAdd = 20;
+                if (diff > 400) charsToAdd = 30;
 
                 displayedText += fullText.slice(displayedText.length, displayedText.length + charsToAdd);
 
-                const cursorHtml = '<span style="display:inline-block;width:6px;height:15px;background:var(--accent-primary);margin-left:4px;vertical-align:middle;animation:pulse 1s infinite"></span>';
-                assistantMsg.innerHTML = renderMarkdown(displayedText) + cursorHtml;
-                chatArea.scrollTop = chatArea.scrollHeight;
+                // Throttle markdown rendering to avoid freezing the browser
+                const now = performance.now();
+                if (now - lastRenderTime > RENDER_INTERVAL) {
+                    lastRenderTime = now;
+                    const cursorHtml = '<span style="display:inline-block;width:6px;height:15px;background:var(--accent-primary);margin-left:4px;vertical-align:middle;animation:pulse 1s infinite"></span>';
+                    try {
+                        assistantMsg.innerHTML = renderMarkdown(displayedText) + cursorHtml;
+                    } catch (e) {
+                        // Fallback to raw text if markdown parsing fails on partial text
+                        assistantMsg.textContent = displayedText;
+                    }
+                    chatArea.scrollTop = chatArea.scrollHeight;
+                }
                 requestAnimationFrame(typeWriter);
             } else if (!isDone) {
                 requestAnimationFrame(typeWriter);
             } else {
+                console.log('[Grasp] Stream finished. fullText length:', fullText.length);
                 if (!fullText.trim()) {
                     fullText = '*No response was generated. Please try again.*';
                 }
                 assistantMsg.innerHTML = renderMarkdown(fullText);
                 chatArea.scrollTop = chatArea.scrollHeight;
-                addToHistory(question, fullText);
+                // Save Q/A to current chat thread
+                saveToChatThread(currentChatId, question, fullText);
                 isStreaming = false;
                 document.getElementById('sendBtn').disabled = false;
             }
@@ -226,14 +282,62 @@ async function submitQuery() {
 function renderMarkdown(text) {
     if (!text) return '';
 
+    // Strip \r from SSE wire format (\r\n → \n) so multiline regex anchors work
+    text = text.replace(/\r/g, '');
+
     // Escape HTML
     let html = escapeHtml(text);
 
-    // Code blocks
+    // Code blocks (must be first to protect contents)
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>');
 
     // Inline code
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Tables — detect and convert markdown tables to HTML
+    html = html.replace(/((?:^\|.+\|[ \t]*\n)+)/gm, function(tableBlock) {
+        const rows = tableBlock.trim().split('\n');
+        if (rows.length < 2) return tableBlock;
+
+        // Check if second row is a separator row (|---|---|...)
+        const separatorMatch = rows[1].match(/^\|[\s\-:|]+\|$/);
+        if (!separatorMatch) return tableBlock;
+
+        // Parse alignment from separator row
+        const sepCells = rows[1].split('|').slice(1, -1);
+        const aligns = sepCells.map(cell => {
+            const trimmed = cell.trim();
+            if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+            if (trimmed.endsWith(':')) return 'right';
+            return 'left';
+        });
+
+        // Build header
+        const headerCells = rows[0].split('|').slice(1, -1);
+        let tableHtml = '<table><thead><tr>';
+        headerCells.forEach((cell, i) => {
+            const align = aligns[i] || 'left';
+            tableHtml += `<th style="text-align:${align}">${cell.trim()}</th>`;
+        });
+        tableHtml += '</tr></thead><tbody>';
+
+        // Build body rows (skip header and separator)
+        for (let r = 2; r < rows.length; r++) {
+            const cells = rows[r].split('|').slice(1, -1);
+            if (cells.length === 0) continue;
+            tableHtml += '<tr>';
+            cells.forEach((cell, i) => {
+                const align = aligns[i] || 'left';
+                tableHtml += `<td style="text-align:${align}">${cell.trim()}</td>`;
+            });
+            tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table>';
+        return tableHtml;
+    });
+
+    // Horizontal rules
+    html = html.replace(/^(?:---+|\*\*\*+|___+)$/gm, '<hr>');
 
     // Headings
     html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
@@ -252,14 +356,19 @@ function renderMarkdown(text) {
     html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
 
     // Numbered lists
-    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/^\d+\. (.+)$/gm, '<oli>$1</oli>');
+    html = html.replace(/(<oli>.*<\/oli>\n?)+/g, function(match) {
+        return '<ol>' + match.replace(/<\/?oli>/g, function(tag) {
+            return tag.replace('oli', 'li');
+        }) + '</ol>';
+    });
 
     // Line breaks to paragraphs
     html = html.replace(/\n\n/g, '</p><p>');
     html = html.replace(/\n/g, '<br>');
     html = '<p>' + html + '</p>';
 
-    // Clean up empty paragraphs
+    // Clean up empty paragraphs and unwrap block elements from <p>
     html = html.replace(/<p><\/p>/g, '');
     html = html.replace(/<p>(<h[123]>)/g, '$1');
     html = html.replace(/(<\/h[123]>)<\/p>/g, '$1');
@@ -267,9 +376,216 @@ function renderMarkdown(text) {
     html = html.replace(/(<\/pre>)<\/p>/g, '$1');
     html = html.replace(/<p>(<ul>)/g, '$1');
     html = html.replace(/(<\/ul>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<ol>)/g, '$1');
+    html = html.replace(/(<\/ol>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<table>)/g, '$1');
+    html = html.replace(/(<\/table>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<hr>)/g, '$1');
+    html = html.replace(/(<hr>)<\/p>/g, '$1');
 
     return html;
 }
+
+// ── Chat Thread Management ────────────────────────────────
+
+function generateChatId() {
+    return 'chat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+}
+
+function createChatThread(firstQuestion) {
+    const chat = {
+        id: generateChatId(),
+        title: firstQuestion.length > 50 ? firstQuestion.substring(0, 50) + '…' : firstQuestion,
+        createdAt: new Date().toISOString(),
+        messages: [],
+    };
+    chatThreads.unshift(chat);
+    // Cap total chats at 30
+    chatThreads = chatThreads.slice(0, 30);
+    persistChats();
+    renderChatList();
+    return chat;
+}
+
+function saveToChatThread(chatId, question, answer) {
+    const chat = chatThreads.find(c => c.id === chatId);
+    if (!chat) return;
+    chat.messages.push({ role: 'user', content: question });
+    chat.messages.push({ role: 'assistant', content: answer });
+    persistChats();
+    renderChatList();
+}
+
+function persistChats() {
+    localStorage.setItem('grasp_chats', JSON.stringify(chatThreads));
+    syncCurrentChat();
+}
+
+async function syncCurrentChat() {
+    const token = localStorage.getItem('grasp_session_token');
+    if (!token || !currentChatId) return;
+    
+    const chat = chatThreads.find(c => c.id === currentChatId);
+    if (!chat) return;
+
+    try {
+        await fetch(`${API_BASE}/api/chats`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                id: chat.id,
+                title: chat.title,
+                messages: chat.messages,
+                created_at: chat.createdAt
+            })
+        });
+    } catch (e) {
+        console.error('Failed to sync chat to DB', e);
+    }
+}
+
+function startNewChat() {
+    if (isStreaming) return;
+    currentChatId = null;
+
+    const chatArea = document.getElementById('chatArea');
+    chatArea.innerHTML = '';
+
+    // Re-create welcome screen
+    const welcome = document.createElement('div');
+    welcome.className = 'welcome';
+    welcome.id = 'welcome';
+
+    const isOnboarding = localStorage.getItem('grasp_onboarding') === 'true';
+
+    welcome.innerHTML = `
+        <div class="welcome-motif">
+            <div class="motif-line"></div>
+            <div class="motif-diamond"></div>
+            <div class="motif-line"></div>
+        </div>
+        <h1>Ask <span class="accent-word">anything</span> about your company</h1>
+        <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
+
+        <div class="onboarding-banner" id="onboardingBanner" style="display:${isOnboarding ? 'flex' : 'none'}">
+            <div class="onboarding-banner-icon"><img src="/icons/onboarding-dark.png" class="theme-icon-dark" alt="Onboarding" style="width:24px;height:24px;"><img src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding" style="width:24px;height:24px;"></div>
+            <div>
+                <strong>Welcome aboard!</strong> Onboarding mode is active. These prompts are designed to quickly
+                familiarize you with company history, conventions, and current priorities.
+            </div>
+        </div>
+
+        <div class="suggestion-chips" id="defaultChips" style="display:${isOnboarding ? 'none' : ''}">
+            <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
+            <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
+            <div class="suggestion-chip stagger-3" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
+            <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
+        </div>
+
+        <div class="suggestion-chips" id="onboardingChips" style="display:${isOnboarding ? '' : 'none'}">
+            <div class="suggestion-chip stagger-1 onboarding-chip" onclick="askQuestion(this.textContent)">What is the company's history and founding story?</div>
+            <div class="suggestion-chip stagger-2 onboarding-chip" onclick="askQuestion(this.textContent)">What are the key conventions and coding standards?</div>
+            <div class="suggestion-chip stagger-3 onboarding-chip" onclick="askQuestion(this.textContent)">What projects are currently in progress?</div>
+            <div class="suggestion-chip stagger-4 onboarding-chip" onclick="askQuestion(this.textContent)">Who are the key team members and their roles?</div>
+            <div class="suggestion-chip stagger-5 onboarding-chip" onclick="askQuestion(this.textContent)">What tools and platforms does the company use?</div>
+        </div>
+    `;
+
+    chatArea.appendChild(welcome);
+    renderChatList();
+}
+
+function loadChat(chatId) {
+    if (isStreaming) return;
+    const chat = chatThreads.find(c => c.id === chatId);
+    if (!chat) return;
+
+    currentChatId = chatId;
+    const chatArea = document.getElementById('chatArea');
+    chatArea.innerHTML = '';
+
+    // Render all messages from this chat thread
+    for (const msg of chat.messages) {
+        const div = document.createElement('div');
+        if (msg.role === 'user') {
+            div.className = 'message message-user';
+            div.textContent = msg.content;
+        } else {
+            div.className = 'message message-assistant';
+            div.innerHTML = renderMarkdown(msg.content);
+        }
+        chatArea.appendChild(div);
+    }
+
+    chatArea.scrollTop = chatArea.scrollHeight;
+    renderChatList();
+}
+
+function openDeleteChatModal(chatId, event) {
+    if (event) event.stopPropagation();
+    chatToDelete = chatId;
+    const modal = document.getElementById('deleteChatModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeDeleteChatModal() {
+    chatToDelete = null;
+    const modal = document.getElementById('deleteChatModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function confirmDeleteChat() {
+    if (!chatToDelete) return;
+    const chatId = chatToDelete;
+    closeDeleteChatModal();
+
+    chatThreads = chatThreads.filter(c => c.id !== chatId);
+    localStorage.setItem('grasp_chats', JSON.stringify(chatThreads));
+    
+    if (currentChatId === chatId) {
+        startNewChat();
+    } else {
+        renderChatList();
+    }
+
+    const token = localStorage.getItem('grasp_session_token');
+    if (token) {
+        try {
+            await fetch(`${API_BASE}/api/chats/${chatId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+        } catch (e) {
+            console.error('Failed to delete chat in DB', e);
+        }
+    }
+}
+
+function renderChatList() {
+    const container = document.getElementById('chatListContainer');
+    if (!container) return;
+
+    if (!chatThreads.length) {
+        container.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">No chats yet</div>';
+        return;
+    }
+
+    container.innerHTML = chatThreads.map(chat => {
+        const isActive = chat.id === currentChatId;
+        const timeStr = timeAgo(chat.createdAt);
+        const msgCount = chat.messages.filter(m => m.role === 'user').length;
+        return `<div class="chat-thread-item${isActive ? ' chat-thread-active' : ''}" onclick="loadChat('${chat.id}')">
+            <div class="chat-thread-title">${escapeHtml(chat.title)}</div>
+            <div class="chat-thread-meta">${msgCount} message${msgCount !== 1 ? 's' : ''} · ${timeStr}</div>
+            <button class="chat-delete-btn" onclick="openDeleteChatModal('${chat.id}', event)" aria-label="Delete chat" title="Delete chat">✕</button>
+        </div>`;
+    }).join('');
+}
+
+// ── Utility ───────────────────────────────────────────────
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -277,32 +593,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ── History Management ────────────────────────────────────
-
-function addToHistory(question, answer) {
-    queryHistory.unshift({
-        question,
-        answer: answer.substring(0, 200),
-        timestamp: new Date().toISOString(),
-    });
-    queryHistory = queryHistory.slice(0, 20);
-    localStorage.setItem('grasp_history', JSON.stringify(queryHistory));
-    renderHistory();
-}
-
-function renderHistory() {
-    const container = document.getElementById('historyContainer');
-    if (!queryHistory.length) {
-        container.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">No queries yet</div>';
-        return;
-    }
-
-    container.innerHTML = queryHistory.map(h =>
-        `<div class="history-item" onclick="askQuestion('${escapeHtml(h.question).replace(/'/g, "\\'")}')">${escapeHtml(h.question)}</div>`
-    ).join('');
-}
-
-// ── Utility ───────────────────────────────────────────────
 
 function timeAgo(dateStr, future = false) {
     try {
@@ -828,9 +1118,9 @@ document.addEventListener('click', (e) => {
 // ── Sidebar Section Toggles ───────────────────────────────
 
 function toggleSidebarSection(section) {
-    const bodyMap = { connectors: 'connectorsSectionBody', queries: 'queriesSectionBody' };
-    const chevronMap = { connectors: 'connectorsChevron', queries: 'queriesChevron' };
-    const toggleMap = { connectors: 'connectorsToggle', queries: 'queriesToggle' };
+    const bodyMap = { connectors: 'connectorsSectionBody', chats: 'chatsSectionBody' };
+    const chevronMap = { connectors: 'connectorsChevron', chats: 'chatsChevron' };
+    const toggleMap = { connectors: 'connectorsToggle', chats: 'chatsToggle' };
 
     const body = document.getElementById(bodyMap[section]);
     const chevron = document.getElementById(chevronMap[section]);

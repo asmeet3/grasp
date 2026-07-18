@@ -35,6 +35,7 @@ from src.api.server import create_app
 from src.contributions import ContributionManager
 from src.auth import UserManager
 from src.database import create_engine, init_db
+from src.chat_manager import ChatManager
 
 # ── Logging ────────────────────────────────────────────────
 
@@ -129,6 +130,11 @@ def build_sub_agent_dispatcher(
                 title=r.title,
                 content=r.content,
                 url=r.url,
+                metadata={
+                    "repo_path": r.repo_path,
+                    "info_type": r.info_type,
+                    "score": round(r.score, 3),
+                },
             )
             for r in results
         ]
@@ -250,6 +256,10 @@ def main():
     )
     logger.info("✓ User manager initialized (PostgreSQL)")
 
+    # 6d. Chat manager
+    chat_manager = ChatManager(engine=db_engine)
+    logger.info("✓ Chat manager initialized (PostgreSQL)")
+
     # 7. FastAPI app
     app = create_app(
         query_engine=query_engine,
@@ -261,6 +271,7 @@ def main():
         admin_key=settings.admin_key,
         contribution_manager=contribution_manager,
         user_manager=user_manager,
+        chat_manager=chat_manager,
         google_client_id=settings.google_client_id,
     )
 

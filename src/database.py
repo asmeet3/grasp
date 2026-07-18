@@ -65,6 +65,19 @@ contributions_table = Table(
     Column("original_file_ext", Text, nullable=True),
 )
 
+# ── Chat Threads ───────────────────────────────────────────
+
+chat_threads_table = Table(
+    "chat_threads",
+    metadata,
+    Column("id", String(50), primary_key=True),
+    Column("user_id", String(12), nullable=False),
+    Column("title", Text, nullable=False),
+    Column("messages", JSONB, nullable=False, server_default="[]"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()),
+)
+
 # ── Sync State ─────────────────────────────────────────────
 
 sync_state_table = Table(

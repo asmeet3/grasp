@@ -8,8 +8,14 @@ from typing import Any
 
 # ── Query ──────────────────────────────────────────────────
 
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="Message role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+
+
 class QueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask the institutional brain")
+    history: list[ChatMessage] | None = Field(None, description="Prior conversation messages for multi-turn chat context")
 
 
 class QueryResponse(BaseModel):
@@ -120,6 +126,25 @@ class ContributionActionResponse(BaseModel):
     message: str
     info_type: str | None = None
     error: str | None = None
+
+
+# ── Chat Threads ───────────────────────────────────────────
+
+class SaveChatThreadRequest(BaseModel):
+    id: str = Field(..., description="Unique chat ID")
+    title: str = Field(..., description="Chat title")
+    messages: list[dict] = Field(..., description="List of message objects (role, content)")
+    created_at: str | None = Field(None, description="Optional ISO timestamp")
+
+class ChatThreadResponse(BaseModel):
+    id: str
+    title: str
+    messages: list[dict]
+    created_at: str | None = None
+    updated_at: str | None = None
+
+class ChatThreadListResponse(BaseModel):
+    threads: list[ChatThreadResponse]
 
 
 # ── Authentication ─────────────────────────────────────────

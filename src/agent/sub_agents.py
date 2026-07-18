@@ -37,11 +37,20 @@ class SubAgentResult:
         lines = [f"[{self.source.upper()}] Found {len(self.results)} results ({self.elapsed_ms:.0f}ms):"]
         for i, r in enumerate(self.results, 1):
             title = r.get("title", "Untitled")
-            snippet = r.get("snippet", "")[:300]
+            snippet = r.get("snippet", "")[:800]
             url = r.get("url", "")
+            repo_path = r.get("repo_path", "")
+            info_type = r.get("info_type", "")
+            score = r.get("score")
             lines.append(f"  {i}. **{title}**")
             if url:
                 lines.append(f"     URL: {url}")
+            if repo_path:
+                lines.append(f"     repo_path: {repo_path}")
+            if info_type:
+                lines.append(f"     info_type: {info_type}")
+            if score is not None:
+                lines.append(f"     score: {score}")
             if snippet:
                 lines.append(f"     {snippet}")
             lines.append("")
@@ -77,14 +86,20 @@ class SubAgent:
 
             formatted = []
             for doc in results:
-                formatted.append({
+                entry = {
                     "title": doc.title,
-                    "snippet": doc.content[:500] if doc.content else "",
+                    "snippet": doc.content[:1000] if doc.content else "",
                     "url": doc.url,
                     "source": doc.source,
                     "doc_id": doc.id,
                     "updated_at": doc.updated_at.isoformat() if doc.updated_at else "",
-                })
+                }
+                # Pass through metadata fields (repo_path, info_type, score)
+                if doc.metadata:
+                    for key in ("repo_path", "info_type", "score"):
+                        if key in doc.metadata:
+                            entry[key] = doc.metadata[key]
+                formatted.append(entry)
 
             return SubAgentResult(
                 source=self.source,

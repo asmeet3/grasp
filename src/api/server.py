@@ -47,6 +47,8 @@ from .models import (
     UpdateProfileRequest,
     ChangePasswordRequest,
     DeleteAccountRequest,
+    ChatThreadListResponse,
+    SaveChatThreadRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ def create_app(
     admin_key: str = "",
     contribution_manager=None,
     user_manager=None,
+    chat_manager=None,
     google_client_id: str = "",
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -254,6 +257,51 @@ def create_app(
 
     # ── Admin User Management ──────────────────────────────
 
+    # ── Chat History Endpoints ─────────────────────────────
+
+    @app.get("/api/chats", response_model=ChatThreadListResponse)
+    async def get_chats(req: Request):
+        """Get all chat threads for the current user."""
+        if not chat_manager:
+            raise HTTPException(status_code=503, detail="Chat manager not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        threads = await chat_manager.get_user_chats(user["id"])
+        return ChatThreadListResponse(threads=threads)
+
+    @app.post("/api/chats")
+    async def save_chat(request: SaveChatThreadRequest, req: Request):
+        """Save or update a chat thread."""
+        if not chat_manager:
+            raise HTTPException(status_code=503, detail="Chat manager not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        await chat_manager.save_chat(
+            user_id=user["id"],
+            chat_id=request.id,
+            title=request.title,
+            messages=request.messages,
+            created_at=request.created_at,
+        )
+        return {"status": "ok"}
+
+    @app.delete("/api/chats/{chat_id}")
+    async def delete_chat(chat_id: str, req: Request):
+        """Delete a chat thread."""
+        if not chat_manager:
+            raise HTTPException(status_code=503, detail="Chat manager not available")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        deleted = await chat_manager.delete_chat(user["id"], chat_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Chat not found or access denied")
+        return {"status": "ok"}
+
+    # ── Admin User Management ──────────────────────────────
+
     @app.get("/api/admin/users", dependencies=[Depends(require_admin)])
     async def list_users():
         """List all registered users."""
@@ -297,9 +345,14 @@ def create_app(
     @app.post("/api/query")
     async def query(request: QueryRequest):
         """Submit a question and get a streamed answer via SSE."""
+        # Convert history models to plain dicts for the engine
+        history = None
+        if request.history:
+            history = [{"role": m.role, "content": m.content} for m in request.history]
+
         async def event_generator():
             try:
-                async for chunk in query_engine.query_stream(request.question):
+                async for chunk in query_engine.query_stream(request.question, history=history):
                     yield {"event": "chunk", "data": chunk}
                 yield {"event": "done", "data": ""}
             except Exception as e:

@@ -63,7 +63,7 @@ You have access to tools that let you search both a comprehensive knowledge repo
 class QueryEngine:
     """The coordinator agent that orchestrates query answering."""
 
-    MAX_ROUNDS = 1  # Max follow-up rounds after initial fan-out (round 1=fan-out, 2=synthesis, 3=optional follow-up)
+    MAX_ROUNDS = 3  # Max follow-up rounds after initial fan-out (fan-out is auto, then up to 3 tool-use rounds + forced synthesis)
 
     def __init__(
         self,
@@ -75,20 +75,29 @@ class QueryEngine:
         self.model = model
         self.tool_executor = tool_executor
 
-    async def query(self, question: str) -> str:
+    MAX_HISTORY_PAIRS = 10  # Max prior Q/A pairs to include (20 messages)
+
+    async def query(self, question: str, history: list[dict] | None = None) -> str:
         """Execute a query and return the complete answer."""
         result_parts = []
-        async for chunk in self.query_stream(question):
+        async for chunk in self.query_stream(question, history=history):
             result_parts.append(chunk)
         return "".join(result_parts)
 
-    async def query_stream(self, question: str) -> AsyncGenerator[str, None]:
+    async def query_stream(self, question: str, history: list[dict] | None = None) -> AsyncGenerator[str, None]:
         """Execute a query with streaming response.
 
         Implements the three-phase query architecture:
         1. Auto-trigger fan_out_search
         2. Claude synthesizes from gathered context
         3. Optional follow-up rounds for deep-dives
+
+        Args:
+            question: The current user question.
+            history: Prior conversation messages from the same chat thread.
+                     Each entry is {"role": "user"|"assistant", "content": "..."}.
+                     Only messages from the current chat are included — no
+                     cross-chat contamination.
         """
         start_time = time.time()
 
@@ -96,8 +105,18 @@ class QueryEngine:
         logger.info(f"Query received: '{question[:100]}...'")
         fan_out_context = await self.tool_executor.execute("fan_out_search", {"query": question})
 
-        # Build initial messages with fan-out results pre-loaded
-        messages = [
+        # Build initial messages with optional chat history + fan-out results
+        messages = []
+
+        # Prepend prior conversation history (capped to avoid context overflow)
+        if history:
+            trimmed = history[-(self.MAX_HISTORY_PAIRS * 2):]
+            logger.info(f"Including {len(trimmed)} prior messages from chat history")
+            for msg in trimmed:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # Current question + fan-out results
+        messages.extend([
             {
                 "role": "user",
                 "content": question,
@@ -123,7 +142,7 @@ class QueryEngine:
                     }
                 ],
             },
-        ]
+        ])
 
         # Phase 2 & 3: Claude synthesis + optional follow-ups
         for round_num in range(self.MAX_ROUNDS + 1):
