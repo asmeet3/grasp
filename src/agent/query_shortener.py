@@ -44,6 +44,7 @@ class QueryShortener:
                 model=self.model,
                 max_tokens=512,
                 system=self.system_prompt,
+                temperature=0.1,
                 messages=[
                     {
                         "role": "user",

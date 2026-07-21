@@ -219,13 +219,30 @@ class QueryEngine:
             # Loop exhausted all rounds while Claude was still calling tools.
             # Run one final round WITHOUT tools so Claude is forced to produce
             # a text synthesis from the gathered context.
-            logger.info("Max rounds reached — forcing final synthesis (no tools)")
+            logger.info("Max rounds reached — forcing final synthesis")
+            
+            final_instruction = {
+                "type": "text", 
+                "text": "You have reached the maximum number of tool calls. Please synthesize a final answer using ONLY the information gathered so far. You MUST NOT use any more tools."
+            }
+            if messages and messages[-1]["role"] == "user":
+                if isinstance(messages[-1]["content"], list):
+                    messages[-1]["content"].append(final_instruction)
+                else:
+                    messages[-1]["content"] = [
+                        {"type": "text", "text": messages[-1]["content"]},
+                        final_instruction
+                    ]
+            else:
+                messages.append({"role": "user", "content": [final_instruction]})
+                
             try:
                 async with self.client.messages.stream(
                     model=self.model,
                     max_tokens=4096,
                     system=SYSTEM_PROMPT,
                     messages=messages,
+                    tools=TOOL_DEFINITIONS,
                 ) as stream:
                     async for text in stream.text_stream:
                         yield text

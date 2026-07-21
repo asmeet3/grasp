@@ -91,12 +91,12 @@ async function refreshStatus() {
             const dotClass = health === true ? 'healthy' : health === false ? 'unhealthy' : 'unknown';
             const pillLabel = health === true ? 'Active' : health === false ? 'Error' : 'N/A';
             const iconHtml = `<img src="/icons/${key}-dark.svg" class="theme-icon-dark" alt="${name}"><img src="/icons/${key}-light.svg" class="theme-icon-light" alt="${name}">`;
-            return `<div class="connector-item">
-                <span class="connector-dot ${dotClass}"></span>
+            return `<li class="connector-item">
                 ${iconHtml} <span style="margin-left:6px">${name}</span>
                 <span class="connector-status-pill ${dotClass}">${pillLabel}</span>
-            </div>`;
+            </li>`;
         }).join('');
+
 
     } catch (e) {
         console.error('Status refresh failed:', e);
@@ -450,6 +450,8 @@ async function syncCurrentChat() {
 function startNewChat() {
     if (isStreaming) return;
     currentChatId = null;
+    const fab = document.getElementById('deleteChatFab');
+    if (fab) fab.style.display = 'none';
 
     const chatArea = document.getElementById('chatArea');
     chatArea.innerHTML = '';
@@ -504,6 +506,8 @@ function loadChat(chatId) {
     if (!chat) return;
 
     currentChatId = chatId;
+    const fab = document.getElementById('deleteChatFab');
+    if (fab) fab.style.display = 'flex';
     const chatArea = document.getElementById('chatArea');
     chatArea.innerHTML = '';
 
@@ -569,7 +573,7 @@ function renderChatList() {
     if (!container) return;
 
     if (!chatThreads.length) {
-        container.innerHTML = '<li style="font-size:12px;color:var(--text-tertiary);padding:6px 8px">No chats yet</li>';
+        container.innerHTML = '<li style="font-size:12px;color:var(--text-tertiary);padding:8px">No chats yet</li>';
         return;
     }
 
@@ -577,18 +581,13 @@ function renderChatList() {
         const isActive = chat.id === currentChatId;
         const timeStr = timeAgo(chat.createdAt);
         const msgCount = chat.messages.filter(m => m.role === 'user').length;
-        return `<li class="shadcn-sidebar-menu-item">
-            <button class="shadcn-sidebar-menu-button chat-thread-item${isActive ? ' chat-thread-active' : ''}" onclick="loadChat('${chat.id}')">
-                <svg class="shadcn-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <div class="chat-thread-info">
-                    <div class="chat-thread-title">${escapeHtml(chat.title)}</div>
-                    <div class="chat-thread-meta">${msgCount} msg${msgCount !== 1 ? 's' : ''} · ${timeStr}</div>
-                </div>
-                <button class="chat-delete-btn" onclick="openDeleteChatModal('${chat.id}', event)" aria-label="Delete chat" title="Delete chat">✕</button>
-            </button>
+        return `<li class="chat-thread-item${isActive ? ' chat-thread-active' : ''}" onclick="loadChat('${chat.id}')">
+            <div class="chat-thread-title">${escapeHtml(chat.title)}</div>
+            <div class="chat-thread-meta">${msgCount} message${msgCount !== 1 ? 's' : ''} · ${timeStr}</div>
         </li>`;
     }).join('');
 }
+
 
 // ── Utility ───────────────────────────────────────────────
 
@@ -898,30 +897,38 @@ function updateThemeIcon() {
 // Apply theme immediately (before DOMContentLoaded)
 initTheme();
 
-// ── Sidebar Collapse ─────────────────────────────────────
+// ── Sidebar Collapse (shadcn icon-collapse) ────────────────────
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
-    const provider = document.getElementById('sidebarProvider');
     if (!sidebar) return;
-    const isExpanded = sidebar.getAttribute('data-state') === 'expanded';
-    const newState = isExpanded ? 'collapsed' : 'expanded';
-    sidebar.setAttribute('data-state', newState);
-    if (provider) provider.setAttribute('data-sidebar-state', newState);
-    localStorage.setItem('grasp_sidebar_collapsed', isExpanded ? '1' : '0');
+    sidebar.classList.toggle('collapsed');
+    const isCollapsed = sidebar.classList.contains('collapsed');
+    localStorage.setItem('grasp_sidebar_collapsed', isCollapsed ? '1' : '0');
+    // Update trigger icon direction
+    const trigger = document.getElementById('sidebarTrigger');
+    if (trigger) {
+        trigger.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+    }
 }
 
 function initSidebar() {
     const collapsed = localStorage.getItem('grasp_sidebar_collapsed');
     if (collapsed === '1') {
         const sidebar = document.getElementById('sidebar');
-        const provider = document.getElementById('sidebarProvider');
-        if (sidebar) sidebar.setAttribute('data-state', 'collapsed');
-        if (provider) provider.setAttribute('data-sidebar-state', 'collapsed');
+        if (sidebar) sidebar.classList.add('collapsed');
     }
 }
 
 initSidebar();
+
+// Keyboard shortcut: Ctrl+B / Cmd+B to toggle sidebar
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+    }
+});
 
 // ── My Submissions ────────────────────────────────────────
 
@@ -1058,32 +1065,44 @@ function populateUserProfile(user) {
 
     const section = document.getElementById('userProfileSection');
     const avatar = document.getElementById('userAvatar');
-    const dropdownAvatar = document.getElementById('dropdownAvatar');
+    const avatarDropdown = document.getElementById('userAvatarDropdown');
     const name = document.getElementById('userProfileName');
-    const dropdownName = document.getElementById('dropdownUserName');
+    const dropdownName = document.getElementById('userDropdownName');
+    const email = document.getElementById('userProfileEmail');
     const menuRole = document.getElementById('userMenuRole');
-    const dropdownRole = document.getElementById('dropdownUserRole');
 
     if (section) section.style.display = '';
 
+    const initials = (user.first_name || '?')[0].toUpperCase();
     const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
-    const initial = (user.first_name || '?')[0].toUpperCase();
-    const avatarHtml = user.profile_picture
-        ? `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-        : initial;
 
-    if (avatar) avatar.innerHTML = avatarHtml;
-    if (dropdownAvatar) dropdownAvatar.innerHTML = avatarHtml;
+    // Main avatar
+    if (avatar) {
+        if (user.profile_picture) {
+            avatar.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+
+        } else {
+            avatar.textContent = initials;
+        }
+    }
+    // Dropdown avatar (mirrors main)
+    if (avatarDropdown) {
+        if (user.profile_picture) {
+            avatarDropdown.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+        } else {
+            avatarDropdown.textContent = initials;
+        }
+    }
+
     if (name) name.textContent = fullName;
     if (dropdownName) dropdownName.textContent = fullName;
-
-    if (user.role) {
+    if (email) email.textContent = user.email || '';
+    if (menuRole && user.role) {
         const roleClass = getRoleClass(user.role);
-        const rolePill = `<span class="role-pill ${roleClass}">${user.role}</span>`;
-        if (menuRole) menuRole.innerHTML = rolePill;
-        if (dropdownRole) dropdownRole.innerHTML = rolePill;
+        menuRole.innerHTML = `<span class="role-pill ${roleClass}">${user.role}</span>`;
     }
 }
+
 
 function getRoleClass(role) {
     switch (role) {
@@ -1108,7 +1127,7 @@ function logout() {
     window.location.href = '/login';
 }
 
-// ── User Menu (3-dot) ─────────────────────────────────────
+// ── User Menu (footer dropdown) ──────────────────────────────────
 
 function toggleUserMenu(event) {
     event.stopPropagation();
@@ -1127,7 +1146,7 @@ function closeUserMenuDropdown() {
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('userMenuDropdown');
     const btn = document.getElementById('userMenuBtn');
-    if (dropdown && btn && !btn.contains(e.target)) {
+    if (dropdown && btn && !btn.contains(e.target) && !dropdown.contains(e.target)) {
         dropdown.style.display = 'none';
     }
 });

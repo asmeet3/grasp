@@ -198,11 +198,10 @@ async function refreshStatus() {
             const dotClass = health === true ? 'healthy' : health === false ? 'unhealthy' : 'unknown';
             const pillLabel = health === true ? 'Active' : health === false ? 'Error' : 'N/A';
             const iconHtml = `<img src="/icons/${key}-dark.svg" class="theme-icon-dark" alt="${name}"><img src="/icons/${key}-light.svg" class="theme-icon-light" alt="${name}">`;
-            return `<div class="connector-item">
-                <span class="connector-dot ${dotClass}"></span>
+            return `<li class="connector-item">
                 ${iconHtml} <span style="margin-left:6px">${name}</span>
                 <span class="connector-status-pill ${dotClass}">${pillLabel}</span>
-            </div>`;
+            </li>`;
         }).join('');
 
         // Update sync status card
