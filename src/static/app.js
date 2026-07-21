@@ -569,7 +569,7 @@ function renderChatList() {
     if (!container) return;
 
     if (!chatThreads.length) {
-        container.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">No chats yet</div>';
+        container.innerHTML = '<li style="font-size:12px;color:var(--text-tertiary);padding:6px 8px">No chats yet</li>';
         return;
     }
 
@@ -577,11 +577,16 @@ function renderChatList() {
         const isActive = chat.id === currentChatId;
         const timeStr = timeAgo(chat.createdAt);
         const msgCount = chat.messages.filter(m => m.role === 'user').length;
-        return `<div class="chat-thread-item${isActive ? ' chat-thread-active' : ''}" onclick="loadChat('${chat.id}')">
-            <div class="chat-thread-title">${escapeHtml(chat.title)}</div>
-            <div class="chat-thread-meta">${msgCount} message${msgCount !== 1 ? 's' : ''} · ${timeStr}</div>
-            <button class="chat-delete-btn" onclick="openDeleteChatModal('${chat.id}', event)" aria-label="Delete chat" title="Delete chat">✕</button>
-        </div>`;
+        return `<li class="shadcn-sidebar-menu-item">
+            <button class="shadcn-sidebar-menu-button chat-thread-item${isActive ? ' chat-thread-active' : ''}" onclick="loadChat('${chat.id}')">
+                <svg class="shadcn-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <div class="chat-thread-info">
+                    <div class="chat-thread-title">${escapeHtml(chat.title)}</div>
+                    <div class="chat-thread-meta">${msgCount} msg${msgCount !== 1 ? 's' : ''} · ${timeStr}</div>
+                </div>
+                <button class="chat-delete-btn" onclick="openDeleteChatModal('${chat.id}', event)" aria-label="Delete chat" title="Delete chat">✕</button>
+            </button>
+        </li>`;
     }).join('');
 }
 
@@ -897,16 +902,22 @@ initTheme();
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
+    const provider = document.getElementById('sidebarProvider');
     if (!sidebar) return;
-    sidebar.classList.toggle('collapsed');
-    localStorage.setItem('grasp_sidebar_collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+    const isExpanded = sidebar.getAttribute('data-state') === 'expanded';
+    const newState = isExpanded ? 'collapsed' : 'expanded';
+    sidebar.setAttribute('data-state', newState);
+    if (provider) provider.setAttribute('data-sidebar-state', newState);
+    localStorage.setItem('grasp_sidebar_collapsed', isExpanded ? '1' : '0');
 }
 
 function initSidebar() {
     const collapsed = localStorage.getItem('grasp_sidebar_collapsed');
     if (collapsed === '1') {
         const sidebar = document.getElementById('sidebar');
-        if (sidebar) sidebar.classList.add('collapsed');
+        const provider = document.getElementById('sidebarProvider');
+        if (sidebar) sidebar.setAttribute('data-state', 'collapsed');
+        if (provider) provider.setAttribute('data-sidebar-state', 'collapsed');
     }
 }
 
@@ -1047,24 +1058,30 @@ function populateUserProfile(user) {
 
     const section = document.getElementById('userProfileSection');
     const avatar = document.getElementById('userAvatar');
+    const dropdownAvatar = document.getElementById('dropdownAvatar');
     const name = document.getElementById('userProfileName');
+    const dropdownName = document.getElementById('dropdownUserName');
     const menuRole = document.getElementById('userMenuRole');
+    const dropdownRole = document.getElementById('dropdownUserRole');
 
     if (section) section.style.display = '';
 
-    // Show profile picture or initial
-    if (avatar) {
-        if (user.profile_picture) {
-            avatar.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
-        } else {
-            avatar.textContent = (user.first_name || '?')[0].toUpperCase();
-        }
-    }
+    const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
+    const initial = (user.first_name || '?')[0].toUpperCase();
+    const avatarHtml = user.profile_picture
+        ? `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+        : initial;
 
-    if (name) name.textContent = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
-    if (menuRole && user.role) {
+    if (avatar) avatar.innerHTML = avatarHtml;
+    if (dropdownAvatar) dropdownAvatar.innerHTML = avatarHtml;
+    if (name) name.textContent = fullName;
+    if (dropdownName) dropdownName.textContent = fullName;
+
+    if (user.role) {
         const roleClass = getRoleClass(user.role);
-        menuRole.innerHTML = `<span class="role-pill ${roleClass}">${user.role}</span>`;
+        const rolePill = `<span class="role-pill ${roleClass}">${user.role}</span>`;
+        if (menuRole) menuRole.innerHTML = rolePill;
+        if (dropdownRole) dropdownRole.innerHTML = rolePill;
     }
 }
 

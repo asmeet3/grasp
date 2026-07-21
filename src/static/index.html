@@ -13,141 +13,176 @@
 </head>
 
 <body>
-    <div class="app">
+    <!-- SidebarProvider -->
+    <div class="sidebar-provider" id="sidebarProvider">
+
         <!-- Sidebar -->
-        <aside class="sidebar" id="sidebar">
+        <aside class="shadcn-sidebar" id="sidebar" data-state="expanded" data-collapsible="icon">
 
-            <!-- Sidebar Header: Logo + Collapse -->
-            <div class="sidebar-header">
-                <div class="sidebar-logo">
-                    <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp" class="logo-light">
-                    <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp" class="logo-dark">
+            <!-- Sidebar Inner -->
+            <div class="shadcn-sidebar-inner">
+
+                <!-- SidebarHeader -->
+                <div class="shadcn-sidebar-header">
+                    <div class="shadcn-sidebar-brand">
+                        <div class="shadcn-sidebar-brand-icon">
+                            <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp" class="logo-light sidebar-logo-full">
+                            <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp" class="logo-dark sidebar-logo-full">
+                            <!-- Icon only version (G letter for collapsed state) -->
+                            <span class="sidebar-logo-icon">G</span>
+                        </div>
+                    </div>
                 </div>
-                <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()"
-                    aria-label="Toggle sidebar">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                        stroke-linejoin="round">
-                        <polyline points="11 17 6 12 11 7"></polyline>
-                        <polyline points="18 17 13 12 18 7"></polyline>
-                    </svg>
-                </button>
-            </div>
 
-            <!-- User profile (populated by JS) -->
-            <div class="user-profile-section" id="userProfileSection" style="display:none">
-                <div class="user-profile-card">
-                    <div class="user-avatar" id="userAvatar">?</div>
-                    <div class="user-profile-name" id="userProfileName">—</div>
-                    <!-- 3-dot menu -->
-                    <div class="user-menu-wrapper">
-                        <button class="user-menu-btn" id="userMenuBtn" onclick="toggleUserMenu(event)"
-                            aria-label="User options">
-                            <span>⋮</span>
+                <!-- Hidden status fields (still populated by JS for data) -->
+                <div style="display:none">
+                    <span id="statusDot"></span>
+                    <span id="statusText"></span>
+                    <span id="lastSyncTime"></span>
+                    <span id="docCount"></span>
+                    <span id="nextSync"></span>
+                </div>
+
+                <!-- SidebarContent -->
+                <div class="shadcn-sidebar-content">
+
+                    <!-- Connectors Group -->
+                    <div class="shadcn-sidebar-group">
+                        <button class="shadcn-sidebar-group-label" onclick="toggleSidebarSection('connectors')" aria-expanded="false" id="connectorsToggle">
+                            <span class="shadcn-sidebar-group-label-text">Connectors</span>
+                            <svg class="shadcn-sidebar-group-chevron" id="connectorsChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                         </button>
-                        <div class="user-menu-dropdown" id="userMenuDropdown" style="display:none">
-                            <div class="user-menu-role" id="userMenuRole"></div>
-                            <div class="user-menu-divider"></div>
-                            <button class="user-menu-item" onclick="toggleTheme(); event.stopPropagation();">
-                                <span class="theme-menu-icon" id="themeMenuIcon">🌙</span> <span
-                                    id="themeMenuLabel">Light Mode</span>
-                            </button>
-                            <button class="user-menu-item" onclick="openSettingsModal(); closeUserMenuDropdown();">
-                                <img src="/icons/settings-dark.png" class="theme-icon-dark" alt="Settings"><img
-                                    src="/icons/settings-light.png" class="theme-icon-light" alt="Settings"> <span
-                                    style="margin-left:8px">Settings</span>
-                            </button>
-                            <div class="user-menu-divider"></div>
-                            <button class="user-menu-item user-menu-item-danger" onclick="logout()">
-                                <span>↪</span> Sign Out
-                            </button>
+                        <div class="shadcn-sidebar-group-body" id="connectorsSectionBody" style="display:none">
+                            <ul class="shadcn-sidebar-menu" id="connectorsContainer">
+                                <li class="shadcn-sidebar-menu-item">
+                                    <span class="shadcn-sidebar-menu-button">
+                                        <svg class="shadcn-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                                        <span>Loading...</span>
+                                    </span>
+                                </li>
+                            </ul>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            <!-- Hidden status fields (still populated by JS for data) -->
-            <div style="display:none">
-                <span id="statusDot"></span>
-                <span id="statusText"></span>
-                <span id="lastSyncTime"></span>
-                <span id="docCount"></span>
-                <span id="nextSync"></span>
-            </div>
-
-            <!-- Scrollable nav area -->
-            <div class="sidebar-nav-scroll">
-
-                <!-- Connectors dropdown (closed by default) -->
-                <div class="sidebar-section">
-                    <button class="sidebar-section-header" onclick="toggleSidebarSection('connectors')"
-                        aria-expanded="false" id="connectorsToggle">
-                        <span class="sidebar-section-title">Connectors</span>
-                        <span class="sidebar-section-chevron" id="connectorsChevron">›</span>
-                    </button>
-                    <div class="sidebar-section-body" id="connectorsSectionBody" style="display:none">
-                        <div id="connectorsContainer">
-                            <div class="connector-item"><span class="connector-dot unknown"></span> Loading...</div>
+                    <!-- Recent Chats Group -->
+                    <div class="shadcn-sidebar-group">
+                        <button class="shadcn-sidebar-group-label" onclick="toggleSidebarSection('chats')" aria-expanded="true" id="chatsToggle">
+                            <span class="shadcn-sidebar-group-label-text">Recent Chats</span>
+                            <svg class="shadcn-sidebar-group-chevron open" id="chatsChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                        <div class="shadcn-sidebar-group-body" id="chatsSectionBody">
+                            <ul class="shadcn-sidebar-menu" id="chatListContainer"></ul>
                         </div>
                     </div>
+
                 </div>
 
-                <!-- Recent Chats dropdown (open by default) -->
-                <div class="sidebar-section">
-                    <button class="sidebar-section-header" onclick="toggleSidebarSection('chats')"
-                        aria-expanded="true" id="chatsToggle">
-                        <span class="sidebar-section-title">Recent Chats</span>
-                        <span class="sidebar-section-chevron open" id="chatsChevron">›</span>
-                    </button>
-                    <div class="sidebar-section-body" id="chatsSectionBody">
-                        <div id="chatListContainer"></div>
+                <!-- SidebarFooter -->
+                <div class="shadcn-sidebar-footer">
+
+                    <!-- Onboarding Toggle -->
+                    <div class="shadcn-sidebar-onboarding" id="onboardingToggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="onboardingCheckbox" onchange="toggleOnboarding()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="shadcn-onboarding-label">
+                            <img src="/icons/onboarding-dark.png" class="theme-icon-dark" alt="Onboarding">
+                            <img src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding">
+                            <span>Onboarding</span>
+                        </span>
                     </div>
+
+                    <!-- Action Buttons -->
+                    <div class="shadcn-sidebar-actions">
+                        <button class="shadcn-sidebar-action-btn shadcn-action-primary" onclick="openContributeModal()" title="Contribute Knowledge">
+                            <span class="shadcn-action-icon">✦</span>
+                            <span class="shadcn-action-label">Contribute</span>
+                        </button>
+                        <button class="shadcn-sidebar-action-btn" onclick="openMySubmissions()" title="My Submissions">
+                            <img src="/icons/submission-dark.svg" class="theme-icon-dark shadcn-action-icon" alt="">
+                            <img src="/icons/submission-light.svg" class="theme-icon-light shadcn-action-icon" alt="">
+                            <span class="shadcn-action-label">My Submissions</span>
+                        </button>
+                    </div>
+
+                    <!-- User Profile (populated by JS) -->
+                    <div class="shadcn-nav-user" id="userProfileSection" style="display:none">
+                        <ul class="shadcn-sidebar-menu">
+                            <li class="shadcn-sidebar-menu-item">
+                                <div class="shadcn-user-dropdown-wrapper">
+                                    <button class="shadcn-sidebar-menu-button shadcn-user-button" id="userMenuBtn" onclick="toggleUserMenu(event)" aria-label="User options">
+                                        <div class="shadcn-user-avatar" id="userAvatar">?</div>
+                                        <div class="shadcn-user-info">
+                                            <span class="shadcn-user-name" id="userProfileName">—</span>
+                                            <span class="shadcn-user-sub" id="userMenuRole"></span>
+                                        </div>
+                                        <svg class="shadcn-chevrons-updown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+                                    </button>
+                                    <div class="shadcn-user-dropdown" id="userMenuDropdown" style="display:none">
+                                        <!-- User info header -->
+                                        <div class="shadcn-dropdown-header">
+                                            <div class="shadcn-user-avatar shadcn-dropdown-avatar" id="dropdownAvatar">?</div>
+                                            <div class="shadcn-user-info">
+                                                <span class="shadcn-user-name" id="dropdownUserName">—</span>
+                                                <span class="shadcn-user-sub" id="dropdownUserRole"></span>
+                                            </div>
+                                        </div>
+                                        <div class="shadcn-dropdown-separator"></div>
+                                        <div class="shadcn-dropdown-group">
+                                            <button class="shadcn-dropdown-item" onclick="toggleTheme(); event.stopPropagation();">
+                                                <span class="theme-menu-icon" id="themeMenuIcon">🌙</span>
+                                                <span id="themeMenuLabel">Light Mode</span>
+                                            </button>
+                                            <button class="shadcn-dropdown-item" onclick="openSettingsModal(); closeUserMenuDropdown();">
+                                                <img src="/icons/settings-dark.png" class="theme-icon-dark" alt="">
+                                                <img src="/icons/settings-light.png" class="theme-icon-light" alt="">
+                                                <span>Settings</span>
+                                            </button>
+                                        </div>
+                                        <div class="shadcn-dropdown-separator"></div>
+                                        <div class="shadcn-dropdown-group">
+                                            <button class="shadcn-dropdown-item shadcn-dropdown-item-danger" onclick="logout()">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                                <span>Log out</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+
                 </div>
 
-            </div>
+                <!-- SidebarRail -->
+                <button class="shadcn-sidebar-rail" id="sidebarRail" onclick="toggleSidebar()" aria-label="Toggle sidebar" title="Toggle sidebar"></button>
 
-            <div class="sidebar-footer">
-                <div class="onboarding-toggle" id="onboardingToggle">
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="onboardingCheckbox" onchange="toggleOnboarding()">
-                        <span class="toggle-slider"></span>
-                    </label>
-                    <span class="onboarding-label"><img src="/icons/onboarding-dark.png" class="theme-icon-dark"
-                            alt="Onboarding" style="width:14px;height:14px;margin-right:4px;"><img
-                            src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding"
-                            style="width:14px;height:14px;margin-right:4px;"> Onboarding Mode</span>
-                </div>
-                <button class="contribute-btn" onclick="openContributeModal()">
-                    <span>✦</span> Contribute
-                </button>
-                <button class="my-submissions-btn" onclick="openMySubmissions()">
-                    <img src="/icons/submission-dark.svg" class="theme-icon-dark" alt="Submissions"><img
-                        src="/icons/submission-light.svg" class="theme-icon-light" alt="Submissions"> <span
-                        style="margin-left:6px">My Submissions</span>
-                </button>
             </div>
         </aside>
 
-        <!-- Main Content -->
-        <main class="main">
-            <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()"
-                aria-label="Expand sidebar">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <polyline points="13 17 18 12 13 7"></polyline>
-                    <polyline points="6 17 11 12 6 7"></polyline>
-                </svg>
-            </button>
-            <header class="main-header">
-                <div></div>
-                <button class="new-chat-fab" id="newChatFab" onclick="startNewChat()" aria-label="New Chat">
-                    <svg class="new-chat-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
+        <!-- SidebarInset + Main Content -->
+        <div class="shadcn-sidebar-inset">
+            <!-- Main Content -->
+            <main class="main">
+                <!-- SidebarTrigger (visible only in icon mode) -->
+                <button class="shadcn-sidebar-trigger" id="sidebarTrigger" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect width="18" height="18" x="3" y="3" rx="2"/>
+                        <path d="M9 3v18"/>
                     </svg>
-                    <span class="new-chat-fab-label">New Chat</span>
                 </button>
-            </header>
+                <header class="main-header">
+                    <div></div>
+                    <button class="new-chat-fab" id="newChatFab" onclick="startNewChat()" aria-label="New Chat">
+                        <svg class="new-chat-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span class="new-chat-fab-label">New chat</span>
+                    </button>
+                </header>
 
             <div class="chat-area" id="chatArea">
                 <div class="welcome" id="welcome">
@@ -214,7 +249,9 @@
                 </div>
                 <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line</div>
             </div>
-        </main>
+            </div>
+            </main>
+        </div>
     </div>
 
     <!-- Contribution Modal -->
@@ -372,7 +409,8 @@
                             </div>
                             <div class="settings-avatar-error" id="settingsAvatarError" style="display:none"></div>
                         </div>
-                        <div id="settingsGoogleAvatarHint" style="display:none; font-size:12px; color:var(--text-tertiary); line-height:1.5; align-self: center; margin-left: 12px;">
+                        <div id="settingsGoogleAvatarHint"
+                            style="display:none; font-size:12px; color:var(--text-tertiary); line-height:1.5; align-self: center; margin-left: 12px;">
                             Synced from Google
                         </div>
                     </div>
@@ -396,7 +434,8 @@
                     <div class="settings-field" style="margin-top:12px">
                         <label class="contribute-label">Date of Birth</label>
                         <input type="date" class="contribute-input" id="settingsDob">
-                        <div id="settingsGoogleDobHint" style="display:none;margin-top:6px;font-size:12px;color:var(--text-tertiary);line-height:1.5">
+                        <div id="settingsGoogleDobHint"
+                            style="display:none;margin-top:6px;font-size:12px;color:var(--text-tertiary);line-height:1.5">
                             Google doesn't share date of birth — you can enter it here manually.
                         </div>
                     </div>
