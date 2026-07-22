@@ -13,9 +13,8 @@ import logging
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..connectors.base import BaseConnector, Document
@@ -75,7 +74,7 @@ class SyncOrchestrator:
         self._sync_running = False
         self._worker_statuses: dict[str, WorkerStatus] = {}
 
-    # ── Public interface ───────────────────────────────────
+    # Public interface
 
     @property
     def is_running(self) -> bool:
@@ -153,7 +152,7 @@ class SyncOrchestrator:
         finally:
             self._sync_running = False
 
-    # ── Full sync ──────────────────────────────────────────
+    # Full sync
 
     async def _full_sync(self) -> dict:
         """Run a full sync with all connectors in parallel."""
@@ -174,7 +173,6 @@ class SyncOrchestrator:
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
-                ws.errors.append(str(result))
                 worker_results[name] = {"status": "failed", "error": str(result)}
             else:
                 total_docs += ws.docs_fetched
@@ -209,7 +207,6 @@ class SyncOrchestrator:
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
-                ws.errors.append(str(result))
                 worker_results[name] = {"status": "failed", "error": str(result)}
             else:
                 total_docs += ws.docs_fetched
@@ -252,7 +249,7 @@ class SyncOrchestrator:
         finally:
             ws.completed_at = time.time()
 
-    # ── Incremental sync ───────────────────────────────────
+    # Incremental sync
 
     async def _incremental_sync(self, since: datetime) -> dict:
         """Run an incremental sync with all connectors in parallel."""
@@ -270,7 +267,6 @@ class SyncOrchestrator:
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
-                ws.errors.append(str(result))
                 worker_results[name] = {"status": "failed", "error": str(result)}
             else:
                 total_docs += ws.docs_fetched
@@ -306,7 +302,7 @@ class SyncOrchestrator:
         finally:
             ws.completed_at = time.time()
 
-    # ── Document processing ────────────────────────────────
+    # Document processing
 
     async def _process_document(self, doc: Document):
         """Write a document to the repo and index it in ChromaDB."""
@@ -319,8 +315,9 @@ class SyncOrchestrator:
 
         except Exception as e:
             logger.error(f"Failed to process document {doc.id}: {e}")
+            raise
 
-    # ── State management ───────────────────────────────────
+    # State management
 
     async def _save_sync_state(self, result: dict):
         """Save the sync result to the database."""
@@ -359,7 +356,6 @@ class SyncOrchestrator:
             )
             cutoff_row = result_rows.scalar_one_or_none()
             if cutoff_row is not None:
-                from sqlalchemy import delete
                 await conn.execute(
                     delete(sync_state_table).where(
                         sync_state_table.c.id <= cutoff_row
@@ -384,7 +380,11 @@ class SyncOrchestrator:
         row_dict = dict(row)
         result = {
             "type": row_dict.get("sync_type", "unknown"),
-            "timestamp": row_dict["timestamp"].isoformat() if hasattr(row_dict.get("timestamp"), "isoformat") else str(row_dict.get("timestamp", "")),
+            "timestamp": (
+                row_dict["timestamp"].isoformat()
+                if hasattr(row_dict.get("timestamp"), "isoformat")
+                else str(row_dict.get("timestamp", ""))
+            ),
             "total_docs": row_dict.get("total_docs", 0),
             "workers": row_dict.get("workers", {}),
         }

@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from anthropic import AsyncAnthropic
 from git import Repo, InvalidGitRepositoryError
@@ -27,8 +25,6 @@ from git import Repo, InvalidGitRepositoryError
 from ..connectors.base import Document, sanitize_filename
 
 logger = logging.getLogger(__name__)
-
-# ── Knowledge type taxonomy (maps to knowledge/ subdirectories) ────────
 
 KNOWLEDGE_TYPES = [
     "decisions",   # ADRs, meeting notes, RFCs, design reviews
@@ -39,30 +35,7 @@ KNOWLEDGE_TYPES = [
     "topics",      # Cross-cutting themes (architecture, strategy, incidents, etc.)
 ]
 
-# Mapping from old info_types to new knowledge structure
-OLD_TYPE_TO_NEW = {
-    "architecture": "topics",
-    "features":     "projects",
-    "operations":   "processes",
-    "testing":      "processes",
-    "decisions":    "decisions",
-    "strategy":     "products",
-    "incidents":    "topics",
-    "discussions":  "topics",
-    "references":   "topics",
-    "general":      "topics",
-}
-
-# Sub-topic mappings (for topics/ subdirectories)
-OLD_TYPE_TO_SUBTOPIC = {
-    "architecture": "architecture",
-    "incidents":    "incidents",
-    "discussions":  "discussions",
-    "references":   "references",
-    "general":      "general",
-}
-
-CLASSIFICATION_PROMPT = """You are a document classifier for a company knowledge base. Classify the following document into exactly ONE of these categories based on its title and content:
+CLASSIFICATION_PROMPT = """Classify the document into exactly one category based on its title and content:
 
 Categories:
 - decisions: ADRs, meeting notes, RFCs, design reviews, decision records, retrospectives
@@ -70,17 +43,18 @@ Categories:
 - processes: Runbooks, SOPs, deployment guides, operations, test plans, QA documentation, bug reports
 - products: Product areas, roadmaps, strategy, OKRs, planning documents, vision statements
 - people: Expertise profiles, team member information, skills inventories
-- topics: Cross-cutting themes — architecture, system design, infrastructure, incident reports, postmortems, discussions, conversations, general documentation, wikis, guides, onboarding, reference materials
+- topics: Cross-cutting themes — architecture, infrastructure, incidents, discussions,
+  general documentation, wikis, guides, onboarding, and reference materials
 
 Document Title: {title}
 Document Source: {source}
 Content Preview (first 500 chars): {preview}
 
-Respond with ONLY the category name, nothing else."""
+Respond with only the category name."""
 
 
 class RepoManager:
-    """Manages the Git-backed knowledge repository with company-brain structure."""
+    """Manages the Git-backed knowledge repository layout."""
 
     def __init__(
         self,
@@ -156,7 +130,16 @@ class RepoManager:
 
         # Create topics subdirectories
         topics_dir = knowledge_dir / "topics"
-        for subtopic in ["architecture", "incidents", "discussions", "references", "general", "security", "infrastructure"]:
+        subtopics = [
+            "architecture",
+            "incidents",
+            "discussions",
+            "references",
+            "general",
+            "security",
+            "infrastructure",
+        ]
+        for subtopic in subtopics:
             sub_dir = topics_dir / subtopic
             sub_dir.mkdir(exist_ok=True)
             readme = sub_dir / "README.md"
@@ -303,7 +286,7 @@ class RepoManager:
         except Exception as e:
             logger.warning(f"Failed to configure remote: {e}")
 
-    # ── Classification ─────────────────────────────────────
+    # Classification
 
     async def classify_document(self, doc: Document) -> str:
         """Classify a document into a knowledge type using Claude Haiku."""
@@ -364,7 +347,7 @@ class RepoManager:
 
         return "topics"
 
-    # ── Source path helpers ─────────────────────────────────
+    # Paths
 
     def _get_source_path(self, doc: Document) -> Path:
         """Compute the raw source path for a document.
@@ -441,7 +424,7 @@ class RepoManager:
 
         return "general"
 
-    # ── Write document ─────────────────────────────────────
+    # Writes
 
     async def classify_and_write(self, doc: Document) -> str:
         """Classify a document and write it to both sources/ and knowledge/."""
@@ -458,10 +441,11 @@ class RepoManager:
         # 2. Write to knowledge/ (curated, with enriched frontmatter)
         knowledge_path = self._get_knowledge_path(doc, knowledge_type)
         source_ref = str(source_path.relative_to(self.repo_path)).replace("\\", "/")
+        knowledge_ref = str(knowledge_path.relative_to(self.repo_path)).replace("\\", "/")
+        doc.metadata["repo_path"] = knowledge_ref
         self._write_knowledge_file(doc, knowledge_type, knowledge_path, source_ref)
 
-        # 3. Update centralized _index/
-        self._update_index(doc, knowledge_type, knowledge_path, source_path)
+        self._update_index(doc, knowledge_path)
 
     def _write_source_file(self, doc: Document, filepath: Path):
         """Write a raw source file with minimal frontmatter."""
@@ -487,7 +471,6 @@ class RepoManager:
         self, doc: Document, knowledge_type: str, filepath: Path, source_ref: str
     ):
         """Write a curated knowledge file with enriched frontmatter."""
-        now = datetime.now(timezone.utc)
         date_str = doc.updated_at.strftime("%Y-%m-%d")
 
         # Build the enriched YAML frontmatter
@@ -545,16 +528,12 @@ class RepoManager:
                     return str(doc.metadata[key])
         return ""
 
-    # ── Index management ───────────────────────────────────
+    # Index management
 
-    def _update_index(
-        self, doc: Document, knowledge_type: str, knowledge_path: Path, source_path: Path
-    ):
+    def _update_index(self, doc: Document, knowledge_path: Path):
         """Update the centralized _index/ layer."""
         index_dir = self.repo_path / "_index"
         knowledge_rel = str(knowledge_path.relative_to(self.repo_path)).replace("\\", "/")
-        source_rel = str(source_path.relative_to(self.repo_path)).replace("\\", "/")
-
         # 1. Update graph.json
         self._update_graph(index_dir, doc, knowledge_rel)
 
@@ -660,7 +639,7 @@ class RepoManager:
             people["metadata"]["last_rebuilt"] = datetime.now(timezone.utc).isoformat()
             people_path.write_text(json.dumps(people, indent=2, default=str), encoding="utf-8")
 
-    # ── Pending changes management ─────────────────────────
+    # Pending changes
 
     def stage_pending(self):
         """Detect all unstaged changes and write a pending changeset summary."""
@@ -744,32 +723,32 @@ class RepoManager:
         """Get the git diff for a specific file."""
         if not self._repo:
             return ""
+        full_path = self._resolve_repo_path(file_path)
+        if full_path is None:
+            return ""
+        relative_path = full_path.relative_to(self.repo_path.resolve()).as_posix()
         try:
-            diff = self._repo.git.diff("--", file_path)
+            diff = self._repo.git.diff("--", relative_path)
             if diff:
                 return diff
-            # If diff is empty, the file may be untracked/new — show full content
-            full_path = self.repo_path / file_path
             if full_path.exists() and full_path.is_file():
                 content = full_path.read_text(encoding="utf-8")
                 lines = content.splitlines()
                 return (
                     f"--- /dev/null\n"
-                    f"+++ b/{file_path}\n"
+                    f"+++ b/{relative_path}\n"
                     f"@@ -0,0 +1,{len(lines)} @@\n"
                     + "\n".join(f"+{line}" for line in lines)
                 )
             return ""
         except Exception:
-            # Fallback: try reading the file directly
             try:
-                full_path = self.repo_path / file_path
                 if full_path.exists() and full_path.is_file():
                     content = full_path.read_text(encoding="utf-8")
                     lines = content.splitlines()
                     return (
                         f"--- /dev/null\n"
-                        f"+++ b/{file_path}\n"
+                        f"+++ b/{relative_path}\n"
                         f"@@ -0,0 +1,{len(lines)} @@\n"
                         + "\n".join(f"+{line}" for line in lines)
                     )
@@ -881,24 +860,26 @@ class RepoManager:
             logger.error(f"Reject failed: {e}")
             return {"error": str(e)}
 
-    # ── Read operations ────────────────────────────────────
+    # Reads
+
+    def _resolve_repo_path(self, file_path: str) -> Path | None:
+        """Resolve a user-supplied path without allowing repository escape."""
+        repo_root = self.repo_path.resolve()
+        candidate = (repo_root / file_path).resolve()
+        try:
+            candidate.relative_to(repo_root)
+        except ValueError:
+            return None
+        return candidate
 
     def get_file_content(self, file_path: str) -> str:
         """Read the content of a file from the repository."""
-        full_path = self.repo_path / file_path
+        full_path = self._resolve_repo_path(file_path)
+        if full_path is None:
+            return ""
         if full_path.exists() and full_path.is_file():
             return full_path.read_text(encoding="utf-8")
         return ""
-
-    def search_files(self, query: str) -> list[str]:
-        """Search for files by name/path in the repository."""
-        query_lower = query.lower()
-        results = []
-        for path in self.repo_path.rglob("*.md"):
-            rel = str(path.relative_to(self.repo_path))
-            if query_lower in rel.lower() or query_lower in path.stem.lower():
-                results.append(rel)
-        return results[:50]
 
     def get_source_stats(self) -> dict:
         """Get document counts per source and per knowledge type."""

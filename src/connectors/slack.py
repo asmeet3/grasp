@@ -6,16 +6,12 @@ and uses search.messages for live queries.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import httpx
 
 from .base import BaseConnector, Document
-
-logger = logging.getLogger(__name__)
-
 
 class SlackConnector(BaseConnector):
     """Connector for Slack via the Web API."""
@@ -66,7 +62,7 @@ class SlackConnector(BaseConnector):
             self._user_cache[user_id] = user_id
             return user_id
 
-    # ── Full retrieval ─────────────────────────────────────
+    # Full retrieval
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all messages from all accessible channels."""
@@ -205,7 +201,7 @@ class SlackConnector(BaseConnector):
 
         return replies
 
-    # ── Incremental retrieval ──────────────────────────────
+    # Incremental retrieval
 
     async def incremental_retrieve(self, since: datetime) -> AsyncGenerator[list[Document], None]:
         """Retrieve messages posted since the given timestamp."""
@@ -220,11 +216,12 @@ class SlackConnector(BaseConnector):
             async for batch in self._get_channel_history(channel_id, channel_name, oldest=oldest):
                 yield batch
 
-    # ── Live search ────────────────────────────────────────
+    # Live search
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Slack for recent messages matching the query."""
         try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             data = await self._api_get("search.messages", {
                 "query": query,
                 "sort": "timestamp",
@@ -238,6 +235,8 @@ class SlackConnector(BaseConnector):
             for match in matches[:10]:
                 ts = float(match.get("ts", 0))
                 msg_time = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if msg_time < cutoff:
+                    continue
 
                 channel = match.get("channel", {})
                 channel_name = channel.get("name", "unknown") if isinstance(channel, dict) else "unknown"
@@ -259,7 +258,7 @@ class SlackConnector(BaseConnector):
             self.logger.warning(f"Slack search failed: {e}")
             return []
 
-    # ── Document conversion ────────────────────────────────
+    # Document conversion
 
     async def _messages_to_document(
         self, messages: list[dict], channel_id: str, channel_name: str, date_str: str
@@ -298,7 +297,7 @@ class SlackConnector(BaseConnector):
             metadata={"channel_id": channel_id, "channel_name": channel_name, "date": date_str},
         )
 
-    # ── Checkpoint ─────────────────────────────────────────
+    # Checkpoint
 
     def get_checkpoint_state(self) -> dict:
         return dict(self._checkpoint)

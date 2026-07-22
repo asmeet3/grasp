@@ -10,18 +10,14 @@ import logging
 import sys
 
 import uvicorn
-from dotenv import load_dotenv
-
-# Load .env before anything else
-load_dotenv()
 
 from src.config import load_settings
+from src.connectors.base import BaseConnector, Document
 from src.connectors.confluence import ConfluenceConnector
 from src.connectors.jira import JiraConnector
+from src.connectors.notion import NotionConnector
 from src.connectors.sharepoint import SharePointConnector
 from src.connectors.slack import SlackConnector
-from src.connectors.notion import NotionConnector
-from src.connectors.base import BaseConnector, Document
 from src.sync.checkpoints import CheckpointManager
 from src.sync.orchestrator import SyncOrchestrator
 from src.sync.scheduler import SyncScheduler
@@ -37,27 +33,12 @@ from src.auth import UserManager
 from src.database import create_engine, init_db
 from src.chat_manager import ChatManager
 
-# ── Logging ────────────────────────────────────────────────
-
-import io as _io
-
-# Force UTF-8 on stdout so the │ character in log lines doesn't crash on
-# Windows consoles that default to CP1252.
-_utf8_stdout = _io.TextIOWrapper(
-    sys.stdout.buffer,
-    encoding="utf-8",
-    errors="replace",
-    line_buffering=True,
-)
-
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s │ %(name)-30s │ %(levelname)-7s │ %(message)s",
+    format="%(asctime)s | %(name)-30s | %(levelname)-7s | %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(_utf8_stdout)],
 )
 logger = logging.getLogger("grasp")
-
 
 
 def build_connectors(settings) -> dict[str, BaseConnector]:
@@ -71,7 +52,7 @@ def build_connectors(settings) -> dict[str, BaseConnector]:
             api_token=settings.confluence_api_token,
             batch_size=settings.sync_batch_size,
         )
-        logger.info("✓ Confluence connector initialized")
+        logger.info("Confluence connector initialized")
 
     if settings.is_connector_configured("jira"):
         connectors["jira"] = JiraConnector(
@@ -80,7 +61,7 @@ def build_connectors(settings) -> dict[str, BaseConnector]:
             api_token=settings.jira_api_token,
             batch_size=settings.sync_batch_size,
         )
-        logger.info("✓ Jira connector initialized")
+        logger.info("Jira connector initialized")
 
     if settings.is_connector_configured("sharepoint"):
         connectors["sharepoint"] = SharePointConnector(
@@ -90,24 +71,24 @@ def build_connectors(settings) -> dict[str, BaseConnector]:
             site_id=settings.sharepoint_site_id,
             batch_size=settings.sync_batch_size,
         )
-        logger.info("✓ SharePoint connector initialized")
+        logger.info("SharePoint connector initialized")
 
     if settings.is_connector_configured("slack"):
         connectors["slack"] = SlackConnector(
             bot_token=settings.slack_bot_token,
             batch_size=settings.sync_batch_size,
         )
-        logger.info("✓ Slack connector initialized")
+        logger.info("Slack connector initialized")
 
     if settings.is_connector_configured("notion"):
         connectors["notion"] = NotionConnector(
             api_key=settings.notion_api_key,
             batch_size=settings.sync_batch_size,
         )
-        logger.info("✓ Notion connector initialized")
+        logger.info("Notion connector initialized")
 
     if not connectors:
-        logger.warning("⚠ No connectors configured! Add credentials to .env")
+        logger.warning("No connectors configured; add credentials to .env")
 
     return connectors
 
@@ -120,7 +101,6 @@ def build_sub_agent_dispatcher(
     """Build the sub-agent dispatcher for parallel query fan-out."""
     dispatcher = SubAgentDispatcher(query_shortener=query_shortener)
 
-    # Repo search sub-agent (wraps vector store)
     async def repo_search(query: str) -> list[Document]:
         results = vector_store.search(query, n_results=10)
         return [
@@ -146,7 +126,6 @@ def build_sub_agent_dispatcher(
         timeout=5.0,
     ))
 
-    # Live platform sub-agents
     for name, connector in connectors.items():
         dispatcher.register(SubAgent(
             name=f"{name}_live",
@@ -160,24 +139,24 @@ def build_sub_agent_dispatcher(
 
 def main():
     """Main entry point — initialize and launch Grasp."""
-    logger.info("=" * 60)
-    logger.info("  GRASP — Agentic Institutional Brain")
-    logger.info("=" * 60)
+    logger.info("Starting Grasp")
 
-    # 1. Load configuration
     try:
         settings = load_settings()
-        logger.info(f"✓ Configuration loaded ({len(settings.get_configured_connectors())} connectors configured)")
+        logger.info(f"Configuration loaded ({len(settings.get_configured_connectors())} connectors configured)")
     except Exception as e:
-        logger.error(f"✗ Configuration error: {e}")
+        logger.error(f"Configuration error: {e}")
         logger.error("  Copy .env.example to .env and fill in your credentials")
         sys.exit(1)
 
-    # 2. Initialize database engine
     db_engine = create_engine(settings.database_url)
-    logger.info(f"✓ Database engine created ({settings.database_url.split('@')[-1] if '@' in settings.database_url else 'local'})")
+    database_target = (
+        settings.database_url.split("@")[-1]
+        if "@" in settings.database_url
+        else "local"
+    )
+    logger.info(f"Database engine created ({database_target})")
 
-    # 3. Initialize components
     connectors = build_connectors(settings)
 
     repo_manager = RepoManager(
@@ -187,19 +166,18 @@ def main():
         remote_url=settings.github_remote_url,
         github_pat=settings.github_pat,
     )
-    logger.info(f"✓ Repository manager initialized at {settings.repo_path}")
+    logger.info(f"Repository manager initialized at {settings.repo_path}")
 
     vector_store = VectorStore(
         persist_dir=settings.chroma_path,
         openai_api_key=settings.openai_api_key,
         embedding_model=settings.embedding_model,
     )
-    logger.info(f"✓ Vector store initialized ({vector_store.document_count} chunks indexed)")
+    logger.info(f"Vector store initialized ({vector_store.document_count} chunks indexed)")
 
     checkpoint_manager = CheckpointManager(engine=db_engine)
-    logger.info("✓ Checkpoint manager initialized (PostgreSQL)")
+    logger.info("Checkpoint manager initialized")
 
-    # 4. Sync orchestrator
     state_dir = settings.repo_path / ".grasp_state"
     state_dir.mkdir(parents=True, exist_ok=True)
     orchestrator = SyncOrchestrator(
@@ -209,22 +187,20 @@ def main():
         checkpoints=checkpoint_manager,
         engine=db_engine,
     )
-    logger.info("✓ Sync orchestrator initialized (PostgreSQL)")
+    logger.info("Sync orchestrator initialized")
 
-    # 5. Scheduler
     scheduler = SyncScheduler(
         orchestrator=orchestrator,
         hours=settings.sync_cron_hours,
         minute=settings.sync_cron_minute,
     )
 
-    # 6. Query engine
     query_shortener = QueryShortener(
         anthropic_api_key=settings.anthropic_api_key,
         model=settings.query_shortener_model,
         system_prompt=settings.query_shortener_system_prompt,
     )
-    logger.info(f"✓ Query shortener initialized (model: {settings.query_shortener_model})")
+    logger.info(f"Query shortener initialized (model: {settings.query_shortener_model})")
 
     dispatcher = build_sub_agent_dispatcher(connectors, vector_store, query_shortener)
     tool_executor = ToolExecutor(
@@ -238,29 +214,25 @@ def main():
         model=settings.agent_model,
         tool_executor=tool_executor,
     )
-    logger.info(f"✓ Query engine initialized (model: {settings.agent_model})")
+    logger.info(f"Query engine initialized (model: {settings.agent_model})")
 
-    # 6b. Contribution manager
     contribution_manager = ContributionManager(
         engine=db_engine,
         repo_manager=repo_manager,
         state_dir=state_dir,
     )
-    logger.info("✓ Contribution manager initialized (PostgreSQL)")
+    logger.info("Contribution manager initialized")
 
-    # 6c. User manager
     user_manager = UserManager(
         engine=db_engine,
         session_secret=settings.effective_session_secret,
         google_client_id=settings.google_client_id,
     )
-    logger.info("✓ User manager initialized (PostgreSQL)")
+    logger.info("User manager initialized")
 
-    # 6d. Chat manager
     chat_manager = ChatManager(engine=db_engine)
-    logger.info("✓ Chat manager initialized (PostgreSQL)")
+    logger.info("Chat manager initialized")
 
-    # 7. FastAPI app
     app = create_app(
         query_engine=query_engine,
         sync_orchestrator=orchestrator,
@@ -275,29 +247,24 @@ def main():
         google_client_id=settings.google_client_id,
     )
 
-    # 8. Startup event — init DB tables + start scheduler
     @app.on_event("startup")
     async def on_startup():
         await init_db(db_engine)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         scheduler.start(loop=loop)
-        logger.info("✓ Scheduler started")
+        logger.info("Scheduler started")
 
     @app.on_event("shutdown")
     async def on_shutdown():
         scheduler.stop()
-        # Close all connector HTTP clients
         for connector in connectors.values():
-            if hasattr(connector, 'close'):
+            if hasattr(connector, "close"):
                 await connector.close()
-        # Dispose the database engine
         await db_engine.dispose()
         logger.info("Shutdown complete")
 
-    # 9. Launch
     logger.info(f"Starting server on {settings.host}:{settings.port}")
     logger.info(f"Dashboard: http://localhost:{settings.port}")
-    logger.info("=" * 60)
 
     uvicorn.run(
         app,

@@ -1,7 +1,6 @@
 """Scheduler — runs sync via APScheduler BackgroundScheduler.
 
-Configurable cron triggers for working-hours sync, manual trigger support,
-and graceful shutdown.
+Configurable cron triggers for working-hours sync and graceful shutdown.
 """
 
 from __future__ import annotations
@@ -58,11 +57,6 @@ class SyncScheduler:
             self.scheduler.shutdown(wait=False)
             logger.info("Sync scheduler stopped")
 
-    def trigger_now(self):
-        """Manually trigger a sync run."""
-        logger.info("Manual sync triggered")
-        self._trigger_sync()
-
     def _trigger_sync(self):
         """Internal: run the sync in the event loop."""
         if self.orchestrator.is_running:
@@ -74,9 +68,8 @@ class SyncScheduler:
                 self.orchestrator.run_sync(), self._loop
             )
         else:
-            # Fallback: create a new event loop
+            loop = asyncio.new_event_loop()
             try:
-                loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(self.orchestrator.run_sync())
             finally:

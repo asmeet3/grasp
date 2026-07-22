@@ -8,17 +8,15 @@
     <title>Grasp - Sign In</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
-    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body class="login-body">
     <div class="login-page">
-        <!-- Decorative background orbs -->
         <div class="login-bg-orb login-bg-orb-1"></div>
         <div class="login-bg-orb login-bg-orb-2"></div>
         <div class="login-bg-orb login-bg-orb-3"></div>
 
-        <!-- Left: Brand panel -->
         <div class="login-panel-left">
             <div class="login-brand">
                 <img src="/logos/grasp-invert-transparent.png" class="login-brand-logo logo-dark" alt="Grasp">
@@ -35,7 +33,6 @@
             </div>
         </div>
 
-        <!-- Right: Form panel -->
         <div class="login-panel-right">
             <div class="login-card" id="loginCard">
                 <div class="login-card-header">
@@ -43,12 +40,10 @@
                     <p id="authSubtitle">Sign in to access your organization's knowledge</p>
                 </div>
 
-                <!-- Error message area -->
                 <div class="login-error" id="authError" style="display:none">
                     <span id="authErrorText"></span>
                 </div>
 
-                <!-- Success / Pending message -->
                 <div class="login-pending" id="pendingMsg" style="display:none">
                     <div class="pending-icon">⏳</div>
                     <h2>Registration Pending</h2>
@@ -57,7 +52,6 @@
                     <button class="login-btn login-btn-secondary" onclick="showLogin()">← Back to Sign In</button>
                 </div>
 
-                <!-- Login Form -->
                 <form id="loginForm" onsubmit="handleLogin(event)">
                     <div class="login-field">
                         <label class="login-label" for="loginEmail">Email</label>
@@ -74,7 +68,6 @@
                     </button>
                 </form>
 
-                <!-- Register Form (hidden by default) -->
                 <form id="registerForm" style="display:none" onsubmit="handleRegister(event)">
                     <div class="login-field-row">
                         <div class="login-field">
@@ -143,14 +136,11 @@
                     </button>
                 </form>
 
-                <!-- Divider -->
                 <div class="login-divider" id="authDivider">
                     <span>or</span>
                 </div>
 
-                <!-- Google Sign-In -->
                 <div class="google-btn-wrapper" id="googleSignInBtn" style="display:none;">
-                    <!-- Custom styled button (visible) -->
                     <button class="gsi-material-button" type="button">
                         <div class="gsi-material-button-state"></div>
                         <div class="gsi-material-button-content-wrapper">
@@ -176,11 +166,9 @@
                             <span style="display: none;">Sign in with Google</span>
                         </div>
                     </button>
-                    <!-- Invisible SDK button overlay (captures clicks for full OAuth flow) -->
                     <div id="googleBtnOverlay" class="google-btn-overlay"></div>
                 </div>
 
-                <!-- Toggle auth mode -->
                 <div class="login-toggle" id="authToggle">
                     <span id="toggleText">Don't have an account?</span>
                     <button class="login-toggle-btn" id="toggleBtn" onclick="toggleAuthMode()">Create one</button>

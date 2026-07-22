@@ -8,38 +8,29 @@
         content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp</title>
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
-    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body>
     <div class="app">
-        <!-- Sidebar Provider Wrapper -->
         <div class="sidebar-provider" id="sidebarProvider">
 
-            <!-- Sidebar -->
             <aside class="sidebar" id="sidebar" data-collapsible="icon">
 
-                <!-- Sidebar inner container -->
                 <div class="sidebar-inner">
 
-                    <!-- Sidebar Header -->
                     <div class="sidebar-header">
                         <div class="sidebar-logo-wrapper">
-                            <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp"
+                            <img src="/logos/grasp-lettering-transparent-small.png" alt="Grasp"
                                 class="sidebar-logo-img logo-light">
-                            <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp"
+                            <img src="/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp"
                                 class="sidebar-logo-img logo-dark">
                         </div>
                     </div>
 
-                    <!-- Sidebar Content -->
                     <div class="sidebar-content">
 
-                        <!-- Hidden status fields (still populated by JS for data) -->
                         <div style="display:none">
                             <span id="statusDot"></span>
                             <span id="statusText"></span>
@@ -48,7 +39,6 @@
                             <span id="nextSync"></span>
                         </div>
 
-                        <!-- Connectors Group -->
                         <div class="sidebar-group">
                             <button class="sidebar-group-label-btn" onclick="toggleSidebarSection('connectors')"
                                 id="connectorsToggle" aria-expanded="false">
@@ -71,7 +61,6 @@
                             </div>
                         </div>
 
-                        <!-- Recent Chats Group -->
                         <div class="sidebar-group">
                             <button class="sidebar-group-label-btn" onclick="toggleSidebarSection('chats')"
                                 id="chatsToggle" aria-expanded="true">
@@ -90,9 +79,7 @@
 
                     </div>
 
-                    <!-- Sidebar Footer -->
                     <div class="sidebar-footer">
-                        <!-- Footer actions (hide when icon-only) -->
                         <div class="sidebar-footer-actions">
 
                             <button class="contribute-btn" onclick="openContributeModal()">
@@ -103,7 +90,6 @@
                             </button>
                         </div>
 
-                        <!-- User profile (populated by JS) -->
                         <div class="sidebar-menu" id="userProfileSection" style="display:none">
                             <div class="sidebar-menu-item">
                                 <button class="sidebar-menu-button sidebar-menu-button-lg sidebar-user-btn"
@@ -120,7 +106,6 @@
                                         <path d="m7 9 5-5 5 5" />
                                     </svg>
                                 </button>
-                                <!-- User dropdown menu (shadcn-inspired) -->
                                 <div class="dropdown-menu-content dropdown-side-top" id="userMenuDropdown">
                                     <div class="dropdown-menu-group">
                                         <div class="dropdown-menu-label">Account</div>
@@ -169,18 +154,15 @@
 
                 </div>
 
-                <!-- Sidebar Rail (resize/collapse handle) -->
                 <div class="sidebar-rail" id="sidebarRail" onclick="toggleSidebar()" title="Toggle sidebar"
                     aria-label="Toggle sidebar"></div>
 
             </aside>
 
-        </div><!-- end sidebar-provider -->
+        </div>
 
-        <!-- Main Content -->
         <main class="main">
             <header class="main-header">
-                <!-- SidebarTrigger -->
                 <button class="sidebar-trigger" id="sidebarTrigger" onclick="toggleSidebar()"
                     aria-label="Toggle sidebar">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -212,7 +194,6 @@
 
 
 
-                    <!-- Default suggestion chips -->
                     <div class="suggestion-chips" id="defaultChips">
                         <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the
                             current architecture of our backend?</div>
@@ -250,7 +231,6 @@
         </main>
     </div>
 
-    <!-- Contribution Modal -->
     <div class="modal-overlay" id="contributeModal">
         <div class="modal">
             <div class="modal-header">
@@ -285,7 +265,6 @@
                     </div>
                 </div>
 
-                <!-- File upload area (shown when document type is selected) -->
                 <div class="contribute-field" id="fileUploadField">
                     <label class="contribute-label">Upload File <span
                             style="color:var(--text-tertiary);font-weight:400">.docx, .pdf, .txt, .md</span></label>
@@ -304,7 +283,6 @@
                     </div>
                 </div>
 
-                <!-- Textarea (shown when code or plain_text type is selected) -->
                 <div class="contribute-field" id="textContentField" style="display:none">
                     <label class="contribute-label">Content <span
                             style="color:var(--danger);font-weight:700">*</span></label>
@@ -321,7 +299,6 @@
         </div>
     </div>
 
-    <!-- My Submissions Modal -->
     <div class="modal-overlay" id="mySubmissionsModal">
         <div class="modal" style="max-width:700px">
             <div class="modal-header">
@@ -334,7 +311,6 @@
         </div>
     </div>
 
-    <!-- Pending Approval Overlay -->
     <div class="pending-approval-overlay" id="pendingApprovalOverlay" style="display:none">
         <div class="pending-approval-card">
             <div class="pending-approval-icon">⏳</div>
@@ -347,7 +323,6 @@
 
 
 
-    <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
         <div class="modal settings-modal">
             <div class="modal-header">
@@ -356,7 +331,6 @@
             </div>
             <div class="modal-body settings-modal-body">
 
-                <!-- Profile Picture -->
                 <div class="settings-section">
                     <div class="settings-section-title">Profile Picture</div>
                     <div class="settings-avatar-row">
@@ -386,7 +360,6 @@
 
                 <div class="settings-divider"></div>
 
-                <!-- Name & DOB -->
                 <div class="settings-section">
                     <div class="settings-section-title">Personal Info</div>
                     <div class="settings-row">
@@ -411,7 +384,6 @@
 
                 <div class="settings-divider"></div>
 
-                <!-- Change Password -->
                 <div class="settings-section" id="settingsPasswordSection">
                     <div class="settings-section-title">Change Password</div>
                     <div class="settings-field">
@@ -434,7 +406,6 @@
 
                 <div class="settings-divider"></div>
 
-                <!-- Delete Account -->
                 <div class="settings-section settings-danger-zone">
                     <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;line-height:1.6">
                         Permanently delete your account and all associated data. This action cannot be undone.
@@ -461,7 +432,6 @@
         </div>
     </div>
 
-    <!-- Delete Account Confirmation Modal -->
     <div class="modal-overlay" id="deleteAccountModal">
         <div class="modal" style="max-width:460px">
             <div class="modal-header" style="border-bottom-color:var(--danger-bg)">
@@ -482,14 +452,12 @@
                     Your account, profile, and all associated data will be deleted immediately.
                 </div>
 
-                <!-- Password confirmation for email accounts -->
                 <div id="deleteAccountPwdField" style="display:none;margin-top:18px">
                     <label class="contribute-label">Confirm with your password</label>
                     <input type="password" class="contribute-input" id="deleteAccountPwd"
                         placeholder="Enter your current password" style="margin-top:6px">
                 </div>
 
-                <!-- Type-to-confirm for Google accounts -->
                 <div id="deleteAccountTypeField" style="display:none;margin-top:18px">
                     <label class="contribute-label">Type <strong
                             style="color:var(--danger);font-family:monospace">DELETE</strong> to confirm</label>
@@ -518,7 +486,6 @@
         </div>
     </div>
 
-    <!-- Delete Chat Confirmation Modal -->
     <div class="modal-overlay" id="deleteChatModal">
         <div class="modal" style="max-width:400px">
             <div class="modal-header">
@@ -536,7 +503,6 @@
         </div>
     </div>
 
-    <!-- Image Crop Modal -->
     <div class="modal-overlay crop-modal-overlay" id="cropModal">
         <div class="crop-modal-container">
             <div class="crop-modal-header">
@@ -556,7 +522,6 @@
             <div class="crop-modal-body">
                 <div class="crop-canvas-wrapper" id="cropCanvasWrapper">
                     <canvas id="cropCanvas"></canvas>
-                    <!-- Overlay mask with circular hole -->
                     <div class="crop-overlay-mask" id="cropOverlayMask">
                         <svg class="crop-mask-svg" id="cropMaskSvg" xmlns="http://www.w3.org/2000/svg">
                             <defs>

@@ -7,7 +7,6 @@ and persistent local storage.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -79,7 +78,7 @@ class VectorStore:
             f"({self._collection.count()} documents)"
         )
 
-    # ── Indexing ───────────────────────────────────────────
+    # Indexing
 
     def index_document(self, doc: Document, info_type: str = "topics"):
         """Index a document, chunking if necessary."""
@@ -87,14 +86,14 @@ class VectorStore:
 
         date_prefix = doc.updated_at.strftime("%Y")
         slug = sanitize_filename(doc.title)
-        repo_path = f"knowledge/{info_type}/{date_prefix}-{slug}.md"
+        repo_path = doc.metadata.get(
+            "repo_path", f"knowledge/{info_type}/{date_prefix}-{slug}.md"
+        )
 
         chunks = self._chunk_text(doc.content)
         if not chunks:
             return
 
-        # Remove any existing chunks for this document to avoid stale data
-        # (e.g., if the document shrunk and now has fewer chunks)
         self.delete_document(doc.id)
 
         ids = []
@@ -126,7 +125,7 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Failed to index document {doc.id}: {e}")
 
-    # ── Recursive Markdown-Aware Chunking ──────────────────
+    # Markdown-aware chunking
 
     # Separator hierarchy — try the most structural separators first,
     # fall back to progressively finer-grained ones.
@@ -267,7 +266,7 @@ class VectorStore:
 
         return overlapped
 
-    # ── Search ─────────────────────────────────────────────
+    # Search
 
     def search(
         self,
@@ -292,12 +291,11 @@ class VectorStore:
 
             search_results = []
             if results and results["ids"] and results["ids"][0]:
-                for i, chunk_id in enumerate(results["ids"][0]):
+                for i in range(len(results["ids"][0])):
                     metadata = results["metadatas"][0][i] if results["metadatas"] else {}
                     distance = results["distances"][0][i] if results["distances"] else 1.0
                     content = results["documents"][0][i] if results["documents"] else ""
 
-                    # Convert distance to similarity score (cosine: 1 - distance)
                     score = max(0.0, 1.0 - distance)
 
                     search_results.append(SearchResult(
@@ -324,7 +322,7 @@ class VectorStore:
             logger.error(f"Search failed: {e}")
             return []
 
-    # ── Management ─────────────────────────────────────────
+    # Management
 
     def delete_document(self, doc_id: str):
         """Remove all chunks for a document."""

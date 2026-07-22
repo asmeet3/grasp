@@ -7,15 +7,13 @@ reviewing pending changes, and monitoring system health.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
 from sse_starlette.sse import EventSourceResponse
@@ -31,7 +29,6 @@ from .models import (
     SystemStatusResponse,
     SourcesResponse,
     ContributionSubmitRequest,
-    ContributionSubmitResponse,
     ContributionResponse,
     ContributionListResponse,
     ContributionUpdateRequest,
@@ -41,7 +38,6 @@ from .models import (
     GoogleAuthRequest,
     LoginRequest,
     AuthResponse,
-    UserListResponse,
     ApproveUserRequest,
     UpdateRoleRequest,
     UpdateProfileRequest,
@@ -75,7 +71,6 @@ def create_app(
         version="1.0.0",
     )
 
-    # CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -84,30 +79,25 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Static files
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-    # Icons
     icons_dir = Path(__file__).parent.parent / "icons"
     if icons_dir.exists():
         app.mount("/icons", StaticFiles(directory=str(icons_dir)), name="icons")
 
-    # Logos
     logos_dir = Path(__file__).parent.parent / "logos"
     if logos_dir.exists():
         app.mount("/logos", StaticFiles(directory=str(logos_dir)), name="logos")
 
-    # ── Admin auth dependency ──────────────────────────────
+    # Authentication dependencies
 
     _admin_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
     async def require_admin(key: str = Depends(_admin_key_header)):
         if not admin_key or not key or key != admin_key:
             raise HTTPException(status_code=403, detail="Invalid or missing admin key")
-
-    # ── Session auth dependency ────────────────────────────
 
     async def get_current_user(request: Request):
         """Extract and verify session token from Authorization header."""
@@ -119,7 +109,7 @@ def create_app(
             return await user_manager.verify_token(token)
         return None
 
-    # ── Auth endpoints ─────────────────────────────────────
+    # Authentication
 
     @app.post("/api/auth/register", response_model=AuthResponse)
     async def register_email(request: RegisterRequest):
@@ -255,9 +245,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=result["error"])
         return {"message": result["message"], "logout_required": True}
 
-    # ── Admin User Management ──────────────────────────────
-
-    # ── Chat History Endpoints ─────────────────────────────
+    # Chat history
 
     @app.get("/api/chats", response_model=ChatThreadListResponse)
     async def get_chats(req: Request):
@@ -300,7 +288,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Chat not found or access denied")
         return {"status": "ok"}
 
-    # ── Admin User Management ──────────────────────────────
+    # User administration
 
     @app.get("/api/admin/users", dependencies=[Depends(require_admin)])
     async def list_users():
@@ -340,12 +328,11 @@ def create_app(
             raise HTTPException(status_code=400, detail=result["error"])
         return result
 
-    # ── Query endpoint (SSE streaming) ─────────────────────
+    # Query streaming
 
     @app.post("/api/query")
     async def query(request: QueryRequest):
         """Submit a question and get a streamed answer via SSE."""
-        # Convert history models to plain dicts for the engine
         history = None
         if request.history:
             history = [{"role": m.role, "content": m.content} for m in request.history]
@@ -361,9 +348,7 @@ def create_app(
 
         return EventSourceResponse(event_generator())
 
-    # ── Sync endpoints ─────────────────────────────────────
-
-    # ── Health check cache ──────────────────────────────────
+    # Sync and health
     _health_cache: dict = {}
     _health_cache_ts: float = 0.0
     _HEALTH_TTL: float = 300.0  # 5 minutes
@@ -375,7 +360,6 @@ def create_app(
 
         now = time.time()
         if now - _health_cache_ts > _HEALTH_TTL or not _health_cache:
-            # Refresh health checks
             async def check_health(name, connector):
                 try:
                     result = await asyncio.wait_for(connector.health_check(), timeout=5.0)
@@ -404,7 +388,6 @@ def create_app(
         if sync_orchestrator.is_running:
             return SyncTriggerResponse(status="already_running", message="Sync already in progress")
 
-        # Run sync in background
         asyncio.create_task(sync_orchestrator.run_sync())
         return SyncTriggerResponse(status="started", message="Sync triggered")
 
@@ -423,7 +406,7 @@ def create_app(
         """Get sync history log."""
         return await sync_orchestrator.get_sync_history()
 
-    # ── Pending changes endpoints ──────────────────────────
+    # Pending changes
 
     @app.get("/api/changes/pending", response_model=PendingChangesResponse, dependencies=[Depends(require_admin)])
     async def get_pending_changes():
@@ -456,21 +439,18 @@ def create_app(
             return RejectResponse(status="error", error=result["error"])
         return RejectResponse(status="rejected")
 
-    # ── Sources endpoint ───────────────────────────────────
-
     @app.get("/api/sources", response_model=SourcesResponse)
     async def get_sources():
         """Get document counts per source and type."""
         return SourcesResponse(sources=repo_manager.get_source_stats())
 
-    # ── Contribution endpoints ─────────────────────────────
+    # Contributions
 
     @app.post("/api/contributions/submit")
     async def submit_contribution(request: ContributionSubmitRequest, req: Request):
         """User submits a contribution request (public endpoint)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        # Auto-populate name from session if logged in
         current_user = await get_current_user(req)
         submitted_by = request.submitted_by
         if current_user:
@@ -481,17 +461,16 @@ def create_app(
             title=request.title,
             content=request.content,
             content_type=request.content_type,
-            submitted_by=request.submitted_by,
+            submitted_by=submitted_by,
         )
         response = JSONResponse(content={
             "id": result["id"],
             "status": "pending",
             "message": "Contribution submitted for review",
         })
-        # Set cookie so "My Submissions" can identify the user
         response.set_cookie(
             key="grasp_user",
-            value=request.submitted_by.strip(),
+            value=submitted_by,
             max_age=60 * 60 * 24 * 365,  # 1 year
             httponly=False,
             samesite="lax",
@@ -508,14 +487,12 @@ def create_app(
         """User uploads a document file (.txt, .md, .pdf, .docx) as a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        # Auto-populate name from session if logged in
         current_user = await get_current_user(req)
         if current_user:
             submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
         if not submitted_by or not submitted_by.strip():
             raise HTTPException(status_code=422, detail="Name is required")
 
-        # Validate file extension
         filename = file.filename or ""
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         if ext not in ("txt", "md", "pdf", "docx"):
@@ -524,10 +501,8 @@ def create_app(
                 detail=f"Unsupported file type '.{ext}'. Allowed: .txt, .md, .pdf, .docx",
             )
 
-        # Read file content
         file_bytes = await file.read()
 
-        # Extract text based on file type
         try:
             if ext in ("txt", "md"):
                 content = file_bytes.decode("utf-8", errors="replace")
@@ -564,7 +539,6 @@ def create_app(
                 detail=f"Failed to parse file: {e}",
             )
 
-        # Use filename as title if title is empty
         final_title = title.strip() or filename.rsplit(".", 1)[0]
 
         result = await contribution_manager.submit(
@@ -576,7 +550,6 @@ def create_app(
             original_file_ext=ext,
         )
 
-        # Save original file bytes alongside the contribution JSON
         try:
             original_path = contribution_manager.contributions_dir / f"{result['id']}_original.{ext}"
             original_path.write_bytes(file_bytes)
@@ -589,7 +562,6 @@ def create_app(
             "status": "pending",
             "message": f"Document uploaded ({len(content)} chars extracted)",
         })
-        # Set cookie so "My Submissions" can identify the user
         response.set_cookie(
             key="grasp_user",
             value=submitted_by.strip(),
@@ -599,7 +571,11 @@ def create_app(
         )
         return response
 
-    @app.get("/api/contributions/pending", response_model=ContributionListResponse, dependencies=[Depends(require_admin)])
+    @app.get(
+        "/api/contributions/pending",
+        response_model=ContributionListResponse,
+        dependencies=[Depends(require_admin)],
+    )
     async def get_pending_contributions():
         """List all pending contributions (admin only)."""
         if not contribution_manager:
@@ -623,7 +599,6 @@ def create_app(
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
         name = submitted_by.strip()
-        # Fallback to cookie if no query param provided
         if not name:
             name = (request.cookies.get("grasp_user") or "").strip()
         if not name:
@@ -653,7 +628,11 @@ def create_app(
             media_type="application/octet-stream",
         )
 
-    @app.get("/api/contributions/{contribution_id}", response_model=ContributionResponse, dependencies=[Depends(require_admin)])
+    @app.get(
+        "/api/contributions/{contribution_id}",
+        response_model=ContributionResponse,
+        dependencies=[Depends(require_admin)],
+    )
     async def get_contribution(contribution_id: str):
         """Get a single contribution by ID (admin only)."""
         if not contribution_manager:
@@ -663,7 +642,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="Contribution not found")
         return ContributionResponse(**contribution)
 
-    @app.put("/api/contributions/{contribution_id}", response_model=ContributionResponse, dependencies=[Depends(require_admin)])
+    @app.put(
+        "/api/contributions/{contribution_id}",
+        response_model=ContributionResponse,
+        dependencies=[Depends(require_admin)],
+    )
     async def update_contribution(contribution_id: str, request: ContributionUpdateRequest):
         """Admin edits the contribution content before approval."""
         if not contribution_manager:
@@ -677,7 +660,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="Contribution not found or not pending")
         return ContributionResponse(**result)
 
-    @app.post("/api/contributions/{contribution_id}/approve", response_model=ContributionActionResponse, dependencies=[Depends(require_admin)])
+    @app.post(
+        "/api/contributions/{contribution_id}/approve",
+        response_model=ContributionActionResponse,
+        dependencies=[Depends(require_admin)],
+    )
     async def approve_contribution(contribution_id: str, request: ContributionActionRequest):
         """Approve a contribution — classify and write to the repo."""
         if not contribution_manager:
@@ -690,7 +677,11 @@ def create_app(
             return ContributionActionResponse(status="error", message=result["error"])
         return ContributionActionResponse(**result)
 
-    @app.post("/api/contributions/{contribution_id}/reject", response_model=ContributionActionResponse, dependencies=[Depends(require_admin)])
+    @app.post(
+        "/api/contributions/{contribution_id}/reject",
+        response_model=ContributionActionResponse,
+        dependencies=[Depends(require_admin)],
+    )
     async def reject_contribution(contribution_id: str, request: ContributionActionRequest):
         """Reject a contribution."""
         if not contribution_manager:
@@ -703,7 +694,7 @@ def create_app(
             return ContributionActionResponse(status="error", message=result["error"])
         return ContributionActionResponse(**result)
 
-    # ── Web pages ─────────────────────────────────────────
+    # Web pages
 
     @app.get("/", response_class=HTMLResponse)
     async def user_page():

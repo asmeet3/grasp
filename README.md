@@ -59,7 +59,8 @@ User Question
 Claude Sonnet (Coordinator Agent)
   │
   ├── Synthesizes answer from all results
-  ├── Can call read_repo_file(path) to read full documents
+  ├── Can batch-read full documents by repo_path
+  ├── Can call read_repo_file(path) for one specific document
   ├── Can call search_knowledge_repo(query, filters) for targeted follow-ups
   ├── Can call individual live search tools for platform-specific queries
   └── Up to 4 follow-up tool rounds
@@ -68,7 +69,7 @@ Claude Sonnet (Coordinator Agent)
 Streamed response via SSE (with source citations)
 ```
 
-**Two-stage retrieval**: The vector search returns chunk previews (400 chars each). If Claude judges a chunk insufficient, it calls `read_repo_file` with the chunk's `repo_path` metadata to read the full document from the local Git repo — no GitHub or network call involved.
+**Two-stage retrieval**: The initial fan-out returns chunk previews of up to 800 characters. If the coordinator needs more context, it can batch-read up to five full documents using their `repo_path` metadata or read one specific repository file. These reads are local and do not require GitHub or another network call.
 
 ## Requirements
 
@@ -96,14 +97,14 @@ python main.py
 Or use Docker:
 
 ```
-docker-compose up -d
+docker compose up -d
 ```
 
 3. Open `http://localhost:8000` for the query interface, `http://localhost:8000/admin` for the admin dashboard, or `http://localhost:8000/login` for the login/registration page.
 
 ## Configuration
 
-All configuration is done through environment variables in `.env`. See `.env.example` for the full list.
+Configuration is loaded from environment variables in `.env`. See `.env.example` for the common options.
 
 ### Required
 
@@ -113,6 +114,14 @@ All configuration is done through environment variables in `.env`. See `.env.exa
 | `OPENAI_API_KEY` | OpenAI API key for `text-embedding-3-large` embeddings |
 | `ADMIN_KEY` | Secret key for admin API endpoints |
 | `DATABASE_URL` | PostgreSQL connection URL (e.g. `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp`) |
+
+### Optional — Models
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_MODEL` | `claude-sonnet-4-6` | Query coordinator model |
+| `CLASSIFIER_MODEL` | `claude-haiku-4-5-20251001` | Document classification model |
+| `QUERY_SHORTENER_MODEL` | `claude-haiku-4-5-20251001` | Live-search query-shortening model |
 
 ### Optional — Authentication
 
@@ -311,7 +320,7 @@ src/
 
 | Component | Technology |
 |---|---|
-| LLM | Anthropic Claude (Sonnet 4.6 for queries, Haiku 4.6 for classification) |
+| LLM | Anthropic Claude (Sonnet 4.6 for queries, Haiku 4.5 for classification and query shortening) |
 | Embeddings | OpenAI `text-embedding-3-large` (3072 dimensions) |
 | Vector database | ChromaDB (cosine similarity) |
 | Relational database | PostgreSQL (async via SQLAlchemy + asyncpg) |

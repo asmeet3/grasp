@@ -1,10 +1,8 @@
-/* ── Grasp Dashboard — Frontend Logic ──────────────────────── */
-
 const API_BASE = '';
 let isStreaming = false;
 let currentUser = null;
 
-// ── Chat Thread State ─────────────────────────────────────
+// Chat state
 let chatThreads = JSON.parse(localStorage.getItem('grasp_chats') || '[]');
 let currentChatId = null;  // null = welcome screen / fresh state
 let chatToDelete = null;
@@ -14,7 +12,7 @@ if (localStorage.getItem('grasp_history')) {
     localStorage.removeItem('grasp_history');
 }
 
-// ── Initialization ────────────────────────────────────────
+// Initialization
 
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
@@ -45,7 +43,7 @@ async function fetchChats() {
     }
 }
 
-// ── Status Polling ────────────────────────────────────────
+// Status polling
 
 async function refreshStatus() {
     try {
@@ -102,7 +100,7 @@ async function refreshStatus() {
     }
 }
 
-// ── Query Submission ──────────────────────────────────────
+// Queries
 
 function handleInputKeydown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -216,7 +214,6 @@ async function submitQuery() {
             } else if (!isDone) {
                 requestAnimationFrame(typeWriter);
             } else {
-                console.log('[Grasp] Stream finished. fullText length:', fullText.length);
                 if (!fullText.trim()) {
                     fullText = '*No response was generated. Please try again.*';
                 }
@@ -276,7 +273,7 @@ async function submitQuery() {
     }
 }
 
-// ── Markdown Rendering ────────────────────────────────────
+// Markdown rendering
 
 function renderMarkdown(text) {
     if (!text) return '';
@@ -385,7 +382,7 @@ function renderMarkdown(text) {
     return html;
 }
 
-// ── Chat Thread Management ────────────────────────────────
+// Chat threads
 
 function generateChatId() {
     return 'chat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
@@ -570,7 +567,7 @@ function renderChatList() {
 }
 
 
-// ── Utility ───────────────────────────────────────────────
+// Utilities
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -607,7 +604,7 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// ── Contribution Modal ────────────────────────────────────
+// Contributions
 
 let selectedContentType = 'document';
 let selectedFile = null;
@@ -680,7 +677,7 @@ function updateContentFields() {
     }
 }
 
-// ── File Handling ─────────────────────────────────────────
+// File handling
 
 function handleFileSelect(input) {
     const file = input.files[0];
@@ -759,8 +756,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }, 100);
 });
-
-// ── Submit ────────────────────────────────────────────────
 
 async function submitContribution() {
     const name = document.getElementById('contributeName').value.trim();
@@ -845,7 +840,7 @@ async function submitContribution() {
     }
 }
 
-// ── Theme Toggle ──────────────────────────────────────────
+// Theme
 
 function initTheme() {
     const saved = localStorage.getItem('grasp_theme');
@@ -878,7 +873,7 @@ function updateThemeIcon() {
 // Apply theme immediately (before DOMContentLoaded)
 initTheme();
 
-// ── Sidebar Collapse (shadcn icon-collapse) ────────────────────
+// Sidebar
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -911,7 +906,7 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// ── My Submissions ────────────────────────────────────────
+// Submission history
 
 function openMySubmissions() {
     document.getElementById('mySubmissionsModal').classList.add('active');
@@ -986,7 +981,7 @@ async function loadMySubmissions() {
     }
 }
 
-// ── Authentication ────────────────────────────────────────
+// Authentication
 
 async function checkAuth() {
     const token = localStorage.getItem('grasp_session_token');
@@ -1107,7 +1102,7 @@ function logout() {
     window.location.href = '/login';
 }
 
-// ── User Menu (footer dropdown) ──────────────────────────────────
+// User menu
 
 function toggleUserMenu(event) {
     event.stopPropagation();
@@ -1130,7 +1125,7 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// ── Sidebar Section Toggles ───────────────────────────────
+// Sidebar sections
 
 function toggleSidebarSection(section) {
     const bodyMap = { connectors: 'connectorsSectionBody', chats: 'chatsSectionBody' };
@@ -1154,7 +1149,7 @@ function toggleSidebarSection(section) {
 
 
 
-// ── Settings Modal ──────────────────────────────────────
+// Settings
 
 /** Pending profile picture data URL (256×256 PNG) waiting to be saved. */
 let _pendingProfilePicture = null;
@@ -1235,7 +1230,7 @@ function showSettingsAvatarError(msg) {
     if (err) { err.textContent = msg; err.style.display = ''; }
 }
 
-// ── Interactive Crop Modal ─────────────────────────────────
+// Avatar cropping
 
 /** Crop modal state */
 const _crop = {
@@ -1345,9 +1340,6 @@ function confirmCrop() {
     const outCtx = outCanvas.getContext('2d');
 
     // Scale from canvas coords to output coords
-    const outR = 128; // 256/2
-    const ratio = outR / r;
-
     // Compute where the circle region sits in image space
     const scale = _crop.baseScale * _crop.zoom;
     const imgW = _crop.img.naturalWidth * scale;
@@ -1382,7 +1374,6 @@ function confirmCrop() {
     }
     if (previewInit) previewInit.style.display = 'none';
 
-    // Subtle pulse on the avatar preview
     const previewEl = document.getElementById('settingsAvatarPreview');
     if (previewEl) {
         previewEl.classList.remove('crop-confirmed');
@@ -1398,7 +1389,7 @@ function confirmCrop() {
     _detachCropEvents();
 }
 
-// ── Crop canvas event wiring ───────────────────────────────
+// Crop controls
 
 function _onCropMouseDown(e) {
     _crop.dragging = true;
@@ -1505,7 +1496,7 @@ function _onSliderInput(e) {
     _setZoom(parseFloat(e.target.value));
 }
 
-// ── Profile Picture Upload → opens Crop Modal ─────────────
+// Profile picture upload
 
 /**
  * Validates an image file (≥256×256) then opens the interactive crop modal.
@@ -1559,7 +1550,7 @@ async function saveSettings() {
     let passwordChanged = false;
     let errors = [];
 
-    // ── 1. Save profile (name / dob / picture) ─────────────────────
+    // Save the profile before changing the password because the latter logs out.
     try {
         const profilePayload = {
             first_name: document.getElementById('settingsFirstName').value.trim() || null,
@@ -1591,7 +1582,7 @@ async function saveSettings() {
         errors.push(`Profile save error: ${e.message}`);
     }
 
-    // ── 2. Change password (only if fields are filled) ─────────────
+    // Change the password only when the user filled in that section.
     const currentPwd = document.getElementById('settingsCurrentPwd').value;
     const newPwd = document.getElementById('settingsNewPwd').value;
     const confirmPwd = document.getElementById('settingsConfirmPwd').value;
@@ -1653,7 +1644,7 @@ async function saveSettings() {
     }
 }
 
-// ── Delete Account ────────────────────────────────────────
+// Account deletion
 
 function openDeleteAccountModal() {
     const modal = document.getElementById('deleteAccountModal');

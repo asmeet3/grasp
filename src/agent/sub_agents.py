@@ -94,7 +94,6 @@ class SubAgent:
                     "doc_id": doc.id,
                     "updated_at": doc.updated_at.isoformat() if doc.updated_at else "",
                 }
-                # Pass through metadata fields (repo_path, info_type, score)
                 if doc.metadata:
                     for key in ("repo_path", "info_type", "score"):
                         if key in doc.metadata:
@@ -160,8 +159,7 @@ class SubAgentDispatcher:
 
         Both branches run concurrently.
         """
-        all_agents = self.repo_agents + self.live_agents
-        if not all_agents:
+        if not self.repo_agents and not self.live_agents:
             return []
 
         logger.info(
@@ -170,15 +168,11 @@ class SubAgentDispatcher:
         )
         start = time.time()
 
-        # Launch both branches in parallel
         branch_1 = self._repo_branch(query)
         branch_2 = self._live_branch(query)
 
-        repo_results, live_results = await asyncio.gather(
-            branch_1, branch_2, return_exceptions=False
-        )
+        repo_results, live_results = await asyncio.gather(branch_1, branch_2)
 
-        # Merge
         final_results: list[SubAgentResult] = repo_results + live_results
 
         total_ms = (time.time() - start) * 1000
@@ -193,7 +187,7 @@ class SubAgentDispatcher:
 
         return final_results
 
-    # ── Branch 1: Repo / Vector DB ─────────────────────────
+    # Repository branch
 
     async def _repo_branch(self, query: str) -> list[SubAgentResult]:
         """Search vector DB with the original query."""
@@ -205,22 +199,19 @@ class SubAgentDispatcher:
 
         return self._collect(results, self.repo_agents)
 
-    # ── Branch 2: Shorten → Live Search → Dedup ────────────
+    # Live-search branch
 
     async def _live_branch(self, query: str) -> list[SubAgentResult]:
         """Shorten query, fan-out to live platforms, deduplicate."""
         if not self.live_agents:
             return []
 
-        # Step 1: Shorten the query into sub-queries
         if self.query_shortener:
             short_queries = await self.query_shortener.shorten(query)
             logger.info(f"Shortened queries for live search: {short_queries}")
         else:
-            # No shortener configured — use original query as-is
             short_queries = [query]
 
-        # Step 2: For each shortened query, search all live platforms
         tasks = []
         for sq in short_queries:
             for agent in self.live_agents:
@@ -228,17 +219,15 @@ class SubAgentDispatcher:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Build an agent list that mirrors the task order (for error mapping)
         agent_order = []
         for _ in short_queries:
             agent_order.extend(self.live_agents)
 
         collected = self._collect(results, agent_order)
 
-        # Step 3: Deduplicate across all live results
         return self._deduplicate_by_source(collected)
 
-    # ── Helpers ─────────────────────────────────────────────
+    # Result handling
 
     @staticmethod
     def _collect(
@@ -269,14 +258,12 @@ class SubAgentDispatcher:
         """
         from collections import defaultdict
 
-        # Group all result dicts by source
         source_docs: dict[str, list[dict]] = defaultdict(list)
         source_elapsed: dict[str, float] = defaultdict(float)
         source_error: dict[str, str | None] = {}
 
         for result in results:
             if result.error:
-                # Keep the first error per source
                 source_error.setdefault(result.source, result.error)
                 source_elapsed[result.source] = max(
                     source_elapsed[result.source], result.elapsed_ms
@@ -288,9 +275,8 @@ class SubAgentDispatcher:
                 source_elapsed[result.source], result.elapsed_ms
             )
 
-        # Deduplicate within each source
         merged: list[SubAgentResult] = []
-        all_sources = set(source_docs.keys()) | set(source_error.keys())
+        all_sources = dict.fromkeys(result.source for result in results)
 
         for source in all_sources:
             docs = source_docs.get(source, [])

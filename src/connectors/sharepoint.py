@@ -6,16 +6,15 @@ and the Microsoft Search API for live queries.
 
 from __future__ import annotations
 
-import logging
+import io
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import httpx
+from docx import Document as DocxDocument
+from PyPDF2 import PdfReader
 
 from .base import BaseConnector, Document
-
-logger = logging.getLogger(__name__)
-
 
 class SharePointConnector(BaseConnector):
     """Connector for SharePoint Online via Microsoft Graph API."""
@@ -78,7 +77,7 @@ class SharePointConnector(BaseConnector):
         response = await self.rate_limiter.execute(client, "GET", url, headers=headers, params=params)
         return response.json()
 
-    # ── Full retrieval ─────────────────────────────────────
+    # Full retrieval
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all SharePoint content: drive items + list items."""
@@ -197,7 +196,7 @@ class SharePointConnector(BaseConnector):
             processed_lists.add(list_id)
             self._checkpoint["processed_lists"] = list(processed_lists)
 
-    # ── Incremental retrieval ──────────────────────────────
+    # Incremental retrieval
 
     async def incremental_retrieve(self, since: datetime) -> AsyncGenerator[list[Document], None]:
         """Retrieve items changed since the given timestamp."""
@@ -259,10 +258,11 @@ class SharePointConnector(BaseConnector):
             if batch:
                 yield batch
 
-    # ── Live search ────────────────────────────────────────
+    # Live search
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search SharePoint via the Microsoft Search API."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         await self._ensure_token()
         client = await self._get_client()
 
@@ -292,20 +292,31 @@ class SharePointConnector(BaseConnector):
             for hit_container in result_set.get("hitsContainers", []):
                 for hit in hit_container.get("hits", []):
                     resource = hit.get("resource", {})
+                    updated_at = datetime.now(timezone.utc)
+                    updated_str = resource.get("lastModifiedDateTime", "")
+                    if updated_str:
+                        try:
+                            updated_at = datetime.fromisoformat(
+                                updated_str.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            pass
+                    if updated_at < cutoff:
+                        continue
                     doc = Document(
                         id=f"sharepoint-search-{resource.get('id', '')}",
                         source="sharepoint",
                         title=resource.get("name", "Untitled"),
                         content=hit.get("summary", ""),
                         url=resource.get("webUrl", ""),
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=updated_at,
                         metadata={"search_result": True},
                     )
                     results.append(doc)
 
         return results[:10]
 
-    # ── Document conversion ────────────────────────────────
+    # Document conversion
 
     async def _drive_item_to_document(self, item: dict, drive_name: str, path: str) -> Document | None:
         """Convert a drive item to a Document, downloading file content when possible."""
@@ -313,14 +324,14 @@ class SharePointConnector(BaseConnector):
             name = item.get("name", "Untitled")
             item_id = item.get("id", "")
 
-            # Only process text-based files
             mime = item.get("file", {}).get("mimeType", "")
-            text_mimes = [
-                "text/", "application/json", "application/xml",
-                "application/vnd.openxmlformats",  # Office docs
+            supported_mimes = {
+                "application/json",
                 "application/pdf",
-            ]
-            if not any(mime.startswith(m) for m in text_mimes):
+                "application/xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+            if not mime.startswith("text/") and mime not in supported_mimes:
                 return None
 
             web_url = item.get("webUrl", "")
@@ -344,7 +355,6 @@ class SharePointConnector(BaseConnector):
             if description:
                 content_parts.append(f"\n{description}")
 
-            # Download actual file content for text-based files (cap at 10MB)
             file_content = ""
             if size <= 10_000_000:
                 file_content = await self._download_file_content(item, mime)
@@ -371,7 +381,6 @@ class SharePointConnector(BaseConnector):
         try:
             download_url = item.get("@microsoft.graph.downloadUrl")
             if not download_url:
-                # Fallback: use the content endpoint
                 parent_ref = item.get("parentReference", {})
                 drive_id = parent_ref.get("driveId", "")
                 item_id = item.get("id", "")
@@ -386,15 +395,24 @@ class SharePointConnector(BaseConnector):
             response = await client.get(download_url, headers=headers, follow_redirects=True)
             response.raise_for_status()
 
-            # For plain text files, return content directly
             if mime.startswith("text/") or mime in ("application/json", "application/xml"):
                 return response.text
 
-            # For other supported types, return what we can decode
-            try:
-                return response.text
-            except Exception:
-                return ""
+            if mime == "application/pdf":
+                reader = PdfReader(io.BytesIO(response.content))
+                return "\n\n".join(
+                    text for page in reader.pages if (text := page.extract_text())
+                )
+
+            if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                document = DocxDocument(io.BytesIO(response.content))
+                return "\n\n".join(
+                    paragraph.text
+                    for paragraph in document.paragraphs
+                    if paragraph.text.strip()
+                )
+
+            return ""
 
         except Exception as e:
             self.logger.debug(f"Could not download content for {item.get('name', '?')}: {e}")
@@ -439,7 +457,7 @@ class SharePointConnector(BaseConnector):
             self.logger.warning(f"Failed to parse SharePoint list item: {e}")
             return None
 
-    # ── Checkpoint ─────────────────────────────────────────
+    # Checkpoint
 
     def get_checkpoint_state(self) -> dict:
         return dict(self._checkpoint)

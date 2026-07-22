@@ -6,16 +6,12 @@ issue descriptions, comments, and metadata.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import httpx
 
-from .base import BaseConnector, Document, html_to_markdown
-
-logger = logging.getLogger(__name__)
-
+from .base import BaseConnector, Document
 
 class JiraConnector(BaseConnector):
     """Connector for Atlassian Jira Cloud."""
@@ -54,7 +50,7 @@ class JiraConnector(BaseConnector):
             response.raise_for_status()
         return response.json()
 
-    # ── Full retrieval ─────────────────────────────────────
+    # Full retrieval
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all Jira issues across the instance."""
@@ -71,7 +67,7 @@ class JiraConnector(BaseConnector):
 
         self.logger.info("Full Jira retrieval complete")
 
-    # ── Incremental retrieval ──────────────────────────────
+    # Incremental retrieval
 
     async def incremental_retrieve(self, since: datetime) -> AsyncGenerator[list[Document], None]:
         """Retrieve issues updated since the given timestamp."""
@@ -81,7 +77,7 @@ class JiraConnector(BaseConnector):
         async for batch in self._search_issues(jql):
             yield batch
 
-    # ── Live search ────────────────────────────────────────
+    # Live search
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Jira for recently updated issues matching the query."""
@@ -97,7 +93,7 @@ class JiraConnector(BaseConnector):
 
         return results[:10]
 
-    # ── JQL search helper ──────────────────────────────────
+    # JQL search
 
     async def _search_issues(
         self,
@@ -151,7 +147,7 @@ class JiraConnector(BaseConnector):
             if not next_page_token:
                 break
 
-    # ── Document conversion ────────────────────────────────
+    # Document conversion
 
     def _issue_to_document(self, issue: dict) -> Document | None:
         """Convert a Jira issue to a Document with full context."""
@@ -280,7 +276,7 @@ class JiraConnector(BaseConnector):
         _walk(adf)
         return "".join(parts).strip()
 
-    # ── Checkpoint ─────────────────────────────────────────
+    # Checkpoint
 
     def get_checkpoint_state(self) -> dict:
         return dict(self._checkpoint)

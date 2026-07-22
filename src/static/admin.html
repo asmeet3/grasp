@@ -8,11 +8,10 @@
     <title>Grasp - Admin Dashboard</title>
     <link rel="stylesheet" href="/static/styles.css">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
-    <link rel="icon" href="/logos/grasp-logo-transparent-invert.png" media="(prefers-color-scheme: dark)">
+    <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
 
 <body>
-    <!-- Auth Gate -->
     <div class="auth-gate" id="authGate">
         <div class="auth-card">
             <div class="auth-title">Grasp Admin</div>
@@ -27,23 +26,20 @@
         </div>
     </div>
 
-    <!-- Admin Dashboard (hidden until authenticated) -->
     <div class="app" id="adminApp" style="display:none">
         <div class="sidebar-provider" id="sidebarProvider">
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-inner">
-                    <!-- Sidebar Header: Logo -->
                     <div class="sidebar-header">
                         <div class="sidebar-logo-wrapper">
-                            <img src="/static/logos/grasp-lettering-transparent-small.png" alt="Grasp"
+                            <img src="/logos/grasp-lettering-transparent-small.png" alt="Grasp"
                                 class="sidebar-logo-img logo-light">
-                            <img src="/static/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp"
+                            <img src="/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp"
                                 class="sidebar-logo-img logo-dark">
                         </div>
                     </div>
 
                     <div class="sidebar-content">
-                        <!-- Admin profile -->
                         <div class="sidebar-menu" id="adminProfileSection">
                             <div class="sidebar-menu-item">
                                 <button class="sidebar-menu-button sidebar-menu-button-lg sidebar-user-btn"
@@ -124,7 +120,6 @@
                             </div>
                         </div>
 
-                        <!-- Connectors Group -->
                         <div class="sidebar-group">
                             <button class="sidebar-group-label-btn" onclick="toggleSidebarSection('connectors')"
                                 id="connectorsToggle" aria-expanded="true">
@@ -177,7 +172,6 @@
 
         <main class="main">
             <header class="main-header">
-                <!-- SidebarTrigger -->
                 <button class="sidebar-trigger" id="sidebarTrigger" onclick="toggleSidebar()"
                     aria-label="Toggle sidebar">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -198,7 +192,6 @@
 
             <div class="chat-area" id="adminContent" style="padding:36px">
                 <div style="max-width:1100px;margin:0 auto">
-                    <!-- Screen: Home (Dashboard) -->
                     <div id="screenHome" class="admin-screen">
                         <h3 class="admin-section-title">Sync Status</h3>
                         <div id="syncStatusCard" class="admin-card">
@@ -211,7 +204,6 @@
                         </div>
                     </div>
 
-                    <!-- Screen: Users -->
                     <div id="screenUsers" class="admin-screen" style="display:none">
                         <h3 class="admin-section-title"><img src="/icons/usermanagement-dark.svg"
                                 class="theme-icon-dark" alt="Users"><img src="/icons/usermanagement-light.svg"
@@ -222,7 +214,6 @@
                         </div>
                     </div>
 
-                    <!-- Screen: Contributions -->
                     <div id="screenContributions" class="admin-screen" style="display:none">
                         <h3 class="admin-section-title">✦ Contribution Requests</h3>
                         <div id="contributionsCard" class="admin-card" style="display: block;">
@@ -234,7 +225,6 @@
         </main>
     </div>
 
-    <!-- Pending Changes Modal -->
     <div class="modal-overlay" id="pendingModal">
         <div class="modal" style="max-width:900px">
             <div class="modal-header">
@@ -252,7 +242,6 @@
         </div>
     </div>
 
-    <!-- Contribution Review Modal -->
     <div class="modal-overlay" id="contributionReviewModal">
         <div class="modal" style="max-width:800px">
             <div class="modal-header">
@@ -275,7 +264,6 @@
         </div>
     </div>
 
-    <!-- Role Confirmation Modal -->
     <div class="modal-overlay" id="roleConfirmModal">
         <div class="modal" style="max-width:400px">
             <div class="modal-header">

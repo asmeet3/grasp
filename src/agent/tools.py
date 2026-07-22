@@ -10,9 +10,6 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
-from ..connectors.base import Document
-from ..index.vector_store import SearchResult
-
 if TYPE_CHECKING:
     from .sub_agents import SubAgentDispatcher
     from ..index.vector_store import VectorStore
@@ -21,8 +18,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-# ── Tool schema definitions for Claude ─────────────────────
 
 TOOL_DEFINITIONS = [
     {
@@ -93,7 +88,10 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Relative path to the file in the knowledge repo (e.g., 'knowledge/decisions/2024-API_Design.md').",
+                    "description": (
+                        "Relative path to the file in the knowledge repo, such as "
+                        "'knowledge/decisions/2024-API_Design.md'."
+                    ),
                 }
             },
             "required": ["file_path"],
@@ -103,9 +101,7 @@ TOOL_DEFINITIONS = [
         "name": "read_full_documents",
         "description": (
             "Batch-read the full content of documents identified by their repo_path from "
-            "previous search results. Use this ONLY when the fan-out search returned "
-            "truncated snippets and you believe the full document content would materially "
-            "improve your answer. This is your final deep-dive tool — use it sparingly."
+            "previous search results when their truncated snippets do not provide enough context."
         ),
         "input_schema": {
             "type": "object",
@@ -124,7 +120,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "search_confluence_live",
-        "description": "Search Confluence in real-time for the most recent content (last few hours). Use for targeted follow-up.",
+        "description": (
+            "Search Confluence in real time for recent content. "
+            "Use for targeted follow-up."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -146,7 +145,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "search_sharepoint_live",
-        "description": "Search SharePoint in real-time for recent documents and list items. Use for targeted follow-up.",
+        "description": (
+            "Search SharePoint in real time for recent documents and list items. "
+            "Use for targeted follow-up."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

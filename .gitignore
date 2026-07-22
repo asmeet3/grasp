@@ -13,8 +13,6 @@ venv/
 # Data directories
 knowledge_repo/
 chroma_data/
-checkpoints/
-graphify-out
 
 # IDE
 .vscode/
@@ -25,3 +23,6 @@ graphify-out
 # OS
 .DS_Store
 Thumbs.db
+
+# Tool-specific local settings
+.claude/

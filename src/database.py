@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 metadata = MetaData()
 
-# ── Users ──────────────────────────────────────────────────
+# Users
 
 users_table = Table(
     "users",
@@ -46,7 +46,7 @@ users_table = Table(
     Column("password_version", Integer, nullable=False, server_default="0"),
 )
 
-# ── Contributions ──────────────────────────────────────────
+# Contributions
 
 contributions_table = Table(
     "contributions",
@@ -65,7 +65,7 @@ contributions_table = Table(
     Column("original_file_ext", Text, nullable=True),
 )
 
-# ── Chat Threads ───────────────────────────────────────────
+# Chat threads
 
 chat_threads_table = Table(
     "chat_threads",
@@ -78,7 +78,7 @@ chat_threads_table = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()),
 )
 
-# ── Sync State ─────────────────────────────────────────────
+# Sync state
 
 sync_state_table = Table(
     "sync_state",
@@ -91,7 +91,7 @@ sync_state_table = Table(
     Column("details", JSONB, nullable=False, server_default="{}"),
 )
 
-# ── Checkpoints ────────────────────────────────────────────
+# Checkpoints
 
 checkpoints_table = Table(
     "checkpoints",
@@ -101,8 +101,6 @@ checkpoints_table = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
-
-# ── Engine & Initialization ────────────────────────────────
 
 def create_engine(database_url: str) -> AsyncEngine:
     """Create an async SQLAlchemy engine with a connection pool."""
@@ -119,4 +117,4 @@ async def init_db(engine: AsyncEngine) -> None:
     """Create all tables if they don't already exist."""
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
-    logger.info("✓ Database tables verified / created")
+    logger.info("Database tables verified or created")

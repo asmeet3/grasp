@@ -6,16 +6,12 @@ both incremental and live search modes.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import httpx
 
 from .base import BaseConnector, Document, html_to_markdown
-
-logger = logging.getLogger(__name__)
-
 
 class ConfluenceConnector(BaseConnector):
     """Connector for Atlassian Confluence Cloud."""
@@ -43,7 +39,7 @@ class ConfluenceConnector(BaseConnector):
         response = await self.rate_limiter.execute(client, "GET", url, params=params)
         return response.json()
 
-    # ── Full retrieval ─────────────────────────────────────
+    # Full retrieval
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all Confluence pages across all spaces."""
@@ -144,7 +140,7 @@ class ConfluenceConnector(BaseConnector):
         if batch:
             yield batch
 
-    # ── Incremental retrieval ──────────────────────────────
+    # Incremental retrieval
 
     async def incremental_retrieve(self, since: datetime) -> AsyncGenerator[list[Document], None]:
         """Retrieve pages modified since the given timestamp using CQL."""
@@ -154,7 +150,7 @@ class ConfluenceConnector(BaseConnector):
         async for batch in self._search_with_cql(cql):
             yield batch
 
-    # ── Live search ────────────────────────────────────────
+    # Live search
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Confluence for recent content matching the query."""
@@ -170,7 +166,7 @@ class ConfluenceConnector(BaseConnector):
 
         return results[:10]
 
-    # ── CQL search helper ──────────────────────────────────
+    # CQL search
 
     async def _search_with_cql(
         self, cql: str, max_results: int | None = None
@@ -214,7 +210,7 @@ class ConfluenceConnector(BaseConnector):
         if batch:
             yield batch
 
-    # ── Document conversion ────────────────────────────────
+    # Document conversion
 
     def _page_to_document(self, page: dict, space_key: str) -> Document | None:
         """Convert a V2 API page response to a Document."""
@@ -286,7 +282,7 @@ class ConfluenceConnector(BaseConnector):
             self.logger.warning(f"Failed to parse Confluence content: {e}")
             return None
 
-    # ── Checkpoint ─────────────────────────────────────────
+    # Checkpoint
 
     def get_checkpoint_state(self) -> dict:
         return dict(self._checkpoint)

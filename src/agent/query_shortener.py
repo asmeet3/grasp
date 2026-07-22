@@ -9,14 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from anthropic import AsyncAnthropic
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of shortened queries to produce.
-# Keeps the fan-out manageable (N queries × M platforms).
 MAX_SHORT_QUERIES = 3
 
 
@@ -26,8 +23,8 @@ class QueryShortener:
     def __init__(
         self,
         anthropic_api_key: str,
+        system_prompt: str,
         model: str = "claude-haiku-4-5-20251001",
-        system_prompt: str = "XYZ",
     ):
         self.client = AsyncAnthropic(api_key=anthropic_api_key)
         self.model = model
@@ -63,7 +60,6 @@ class QueryShortener:
                 )
                 return short_queries[:MAX_SHORT_QUERIES]
 
-            # Parsing failed — fall back
             logger.warning(
                 "Query shortener returned unparseable output, "
                 "falling back to original query"
@@ -74,15 +70,13 @@ class QueryShortener:
             logger.error(f"Query shortening failed: {e} — using original query")
             return [query]
 
-    # ── Helpers ─────────────────────────────────────────────
+    # Parsing
 
     @staticmethod
     def _parse_response(text: str) -> list[str] | None:
         """Try to extract a JSON list of strings from the LLM response."""
-        # Strip markdown code fences if present
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            # Remove opening fence (with optional language tag) and closing fence
             lines = cleaned.splitlines()
             lines = [l for l in lines if not l.strip().startswith("```")]
             cleaned = "\n".join(lines).strip()
@@ -93,7 +87,6 @@ class QueryShortener:
             return None
 
         if isinstance(parsed, list) and all(isinstance(q, str) for q in parsed):
-            # Filter out empties and enforce max
             return [q.strip() for q in parsed if q.strip()][:MAX_SHORT_QUERIES]
 
         return None

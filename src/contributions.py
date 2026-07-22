@@ -27,7 +27,6 @@ from .repo.manager import RepoManager
 logger = logging.getLogger(__name__)
 
 VALID_CONTENT_TYPES = ("document", "code", "plain_text")
-VALID_STATUSES = ("pending", "approved", "rejected")
 
 
 class ContributionManager:
@@ -36,11 +35,10 @@ class ContributionManager:
     def __init__(self, engine: AsyncEngine, repo_manager: RepoManager, state_dir: Path):
         self.engine = engine
         self.repo_manager = repo_manager
-        # Keep a directory for storing uploaded original files (binary)
         self.contributions_dir = state_dir / "contributions"
         self.contributions_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Submit ─────────────────────────────────────────────
+    # Submission
 
     async def submit(
         self,
@@ -76,7 +74,7 @@ class ContributionManager:
         logger.info(f"New contribution submitted: '{title}' by {contribution['submitted_by']}")
         return self._serialize(contribution)
 
-    # ── Read ───────────────────────────────────────────────
+    # Queries
 
     async def _load(self, contribution_id: str) -> dict[str, Any] | None:
         """Load a single contribution by ID."""
@@ -114,7 +112,7 @@ class ContributionManager:
         pending = await self.list_pending()
         return len(pending)
 
-    # ── Admin Actions ──────────────────────────────────────
+    # Review actions
 
     async def update_content(
         self,
@@ -162,7 +160,6 @@ class ContributionManager:
             return {"error": f"Contribution is already {contribution['status']}"}
 
         try:
-            # Build a Document for the repo manager
             doc = Document(
                 id=f"contribution-{contribution['id']}",
                 source="user_contribution",
@@ -171,13 +168,10 @@ class ContributionManager:
                 url="",
             )
 
-            # Classify and write to the repo
             info_type = await self.repo_manager.classify_and_write(doc)
 
-            # Stage the pending changes
             self.repo_manager.stage_pending()
 
-            # Update contribution status in DB
             now = datetime.now(timezone.utc)
             async with self.engine.begin() as conn:
                 await conn.execute(
@@ -234,7 +228,7 @@ class ContributionManager:
         logger.info(f"Contribution {contribution_id} rejected")
         return {"status": "rejected", "message": "Contribution rejected"}
 
-    # ── Helpers ────────────────────────────────────────────
+    # Serialization
 
     @staticmethod
     def _serialize(contribution: dict[str, Any]) -> dict[str, Any]:

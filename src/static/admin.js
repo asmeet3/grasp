@@ -1,9 +1,7 @@
-/* ── Grasp Admin Dashboard — Frontend Logic ──────────────── */
-
 const API_BASE = '';
 let adminKey = sessionStorage.getItem('grasp_admin_key') || '';
 
-// ── Theme Toggle ──────────────────────────────────────────
+// Theme
 
 function initTheme() {
     const saved = localStorage.getItem('grasp_theme');
@@ -36,7 +34,7 @@ function updateThemeIcon() {
 // Apply theme immediately
 initTheme();
 
-// ── Sidebar Collapse ─────────────────────────────────────
+// Sidebar
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -53,7 +51,7 @@ function toggleSidebar() {
     }
 })();
 
-// ── Authentication ────────────────────────────────────────
+// Authentication
 
 async function authenticateAdmin() {
     const input = document.getElementById('adminKeyInput');
@@ -124,7 +122,7 @@ function showAdminDashboard() {
     setInterval(checkUserPendingCount, 15000);
 }
 
-// ── Screen Routing ────────────────────────────────────────
+// Screen routing
 
 function showAdminScreen(screenName) {
     // Hide all screens
@@ -159,13 +157,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// ── Admin API helper ──────────────────────────────────────
+// API helpers
 
 function adminHeaders(extra = {}) {
     return { 'X-Admin-Key': adminKey, ...extra };
 }
 
-// ── Status Polling ────────────────────────────────────────
+// Status polling
 
 async function refreshStatus() {
     try {
@@ -276,7 +274,7 @@ async function loadSyncHistory() {
     }
 }
 
-// ── Pending Changes ───────────────────────────────────────
+// Pending changes
 
 let expandedFiles = new Set();
 
@@ -548,7 +546,7 @@ async function rejectChanges() {
     }
 }
 
-// ── Sync Trigger ──────────────────────────────────────────
+// Sync
 
 async function triggerSync() {
     const btn = document.getElementById('syncBtn');
@@ -573,7 +571,7 @@ async function triggerSync() {
     }, 3000);
 }
 
-// ── Utility ───────────────────────────────────────────────
+// Utilities
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -609,7 +607,7 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// ── User Management (Data Table) ──────────────────────────
+// User management
 
 let usersPage = 0;
 const USERS_PER_PAGE = 10;
@@ -969,13 +967,9 @@ async function changeRoleAction(userId, explicitRole) {
     }
 }
 
-// ── Contribution Management ───────────────────────────────
+// Contribution management
 
 let currentContributionId = null;
-
-function scrollToContributions() {
-    showAdminScreen('Contributions');
-}
 
 async function checkContributionCount() {
     try {
@@ -1317,7 +1311,7 @@ async function rejectContribution() {
     }
 }
 
-// ── Sidebar Section Toggles ───────────────────────────────
+// Sidebar sections
 
 function toggleSidebarSection(section) {
     const bodyMap = { connectors: 'connectorsSectionBody' };

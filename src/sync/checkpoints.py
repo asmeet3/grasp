@@ -69,19 +69,3 @@ class CheckpointManager:
                 )
             )
         logger.debug(f"Checkpoint cleared for {connector}")
-
-    async def has_checkpoint(self, connector: str) -> bool:
-        """Check if a checkpoint exists for a connector."""
-        async with self.engine.begin() as conn:
-            result = await conn.execute(
-                select(checkpoints_table.c.connector).where(
-                    checkpoints_table.c.connector == connector
-                )
-            )
-            return result.first() is not None
-
-    async def clear_all(self) -> None:
-        """Remove all checkpoint records."""
-        async with self.engine.begin() as conn:
-            await conn.execute(delete(checkpoints_table))
-        logger.info("All checkpoints cleared")

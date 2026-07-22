@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-# ── Query ──────────────────────────────────────────────────
+
+# Query
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="Message role: 'user' or 'assistant'")
@@ -15,15 +16,13 @@ class ChatMessage(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask the institutional brain")
-    history: list[ChatMessage] | None = Field(None, description="Prior conversation messages for multi-turn chat context")
+    history: list[ChatMessage] | None = Field(
+        None,
+        description="Prior conversation messages for multi-turn chat context",
+    )
 
 
-class QueryResponse(BaseModel):
-    answer: str
-    elapsed_seconds: float
-
-
-# ── Sync ───────────────────────────────────────────────────
+# Sync
 
 class SyncTriggerResponse(BaseModel):
     status: str
@@ -37,7 +36,7 @@ class SyncStatusResponse(BaseModel):
     workers: dict[str, dict] | None = None
 
 
-# ── Changes ────────────────────────────────────────────────
+# Changes
 
 class PendingChangesResponse(BaseModel):
     has_pending: bool
@@ -62,34 +61,28 @@ class RejectResponse(BaseModel):
     error: str | None = None
 
 
-# ── Status ─────────────────────────────────────────────────
+# Status
 
 class SystemStatusResponse(BaseModel):
     status: str = "online"
     last_sync: dict | None = None
     next_scheduled: str | None = None
-    connector_health: dict[str, bool] = {}
-    document_stats: dict = {}
-    vector_index: dict = {}
+    connector_health: dict[str, bool] = Field(default_factory=dict)
+    document_stats: dict = Field(default_factory=dict)
+    vector_index: dict = Field(default_factory=dict)
 
 
 class SourcesResponse(BaseModel):
-    sources: dict[str, Any] = {}
+    sources: dict[str, Any] = Field(default_factory=dict)
 
 
-# ── Contributions ──────────────────────────────────────────
+# Contributions
 
 class ContributionSubmitRequest(BaseModel):
     title: str = Field(..., description="Title for the contribution")
     content: str = Field(..., description="The content to contribute")
     content_type: str = Field("document", description="Type: document, code, or plain_text")
     submitted_by: str = Field(..., description="Name of the submitter")
-
-
-class ContributionSubmitResponse(BaseModel):
-    id: str
-    status: str
-    message: str
 
 
 class ContributionResponse(BaseModel):
@@ -128,13 +121,14 @@ class ContributionActionResponse(BaseModel):
     error: str | None = None
 
 
-# ── Chat Threads ───────────────────────────────────────────
+# Chat threads
 
 class SaveChatThreadRequest(BaseModel):
     id: str = Field(..., description="Unique chat ID")
     title: str = Field(..., description="Chat title")
     messages: list[dict] = Field(..., description="List of message objects (role, content)")
     created_at: str | None = Field(None, description="Optional ISO timestamp")
+
 
 class ChatThreadResponse(BaseModel):
     id: str
@@ -143,11 +137,12 @@ class ChatThreadResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+
 class ChatThreadListResponse(BaseModel):
     threads: list[ChatThreadResponse]
 
 
-# ── Authentication ─────────────────────────────────────────
+# Authentication
 
 class RegisterRequest(BaseModel):
     first_name: str = Field(..., description="First name")
@@ -169,38 +164,21 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     token: str | None = None
-    user: dict = {}
+    user: dict = Field(default_factory=dict)
     pending: bool = False
     error: str | None = None
     conflict: str | None = None
 
 
-class UserResponse(BaseModel):
-    id: str
-    first_name: str
-    last_name: str
-    email: str
-    auth_method: str
-    status: str
-    role: str | None = None
-    created_at: str
-    approved_at: str | None = None
-
-
-class UserListResponse(BaseModel):
-    users: list[UserResponse]
-    count: int
-
-
 class ApproveUserRequest(BaseModel):
-    role: str = Field(..., description="Role to assign: Intern, Associate, or Senior Associate")
+    role: str = Field(..., description="Role to assign")
 
 
 class UpdateRoleRequest(BaseModel):
-    role: str = Field(..., description="New role: Intern, Associate, or Senior Associate")
+    role: str = Field(..., description="New role")
 
 
-# ── User Self-Service ──────────────────────────────────────
+# User self-service
 
 class UpdateProfileRequest(BaseModel):
     first_name: str | None = Field(None, description="Updated first name")

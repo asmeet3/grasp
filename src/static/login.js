@@ -1,10 +1,8 @@
-/* ── Grasp Login/Register — Frontend Logic ─────────────────── */
-
 const API_BASE = '';
 let isRegisterMode = false;
 let googleClientId = null;
 
-// ── Theme ─────────────────────────────────────────────────
+// Theme
 
 function initTheme() {
     const saved = localStorage.getItem('grasp_theme');
@@ -14,7 +12,7 @@ function initTheme() {
 }
 initTheme();
 
-// ── Initialization ────────────────────────────────────────
+// Initialization
 
 document.addEventListener('DOMContentLoaded', async () => {
     // If already logged in, redirect to home
@@ -49,10 +47,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// ── Date of Birth Picker ─────────────────────────────────
+// Date of birth picker
 
 let dobViewMonth = 0; // 0-indexed month currently displayed
-let dobViewYear = 2000; // year currently displayed  
+let dobViewYear = 2000; // year currently displayed
 let dobSelectedDate = null; // { day, month, year } or null
 
 const DOB_MONTHS = [
@@ -224,7 +222,7 @@ function parseDob(dobStr) {
     return { day, month, year, iso: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` };
 }
 
-// ── Toggle Login / Register ───────────────────────────────
+// Login and registration modes
 
 function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
@@ -255,7 +253,7 @@ function toggleAuthMode() {
         toggleBtn.textContent = 'Create one';
         if (googleBtnText) googleBtnText.textContent = 'Sign in with Google';
     }
-    
+
     if (typeof renderGoogleButton === 'function') {
         renderGoogleButton();
     }
@@ -279,13 +277,13 @@ function showLogin() {
     if (googleBtnText) googleBtnText.textContent = 'Sign in with Google';
 
     hideError();
-    
+
     if (typeof renderGoogleButton === 'function') {
         renderGoogleButton();
     }
 }
 
-// ── Error Display ─────────────────────────────────────────
+// Error display
 
 function showError(message) {
     const errorEl = document.getElementById('authError');
@@ -300,7 +298,7 @@ function hideError() {
     document.getElementById('authError').style.display = 'none';
 }
 
-// ── Pending Approval ──────────────────────────────────────
+// Pending approval
 
 function showPending() {
     document.getElementById('loginForm').style.display = 'none';
@@ -314,7 +312,7 @@ function showPending() {
     hideError();
 }
 
-// ── Email Login ───────────────────────────────────────────
+// Email login
 
 async function handleLogin(e) {
     e.preventDefault();
@@ -364,7 +362,7 @@ async function handleLogin(e) {
     }
 }
 
-// ── Email Register ────────────────────────────────────────
+// Email registration
 
 async function handleRegister(e) {
     e.preventDefault();
@@ -433,7 +431,7 @@ async function handleRegister(e) {
     }
 }
 
-// ── Google Sign-In ────────────────────────────────────────
+// Google sign-in
 
 function loadGoogleScript() {
     const script = document.createElement('script');
@@ -451,7 +449,7 @@ function initGoogleSignIn() {
         client_id: googleClientId,
         callback: handleGoogleCredential,
     });
-    
+
     renderGoogleButton();
 }
 
@@ -468,7 +466,7 @@ function renderGoogleButton() {
 
     window.google.accounts.id.renderButton(
         overlay,
-        { 
+        {
             theme: isDark ? 'filled_black' : 'outline',
             size: 'large',
             shape: 'rectangular',

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-import bcrypt as _bcrypt
+import bcrypt
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -34,7 +34,6 @@ VALID_ROLES = (
     "Vice President",
     "Partner",
 )
-VALID_STATUSES = ("pending_approval", "approved", "rejected")
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 
@@ -47,7 +46,7 @@ class UserManager:
         self.google_client_id = google_client_id
         self._serializer = URLSafeTimedSerializer(session_secret)
 
-    # ── Persistence ────────────────────────────────────────
+    # Persistence
 
     async def _load(self, user_id: str) -> dict[str, Any] | None:
         async with self.engine.begin() as conn:
@@ -78,7 +77,7 @@ class UserManager:
             row = result.mappings().first()
             return dict(row) if row else None
 
-    # ── Registration ───────────────────────────────────────
+    # Registration
 
     async def register_email(
         self,
@@ -91,7 +90,6 @@ class UserManager:
         """Register a new user via email. Returns the user or an error dict."""
         email = email.strip().lower()
 
-        # Check for existing account
         existing = await self._find_by_email(email)
         if existing:
             if existing.get("auth_method") == "google":
@@ -104,8 +102,9 @@ class UserManager:
                 "conflict": "email",
             }
 
-        # Hash the password
-        password_hash = _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        password_hash = bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
 
         user_id = str(uuid.uuid4())[:12]
         user = {
@@ -139,17 +138,17 @@ class UserManager:
         google_id = token_info.get("sub", "")
         profile_picture = token_info.get("picture", "")
 
-        # Check for existing account
         existing = await self._find_by_email(email)
         if existing:
             if existing.get("auth_method") == "email":
                 return {
-                    "error": "This email is already registered with an email account. Please sign in using your email and password.",
+                    "error": (
+                        "This email is already registered with an email account. "
+                        "Please sign in using your email and password."
+                    ),
                     "conflict": "email",
                 }
-            # Already a Google user — treat as login, refresh profile from Google
             if existing.get("status") == "pending_approval":
-                # Still refresh picture/name even for pending users
                 await self._refresh_google_profile(existing, given_name, family_name, google_id, profile_picture)
                 return {
                     "user": self._public_user(existing),
@@ -181,7 +180,7 @@ class UserManager:
         logger.info(f"New Google registration: {email} (id={user_id})")
         return {"user": self._public_user(user), "pending": True}
 
-    # ── Login ──────────────────────────────────────────────
+    # Login
 
     async def login_email(self, email: str, password: str) -> dict[str, Any]:
         """Authenticate via email + password. Returns user + token or error."""
@@ -195,7 +194,10 @@ class UserManager:
                 "conflict": "google",
             }
 
-        if not _bcrypt.checkpw(password.encode("utf-8"), user.get("password_hash", "").encode("utf-8")):
+        if not bcrypt.checkpw(
+            password.encode("utf-8"),
+            user.get("password_hash", "").encode("utf-8"),
+        ):
             return {"error": "Incorrect password."}
 
         if user.get("status") == "pending_approval":
@@ -225,7 +227,10 @@ class UserManager:
 
         if user.get("auth_method") == "email":
             return {
-                "error": "This email is registered with an email account. Please sign in using your email and password.",
+                "error": (
+                    "This email is registered with an email account. "
+                    "Please sign in using your email and password."
+                ),
                 "conflict": "email",
             }
 
@@ -245,7 +250,6 @@ class UserManager:
         if user.get("status") == "rejected":
             return {"error": "Your account has been rejected. Please contact an administrator."}
 
-        # Refresh profile fields from the fresh Google token before issuing session
         await self._refresh_google_profile(
             user,
             given_name=token_info.get("given_name", ""),
@@ -257,7 +261,7 @@ class UserManager:
         token = self._create_token(user["id"], pv)
         return {"user": self._public_user(user), "token": token}
 
-    # ── Session ────────────────────────────────────────────
+    # Session
 
     def _create_token(self, user_id: str, password_version: int = 0) -> str:
         """Create a signed session token embedding the password version."""
@@ -310,7 +314,7 @@ class UserManager:
         except (BadSignature, SignatureExpired, KeyError):
             return None
 
-    # ── User Self-Service ──────────────────────────────────
+    # User self-service
 
     async def update_profile(
         self,
@@ -352,14 +356,15 @@ class UserManager:
         if user.get("auth_method") == "google":
             return {"error": "Google-authenticated accounts cannot set a password here."}
 
-        if not _bcrypt.checkpw(
+        if not bcrypt.checkpw(
             current_password.encode("utf-8"),
             user.get("password_hash", "").encode("utf-8"),
         ):
             return {"error": "Current password is incorrect."}
 
-        # Hash new password
-        new_hash = _bcrypt.hashpw(new_password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        new_hash = bcrypt.hashpw(
+            new_password.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
         user["password_hash"] = new_hash
         # Increment password_version to invalidate all existing session tokens
         user["password_version"] = user.get("password_version", 0) + 1
@@ -386,7 +391,7 @@ class UserManager:
         if user.get("auth_method") == "email":
             if not password:
                 return {"error": "Please enter your password to confirm account deletion."}
-            if not _bcrypt.checkpw(
+            if not bcrypt.checkpw(
                 password.encode("utf-8"),
                 user.get("password_hash", "").encode("utf-8"),
             ):
@@ -400,7 +405,7 @@ class UserManager:
         logger.info(f"User {user_id} ({user.get('email', '')}) deleted their account")
         return {"message": "Account deleted successfully."}
 
-    # ── Admin Actions ──────────────────────────────────────
+    # Admin actions
 
     async def approve_user(self, user_id: str, role: str) -> dict[str, Any]:
         """Approve a user and assign a role."""
@@ -459,14 +464,7 @@ class UserManager:
             rows = result.mappings().all()
         return [self._public_user(dict(row)) for row in rows]
 
-    async def get_user(self, user_id: str) -> dict[str, Any] | None:
-        """Get a single user by ID (public view)."""
-        user = await self._load(user_id)
-        if user:
-            return self._public_user(user)
-        return None
-
-    # ── Google Token Verification ──────────────────────────
+    # Google token verification
 
     async def _verify_google_token(self, id_token: str) -> dict[str, Any]:
         """Verify a Google ID token via Google's tokeninfo endpoint."""
@@ -503,7 +501,7 @@ class UserManager:
             logger.error(f"Google token verification failed: {e}")
             return {"error": "Failed to verify Google token."}
 
-    # ── Helpers ────────────────────────────────────────────
+    # Serialization
 
     @staticmethod
     def _public_user(user: dict[str, Any]) -> dict[str, Any]:

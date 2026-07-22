@@ -6,16 +6,12 @@ search endpoint for both incremental and live queries.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator
 
 import httpx
 
 from .base import BaseConnector, Document
-
-logger = logging.getLogger(__name__)
-
 
 class NotionConnector(BaseConnector):
     """Connector for Notion via the official API."""
@@ -52,7 +48,7 @@ class NotionConnector(BaseConnector):
         response = await self.rate_limiter.execute(client, "GET", url, params=params)
         return response.json()
 
-    # ── Full retrieval ─────────────────────────────────────
+    # Full retrieval
 
     async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
         """Retrieve all pages and database items from Notion."""
@@ -101,7 +97,7 @@ class NotionConnector(BaseConnector):
         if batch:
             yield batch
 
-    # ── Incremental retrieval ──────────────────────────────
+    # Incremental retrieval
 
     async def incremental_retrieve(self, since: datetime) -> AsyncGenerator[list[Document], None]:
         """Retrieve pages edited since the given timestamp."""
@@ -148,26 +144,25 @@ class NotionConnector(BaseConnector):
         if batch:
             yield batch
 
-    # ── Live search ────────────────────────────────────────
+    # Live search
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Notion for pages matching the query."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         results = []
         async for batch in self._search_all(query=query):
-            results.extend(batch)
+            results.extend(doc for doc in batch if doc.updated_at >= cutoff)
             if len(results) >= 10:
                 break
 
         return results[:10]
 
-    # ── Document conversion ────────────────────────────────
+    # Document conversion
 
     async def _result_to_document(self, result: dict) -> Document | None:
         """Convert a Notion search result to a Document."""
         try:
             object_type = result.get("object", "")
-            result_id = result.get("id", "")
-
             if object_type == "page":
                 return await self._page_to_document(result)
             elif object_type == "database":
@@ -251,7 +246,7 @@ class NotionConnector(BaseConnector):
             metadata={"database_id": db_id, "object_type": "database"},
         )
 
-    # ── Block content fetching ─────────────────────────────
+    # Block content
 
     async def _get_page_blocks(self, page_id: str, depth: int = 0) -> str:
         """Recursively fetch all blocks for a page and convert to Markdown."""
@@ -339,12 +334,12 @@ class NotionConnector(BaseConnector):
 
         return ""
 
-    # ── Rich text extraction ───────────────────────────────
+    # Rich text
 
     def _extract_title(self, obj: dict) -> str:
         """Extract the title from a Notion page or database."""
         properties = obj.get("properties", {})
-        for prop_name, prop_value in properties.items():
+        for prop_value in properties.values():
             if prop_value.get("type") == "title":
                 title_arr = prop_value.get("title", [])
                 return self._extract_rich_text(title_arr)
@@ -380,7 +375,7 @@ class NotionConnector(BaseConnector):
 
         return "".join(parts)
 
-    # ── Checkpoint ─────────────────────────────────────────
+    # Checkpoint
 
     def get_checkpoint_state(self) -> dict:
         return dict(self._checkpoint)
