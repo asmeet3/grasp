@@ -1177,27 +1177,67 @@ body::before {
   margin: 20px 0;
 }
 
-/* Loading indicator */
-.typing-indicator {
+/* Response loading skeleton */
+.message-assistant-loading {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.response-skeleton {
   display: flex;
-  gap: 5px;
-  padding: 12px 0;
+  flex-direction: column;
+  gap: 11px;
+  width: min(100%, 680px);
+  padding: 4px 0;
+  overflow: hidden;
 }
 
-.typing-indicator span {
+.response-skeleton-line {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg,
+      var(--bg-tertiary) 20%,
+      var(--bg-glass-hover) 50%,
+      var(--bg-tertiary) 80%);
+  background-size: 240% 100%;
+  animation: responseSkeletonShimmer 1.4s ease-in-out infinite;
+}
+
+.response-skeleton-line-long {
+  width: 92%;
+}
+
+.response-skeleton-line-medium {
+  width: 76%;
+}
+
+.response-skeleton-line-short {
+  width: 48%;
+}
+
+.response-cursor {
+  display: inline-block;
   width: 6px;
-  height: 6px;
+  height: 15px;
+  margin-left: 4px;
+  vertical-align: middle;
   background: var(--accent-primary);
-  border-radius: 50%;
-  animation: bounce 1.4s ease-in-out infinite;
+  animation: pulse 1s infinite;
 }
 
-.typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
+.response-error {
+  color: var(--danger);
 }
 
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
+@keyframes responseSkeletonShimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
 }
 
 /* Query input */
@@ -1205,6 +1245,47 @@ body::before {
   padding: 18px 28px 22px;
   background: linear-gradient(to top, var(--bg-secondary) 60%, transparent);
   position: relative;
+}
+
+.stop-chat-btn {
+  width: max-content;
+  margin: 0 auto 10px;
+  padding: 7px 13px;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
+}
+
+.stop-chat-btn[hidden] {
+  display: none;
+}
+
+.stop-chat-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-accent);
+  transform: translateY(-1px);
+}
+
+.stop-chat-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.stop-chat-icon {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
 }
 
 .input-wrapper {

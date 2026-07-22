@@ -1,5 +1,7 @@
 const API_BASE = '';
 let isStreaming = false;
+let activeQueryController = null;
+let activeQueryStopHandler = null;
 let currentUser = null;
 
 // Chat state
@@ -119,15 +121,42 @@ function askQuestion(text) {
     submitQuery();
 }
 
+function setStreamingState(streaming) {
+    isStreaming = streaming;
+
+    const sendBtn = document.getElementById('sendBtn');
+    const stopBtn = document.getElementById('stopChatBtn');
+    const stopLabel = document.getElementById('stopChatLabel');
+    const chatArea = document.getElementById('chatArea');
+
+    if (sendBtn) sendBtn.disabled = streaming;
+    if (stopBtn) {
+        stopBtn.hidden = !streaming;
+        stopBtn.disabled = false;
+    }
+    if (stopLabel) stopLabel.textContent = 'Stop response';
+    if (chatArea) chatArea.setAttribute('aria-busy', String(streaming));
+}
+
+function stopChat() {
+    if (!isStreaming || !activeQueryStopHandler) return;
+
+    const stopBtn = document.getElementById('stopChatBtn');
+    const stopLabel = document.getElementById('stopChatLabel');
+    if (stopBtn) stopBtn.disabled = true;
+    if (stopLabel) stopLabel.textContent = 'Stopping…';
+
+    activeQueryStopHandler();
+}
+
 async function submitQuery() {
     const input = document.getElementById('queryInput');
     const question = input.value.trim();
     if (!question || isStreaming) return;
 
-    isStreaming = true;
+    setStreamingState(true);
     input.value = '';
     input.style.height = 'auto';
-    document.getElementById('sendBtn').disabled = true;
 
     // Remove welcome
     const welcome = document.getElementById('welcome');
@@ -149,8 +178,13 @@ async function submitQuery() {
 
     // Assistant message
     const assistantMsg = document.createElement('div');
-    assistantMsg.className = 'message message-assistant';
-    assistantMsg.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+    assistantMsg.className = 'message message-assistant message-assistant-loading';
+    assistantMsg.innerHTML = `
+        <div class="response-skeleton" role="status" aria-label="Generating response">
+            <span class="response-skeleton-line response-skeleton-line-long"></span>
+            <span class="response-skeleton-line response-skeleton-line-medium"></span>
+            <span class="response-skeleton-line response-skeleton-line-short"></span>
+        </div>`;
     chatArea.appendChild(assistantMsg);
 
     chatArea.scrollTop = chatArea.scrollHeight;
@@ -159,29 +193,59 @@ async function submitQuery() {
     const currentChat = chatThreads.find(c => c.id === currentChatId);
     const history = currentChat ? currentChat.messages.map(m => ({ role: m.role, content: m.content })) : [];
 
+    const controller = new AbortController();
+    activeQueryController = controller;
+    let fullText = '';
+    let displayedText = '';
+    let isDone = false;
+    let stoppedByUser = false;
+    let queryFinalized = false;
+
+    activeQueryStopHandler = () => {
+        if (stoppedByUser) return;
+        stoppedByUser = true;
+        queryFinalized = true;
+        controller.abort();
+
+        const stoppedText = fullText.trim()
+            ? `${fullText.trimEnd()}\n\n*Response stopped by user.*`
+            : '*Response stopped by user.*';
+        assistantMsg.classList.remove('message-assistant-loading');
+        assistantMsg.innerHTML = renderMarkdown(stoppedText);
+        saveToChatThread(currentChatId, question, stoppedText);
+        chatArea.scrollTop = chatArea.scrollHeight;
+
+        activeQueryController = null;
+        activeQueryStopHandler = null;
+        setStreamingState(false);
+    };
+
     // Stream response via SSE
     try {
         const response = await fetch(`${API_BASE}/api/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ question, history: history.length > 0 ? history : null }),
+            signal: controller.signal,
         });
+
+        if (!response.ok) {
+            throw new Error(`Request failed (${response.status})`);
+        }
+        if (!response.body) {
+            throw new Error('Streaming is not supported by this browser.');
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = '';
-        let displayedText = '';
         let buffer = '';
         let lastWasData = false;
-        let isDone = false;
-
-        assistantMsg.innerHTML = '';
 
         let lastRenderTime = 0;
         const RENDER_INTERVAL = 80; // ms — throttle markdown re-renders
 
         function typeWriter() {
-            if (!isStreaming) return;
+            if (!isStreaming || queryFinalized) return;
 
             if (displayedText.length < fullText.length) {
                 const diff = fullText.length - displayedText.length;
@@ -201,7 +265,7 @@ async function submitQuery() {
                 const now = performance.now();
                 if (now - lastRenderTime > RENDER_INTERVAL) {
                     lastRenderTime = now;
-                    const cursorHtml = '<span style="display:inline-block;width:6px;height:15px;background:var(--accent-primary);margin-left:4px;vertical-align:middle;animation:pulse 1s infinite"></span>';
+                    const cursorHtml = '<span class="response-cursor"></span>';
                     try {
                         assistantMsg.innerHTML = renderMarkdown(displayedText) + cursorHtml;
                     } catch (e) {
@@ -214,15 +278,18 @@ async function submitQuery() {
             } else if (!isDone) {
                 requestAnimationFrame(typeWriter);
             } else {
+                queryFinalized = true;
                 if (!fullText.trim()) {
                     fullText = '*No response was generated. Please try again.*';
                 }
                 assistantMsg.innerHTML = renderMarkdown(fullText);
+                assistantMsg.classList.remove('message-assistant-loading');
                 chatArea.scrollTop = chatArea.scrollHeight;
                 // Save Q/A to current chat thread
                 saveToChatThread(currentChatId, question, fullText);
-                isStreaming = false;
-                document.getElementById('sendBtn').disabled = false;
+                activeQueryController = null;
+                activeQueryStopHandler = null;
+                setStreamingState(false);
             }
         }
 
@@ -252,6 +319,10 @@ async function submitQuery() {
                     lastWasData = false;
                 } else if (line.startsWith('data: ')) {
                     const data = line.slice(6);
+                    if (data && !fullText) {
+                        assistantMsg.classList.remove('message-assistant-loading');
+                        assistantMsg.innerHTML = '';
+                    }
                     // Insert newline between consecutive data: lines (multi-line SSE data)
                     if (lastWasData && data !== '') {
                         fullText += '\n';
@@ -266,9 +337,15 @@ async function submitQuery() {
         }
 
     } catch (e) {
-        assistantMsg.innerHTML = `<p style="color:var(--danger)">Error: ${e.message}</p>`;
-        isStreaming = false;
-        document.getElementById('sendBtn').disabled = false;
+        // The stop handler already rendered and persisted the partial response.
+        if (stoppedByUser) return;
+
+        queryFinalized = true;
+        assistantMsg.classList.remove('message-assistant-loading');
+        assistantMsg.innerHTML = `<p class="response-error">Error: ${escapeHtml(e.message)}</p>`;
+        activeQueryController = null;
+        activeQueryStopHandler = null;
+        setStreamingState(false);
         chatArea.scrollTop = chatArea.scrollHeight;
     }
 }

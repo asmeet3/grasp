@@ -210,6 +210,11 @@
             </div>
 
             <div class="input-area">
+                <button class="stop-chat-btn" id="stopChatBtn" type="button" onclick="stopChat()"
+                    aria-label="Stop generating response" hidden>
+                    <span class="stop-chat-icon" aria-hidden="true"></span>
+                    <span id="stopChatLabel">Stop response</span>
+                </button>
                 <div class="input-wrapper">
                     <textarea class="input-field" id="queryInput" placeholder="Ask about your organization..." rows="1"
                         onkeydown="handleInputKeydown(event)" oninput="autoResize(this)"></textarea>
