@@ -1,5 +1,7 @@
 # Grasp
 
+![Grasp logo](src/logos/grasp-invert-transparent.png)
+
 Grasp is a self-hosted institutional knowledge assistant. It syncs content from Confluence, Jira, SharePoint, Slack, and Notion into a local Git-backed Markdown repository and a persistent ChromaDB index, then uses Anthropic Claude to answer questions with links to the source material.
 
 The application includes a browser chat experience, account approval and role management, persistent per-user chat history, a contribution workflow, scheduled connector syncs, and an admin dashboard for reviewing knowledge-repository changes before they are committed or pushed.
