@@ -1,334 +1,401 @@
 # Grasp
 
-Grasp is a self-hosted knowledge retrieval system that connects to your company's Confluence, Jira, SharePoint, Slack, and Notion instances. It periodically syncs content from these platforms into a local Git repository and a ChromaDB vector index (powered by OpenAI `text-embedding-3-large`), then uses Claude to answer natural-language questions about that content.
+Grasp is a self-hosted institutional knowledge assistant. It syncs content from Confluence, Jira, SharePoint, Slack, and Notion into a local Git-backed Markdown repository and a persistent ChromaDB index, then uses Anthropic Claude to answer questions with links to the source material.
 
-At query time, Grasp searches both the local vector index and the live platform APIs in parallel, then synthesizes a single answer with source citations.
+The application includes a browser chat experience, account approval and role management, persistent per-user chat history, a contribution workflow, scheduled connector syncs, and an admin dashboard for reviewing knowledge-repository changes before they are committed or pushed.
 
-## How It Works
+## Features
 
-Grasp has two main operating modes:
+- **Hybrid retrieval:** every question searches the historical ChromaDB index and recent content from all configured platform APIs in parallel.
+- **Agentic follow-up:** Claude can fetch full repository documents, run filtered semantic searches, or issue targeted live searches when the initial snippets are insufficient.
+- **Five connectors:** Confluence Cloud, Jira Cloud, SharePoint Online, Slack, and Notion.
+- **Resumable synchronization:** the first sync is checkpointed; later runs are incremental. A failed connector receives a full retry on the next mixed sync.
+- **Git-backed knowledge store:** documents are normalized to Markdown, classified into six knowledge types, and recorded with YAML frontmatter and generated indexes.
+- **Human review:** sync output remains as pending Git working-tree changes until an administrator approves and commits it or rejects it.
+- **Streaming chat:** answers are sent to the browser as Server-Sent Events (SSE), rendered as Markdown, and can be stopped by the user.
+- **Conversation context:** up to the latest 10 user/assistant pairs from the current thread are supplied to Claude. Authenticated users' chat threads are stored in PostgreSQL.
+- **Authentication:** email/password registration, optional Google sign-in, seven-day signed sessions, admin approval, profile settings, and ten assignable organization roles.
+- **User contributions:** users can submit text, code, Markdown, TXT, PDF, or DOCX content for admin review.
+- **Operations dashboard:** connector health, sync state/history, pending Git changes, contributions, and user approvals are available at `/admin`.
 
-**Sync** — A background scheduler pulls documents from all configured platforms on a cron schedule (configurable, defaults to five times per day). Documents are classified into one of six knowledge types using Claude Haiku, written to a Git repository as Markdown files with YAML frontmatter, and indexed into ChromaDB using OpenAI `text-embedding-3-large` embeddings. Content is split using a recursive markdown-aware chunker that respects document structure (headers → code blocks → paragraphs → sentences → words) before embedding. The initial sync supports checkpointing so it can resume if interrupted. Subsequent syncs are incremental, fetching only documents modified since the last run. After each sync, changes are staged for human review before being committed and pushed.
+## How it works
 
-**Query** — When a user asks a question, Grasp fans out search requests to the local vector index and all configured platform APIs concurrently. A coordinator agent (Claude Sonnet) receives the aggregated results and synthesizes an answer. If the initial results are insufficient, the agent can make up to four follow-up tool calls to read specific files, run filtered searches, or query individual platforms directly. Responses are streamed to the client via SSE.
+### Sync and indexing
 
-## RAG Pipeline Architecture
-
-Grasp combines vector search with live API search for comprehensive coverage.
-
-### Ingestion Pipeline
-
-```
-Platform APIs (Confluence, Jira, Slack, etc.)
-  │
-  ▼  [HTML → Markdown conversion]
-Document (title, content, metadata, URL)
-  │
-  ├──▶ sources/{platform}/{date}/file.md    (raw, append-only)
-  ├──▶ knowledge/{type}/{year}-{slug}.md    (classified by Claude Haiku)
-  ├──▶ _index/ updated (graph, tags, freshness)
-  └──▶ ChromaDB (recursive chunked → embedded via text-embedding-3-large)
-```
-
-**Recursive chunking**: Documents are split using a 7-level separator hierarchy that preserves semantic boundaries:
-
-| Priority | Separator | Purpose |
-|----------|-----------|--------|
-| 1 | `# `, `## `, `### ` | Markdown section boundaries |
-| 2 | ` ``` ` | Code block fences |
-| 3 | `---`, `***` | Horizontal rules |
-| 4 | `\n\n` | Paragraph breaks |
-| 5 | `\n` | Line breaks |
-| 6 | `. `, `! `, `? ` | Sentence endings |
-| 7 | ` ` (space) | Word boundaries |
-
-Chunks are capped at 1500 characters with 200-character overlaps on clean word boundaries. Each chunk is stored in ChromaDB with metadata linking it back to the full document (`repo_path`, `doc_id`, `source`, `url`, etc.).
-
-### Query Pipeline
-
-```
-User Question
-  │
-  ├──▶ Vector RAG (ChromaDB)          ← semantic search over all synced history
-  │      Returns top ~10 unique docs (deduplicated, best chunk per doc)
-  │
-  └──▶ Keyword RAG (Live APIs)        ← CQL/JQL/native search, last few hours
-         Confluence, Jira, Slack, SharePoint, Notion (parallel)
-  │
-  ▼  [All results aggregated]
-Claude Sonnet (Coordinator Agent)
-  │
-  ├── Synthesizes answer from all results
-  ├── Can batch-read full documents by repo_path
-  ├── Can call read_repo_file(path) for one specific document
-  ├── Can call search_knowledge_repo(query, filters) for targeted follow-ups
-  ├── Can call individual live search tools for platform-specific queries
-  └── Up to 4 follow-up tool rounds
-  │
-  ▼
-Streamed response via SSE (with source citations)
+```text
+Configured platform APIs
+        |
+        | full, incremental, or mixed sync
+        v
+Normalized Document (Markdown + metadata)
+        |
+        +--> Claude Haiku classification
+        |       decisions | projects | processes
+        |       products  | people   | topics
+        |
+        +--> knowledge_repo/sources/...       source-oriented copy
+        +--> knowledge_repo/knowledge/...     classified copy
+        +--> knowledge_repo/_index/...        graph, tags, people, freshness
+        +--> chroma_data/                      chunked semantic index
+        |
+        v
+Pending Git working-tree changes
+        |
+        +--> approve: git add + commit + optional push
+        `--> reject: restore tracked files and clean untracked files
 ```
 
-**Two-stage retrieval**: The initial fan-out returns chunk previews of up to 800 characters. If the coordinator needs more context, it can batch-read up to five full documents using their `repo_path` metadata or read one specific repository file. These reads are local and do not require GitHub or another network call.
+Connectors run concurrently. The first successful run is a full sync, using PostgreSQL checkpoints after each connector batch. Later runs request only documents changed since the previous sync timestamp. Sync history and checkpoint state are also stored in PostgreSQL.
+
+Documents are split with a Markdown-aware separator hierarchy (headings, code fences, horizontal rules, paragraphs, lines, sentences, then words). Chunks target 1,500 characters with up to 200 characters of overlap. Search results are deduplicated by document ID so only the best matching chunk from each document is returned.
+
+The vector store uses OpenAI's configured embedding model when `OPENAI_API_KEY` is set. Without it, ChromaDB's default `all-MiniLM-L6-v2` embedding function is used.
+
+### Query flow
+
+```text
+Question
+   |
+   +--> original question --> ChromaDB semantic search
+   |
+   `--> Claude Haiku query shortening (1-3 queries)
+            `--> configured live platform searches (last 4 hours)
+   |
+   v
+Claude coordinator
+   +--> cite and synthesize the retrieved sources
+   +--> optionally read up to 5 full repository documents
+   +--> optionally search the repository with source/type filters
+   `--> optionally run a targeted platform search
+   |
+   v
+SSE response stream
+```
+
+The repository search has a five-second timeout; each live connector search has a ten-second timeout. One connector failure does not prevent results from the others from reaching the coordinator.
 
 ## Requirements
 
-- Python 3.11+
-- PostgreSQL database
+- Python 3.11 or newer (the Docker image uses Python 3.12)
+- PostgreSQL 16 or another compatible PostgreSQL server
+- Git, because repository approval and rejection use Git operations
 - An Anthropic API key
-- An OpenAI API key (for `text-embedding-3-large` embeddings)
-- Credentials for at least one supported platform (Confluence, Jira, SharePoint, Slack, or Notion)
+- An admin key chosen for this deployment
+- Platform credentials for any connectors you want to enable
+- Optional: an OpenAI API key for `text-embedding-3-large`; otherwise ChromaDB uses its local default embedding model
 
-## Setup
+Grasp can start with no platform connectors, but syncing and live search will have no external sources. An existing Chroma index and its referenced Markdown files can still be queried.
 
-1. Copy the example environment file and fill in your credentials:
+## Quick start with Docker
 
-```
-cp .env.example .env
-```
+1. Create the environment file:
 
-2. Install and run locally:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-```
-pip install -e .
-python main.py
-```
+   On macOS or Linux, use `cp .env.example .env`.
 
-Or use Docker:
+2. At minimum, replace these values in `.env`:
 
-```
-docker compose up -d
-```
+   ```dotenv
+   ANTHROPIC_API_KEY=your-anthropic-api-key
+   ADMIN_KEY=choose-a-strong-random-secret
+   SESSION_SECRET=choose-another-strong-random-secret
+   ```
 
-3. Open `http://localhost:8000` for the query interface, `http://localhost:8000/admin` for the admin dashboard, or `http://localhost:8000/login` for the login/registration page.
+   Clear the example Git remote and any connector credentials you are not using. `DATABASE_URL` is overridden to the Compose PostgreSQL service automatically.
+
+3. Build and start the application and database:
+
+   ```powershell
+   docker compose up --build -d
+   docker compose logs -f grasp
+   ```
+
+4. Open:
+
+   - User application: <http://localhost:8000>
+   - Login and registration: <http://localhost:8000/login>
+   - Admin dashboard: <http://localhost:8000/admin>
+   - Interactive API documentation: <http://localhost:8000/docs>
+
+5. Register a user, enter `ADMIN_KEY` in the admin dashboard, approve the account with a role, and trigger the first sync. When it finishes, review the pending repository changes before approving the Git commit/push.
+
+The Compose setup persists PostgreSQL, the knowledge repository, ChromaDB, and Grasp's internal state in named volumes.
+
+## Run locally
+
+1. Copy `.env.example` to `.env` and set the required secrets. Keep this database URL when PostgreSQL runs on the same machine:
+
+   ```dotenv
+   DATABASE_URL=postgresql+asyncpg://grasp:grasp@localhost:5432/grasp
+   ```
+
+2. Start PostgreSQL. The included Compose database can be used independently:
+
+   ```powershell
+   docker compose up -d db
+   ```
+
+3. Create and activate a virtual environment, then install Grasp:
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install -e .
+   ```
+
+   On macOS or Linux, activate with `source .venv/bin/activate`.
+
+4. Run the server:
+
+   ```powershell
+   python main.py
+   ```
+
+Database tables are created automatically during application startup. There is no separate migration command in the current project.
 
 ## Configuration
 
-Configuration is loaded from environment variables in `.env`. See `.env.example` for the common options.
+Settings are loaded from environment variables and `.env` by `src/config.py`.
 
-### Required
+### Core settings
 
-| Variable | Description |
-|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
-| `OPENAI_API_KEY` | OpenAI API key for `text-embedding-3-large` embeddings |
-| `ADMIN_KEY` | Secret key for admin API endpoints |
-| `DATABASE_URL` | PostgreSQL connection URL (e.g. `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp`) |
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `ANTHROPIC_API_KEY` | Yes | - | Claude queries, query shortening, and document classification |
+| `ADMIN_KEY` | Yes | - | Value expected in `X-Admin-Key` for administrative API calls |
+| `DATABASE_URL` | No | `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp` | Async PostgreSQL connection URL; a reachable PostgreSQL server is still required |
+| `SESSION_SECRET` | Recommended | Falls back to `ADMIN_KEY` | Signs seven-day user session tokens |
+| `OPENAI_API_KEY` | No | Empty | Enables OpenAI embeddings instead of Chroma's default embedding model |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-large` | OpenAI embedding model used when an OpenAI key is present |
 
-### Optional — Models
+Keep the same embedding backend for an existing `chroma_data` directory. Changing between embedding models can produce incompatible vector dimensions; rebuild the Chroma data when deliberately changing backends.
 
-| Variable | Default | Description |
+### Claude models
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `AGENT_MODEL` | `claude-sonnet-4-6` | Query coordinator model |
-| `CLASSIFIER_MODEL` | `claude-haiku-4-5-20251001` | Document classification model |
-| `QUERY_SHORTENER_MODEL` | `claude-haiku-4-5-20251001` | Live-search query-shortening model |
+| `AGENT_MODEL` | `claude-sonnet-4-6` | Coordinates retrieval and writes answers |
+| `CLASSIFIER_MODEL` | `claude-haiku-4-5-20251001` | Classifies synced documents into knowledge types |
+| `QUERY_SHORTENER_MODEL` | `claude-haiku-4-5-20251001` | Converts a question into up to three live-search queries |
+| `QUERY_SHORTENER_SYSTEM_PROMPT` | Built into `Settings` | Optional override for query-shortening behavior |
 
-### Optional — Authentication
+### Storage and Git
 
-| Variable | Description |
-|---|---|
-| `GOOGLE_CLIENT_ID` | Google OAuth 2.0 Client ID (leave empty to disable Google sign-in) |
-| `SESSION_SECRET` | Secret for signing session tokens (falls back to `ADMIN_KEY` if not set) |
-
-### Optional — Git Remote
-
-| Variable | Description |
-|---|---|
-| `GITHUB_REPO_PATH` | Local path for the knowledge repo (default: `./knowledge_repo`) |
-| `GITHUB_REMOTE_URL` | Remote Git URL for pushing committed changes |
-| `GITHUB_PAT` | GitHub Personal Access Token, injected into the HTTPS remote URL |
-
-### Optional — Platform Connectors
-
-Configure only the platforms you use. Grasp auto-detects which connectors are available based on which credentials are present.
-
-| Variable | Platform |
-|---|---|
-| `CONFLUENCE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` | Confluence |
-| `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira |
-| `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` | SharePoint |
-| `SLACK_BOT_TOKEN` | Slack |
-| `NOTION_API_KEY` | Notion |
-
-### Optional — Embeddings
-
-| Variable | Default | Description |
+| Variable | Default | Purpose |
 |---|---|---|
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | OpenAI embedding model name |
+| `GITHUB_REPO_PATH` | `./knowledge_repo` | Local Git repository managed by Grasp |
+| `GITHUB_REMOTE_URL` | Empty | Optional remote to configure as `origin` |
+| `GITHUB_PAT` | Empty | Optional token inserted into an HTTPS remote URL |
 
-### Optional — Sync Schedule
+Approval always creates a local commit. If a remote is configured, Grasp first pushes the current branch. If that push fails, it creates and pushes a `grasp/sync-<timestamp>` fallback branch. No pull request is created automatically.
 
-| Variable | Default | Description |
+### Sync and server
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `SYNC_CRON_HOURS` | `[2,5,8,11,14]` | Hours (UTC) to run sync |
-| `SYNC_CRON_MINUTE` | `30` | Minute within each hour |
-| `SYNC_BATCH_SIZE` | `100` | Documents per batch during sync |
+| `SYNC_CRON_HOURS` | `[2,5,8,11,14]` | Hours passed to the APScheduler cron trigger |
+| `SYNC_CRON_MINUTE` | `30` | Minute within each configured hour |
+| `SYNC_BATCH_SIZE` | `100` | Connector documents processed per batch where supported |
+| `HOST` | `0.0.0.0` | Uvicorn bind address |
+| `PORT` | `8000` | Uvicorn port |
+| `GOOGLE_CLIENT_ID` | Empty | Enables Google registration/sign-in when set |
 
-### Optional — Server
+The Docker container normally runs in UTC, making the default schedule 02:30, 05:30, 08:30, 11:30, and 14:30 UTC (08:00, 11:00, 14:00, 17:00, and 20:00 IST). The scheduler does not explicitly set a timezone, so a local installation interprets these hours in the host timezone even though the application log labels them as UTC.
 
-| Variable | Default | Description |
+### Connectors
+
+Only connectors with credentials present are initialized.
+
+| Connector | Environment variables | Synced content |
 |---|---|---|
-| `HOST` | `0.0.0.0` | Server bind address |
-| `PORT` | `8000` | Server bind port |
+| Confluence Cloud | `CONFLUENCE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` | Pages from accessible spaces; CQL is used for incremental and live search |
+| Jira Cloud | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Accessible issues, including metadata, descriptions, and comments; JQL is used for incremental and live search |
+| SharePoint Online | `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` | Files from site drives and non-hidden list items via Microsoft Graph |
+| Slack | `SLACK_BOT_TOKEN` | Messages and thread replies from channels accessible to the bot |
+| Notion | `NOTION_API_KEY` | Pages and database metadata shared with the integration, including recursively fetched page blocks |
 
-## API
+Live searches are constrained to content updated in the last four hours. Connector access is also limited by the permissions of the supplied account, bot, app, or integration.
 
-### Authentication Endpoints
+## Application workflows
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | No | Register via email and password |
-| `POST` | `/api/auth/register/google` | No | Register or login via Google |
-| `POST` | `/api/auth/login` | No | Login via email and password |
-| `POST` | `/api/auth/login/google` | No | Login via Google ID token |
-| `GET` | `/api/auth/me` | Session | Get current user profile |
-| `GET` | `/api/auth/config` | No | Return public auth config (Google enabled, client ID) |
-| `PUT` | `/api/auth/profile` | Session | Update profile (name, DOB, profile picture) |
-| `PUT` | `/api/auth/password` | Session | Change password (invalidates all sessions) |
-| `DELETE` | `/api/auth/account` | Session | Permanently delete account |
+### Accounts and chat
 
-### Knowledge & Query Endpoints
+New email or Google accounts start in `pending_approval`. An administrator must approve the account and assign one of these roles before login succeeds: Intern, Junior Associate, Associate, Senior Associate, Team Lead, Manager, Director, Principal, Vice President, or Partner.
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/query` | No | Submit a question; returns an SSE stream |
-| `GET` | `/api/status` | No | System status, connector health, document counts |
-| `GET` | `/api/sources` | No | Document counts grouped by source and type |
+The role is organization metadata; admin API access is controlled separately by `ADMIN_KEY`. User sessions expire after seven days. Password changes increment a password version and invalidate all previous sessions.
 
-### Sync & Change Management (Admin)
+The browser stores a local cache of up to 30 chat threads and synchronizes authenticated threads to PostgreSQL. Chat context is isolated per thread. Profile settings support name and date-of-birth updates, email-account password changes, profile images, and account deletion.
 
-All admin endpoints require the `X-Admin-Key` header.
+### Sync review
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/sync/trigger` | Admin | Trigger a sync manually |
-| `GET` | `/api/sync/status` | Admin | Current sync progress and worker status |
-| `GET` | `/api/sync/history` | Admin | Past sync results |
-| `GET` | `/api/changes/pending` | Admin | Pending changeset awaiting approval |
-| `GET` | `/api/changes/diff/{path}` | Admin | Git diff for a specific pending file |
-| `POST` | `/api/changes/approve` | Admin | Commit and push pending changes |
-| `POST` | `/api/changes/reject` | Admin | Revert all pending changes |
+Scheduled or manually triggered syncs write repository files and update ChromaDB immediately. Grasp then records a pending change summary for review in the admin dashboard.
 
-### User Management (Admin)
+- **Approve:** stage every repository change, create a commit, and attempt the configured remote push.
+- **Reject:** restore tracked repository files and remove untracked repository files, except `.grasp_state/`.
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/admin/users` | Admin | List all registered users |
-| `POST` | `/api/admin/users/{id}/approve` | Admin | Approve a pending user and assign a role |
-| `POST` | `/api/admin/users/{id}/reject` | Admin | Reject a pending user |
-| `PUT` | `/api/admin/users/{id}/role` | Admin | Change an approved user's role |
+The Git decision and the vector index are not transactional: rejecting repository changes does not remove chunks that were already written to ChromaDB during the sync.
 
 ### Contributions
 
-| Method | Path | Auth | Description |
+Authenticated users can submit text/code or upload `.txt`, `.md`, `.pdf`, and `.docx` files. PDF and DOCX text is extracted on the server; the original upload is stored under `knowledge_repo/.grasp_state/contributions/`.
+
+Admins can edit, approve, or reject a pending submission. Approval classifies the content and writes it to the source and knowledge layers, where it becomes another pending Git change. In the current implementation, contribution approval does not directly index the new document in ChromaDB.
+
+## API overview
+
+FastAPI also exposes complete request/response schemas at `/docs` and `/openapi.json`.
+
+### Authentication and chats
+
+| Method | Path | Protection | Purpose |
 |---|---|---|---|
-| `POST` | `/api/contributions/submit` | No | Submit a text/document contribution |
-| `POST` | `/api/contributions/upload` | No | Upload a file (.txt, .md, .pdf, .docx) as a contribution |
-| `GET` | `/api/contributions/my` | No | List contributions for the current submitter |
-| `GET` | `/api/contributions/pending` | Admin | List all pending contributions |
-| `GET` | `/api/contributions/count` | Admin | Count of pending contributions |
-| `GET` | `/api/contributions/{id}` | Admin | Get a single contribution |
-| `PUT` | `/api/contributions/{id}` | Admin | Edit contribution content before approval |
-| `GET` | `/api/contributions/{id}/download` | No | Download the original uploaded file |
-| `POST` | `/api/contributions/{id}/approve` | Admin | Approve and write to the knowledge repo |
-| `POST` | `/api/contributions/{id}/reject` | Admin | Reject a contribution |
+| `POST` | `/api/auth/register` | Public | Register with email and password |
+| `POST` | `/api/auth/register/google` | Public | Register or sign in with a Google ID token |
+| `POST` | `/api/auth/login` | Public | Email/password login |
+| `POST` | `/api/auth/login/google` | Public | Google login |
+| `GET` | `/api/auth/config` | Public | Return whether Google sign-in is configured |
+| `GET` | `/api/auth/me` | Bearer token | Return the current profile |
+| `PUT` | `/api/auth/profile` | Bearer token | Update profile fields |
+| `PUT` | `/api/auth/password` | Bearer token | Change password and invalidate sessions |
+| `DELETE` | `/api/auth/account` | Bearer token | Delete the current account |
+| `GET` | `/api/chats` | Bearer token | List the current user's chat threads |
+| `POST` | `/api/chats` | Bearer token | Create or update a chat thread |
+| `DELETE` | `/api/chats/{chat_id}` | Bearer token | Delete one owned chat thread |
 
-## Authentication & Access Control
+Bearer tokens are sent as `Authorization: Bearer <token>`.
 
-- **Registration**: Users sign up with email/password or via Google OAuth. New accounts are held in `pending_approval` status until an admin approves them.
-- **Roles**: Admins assign one of ten predefined roles on approval (Intern, Junior Associate, Associate, Senior Associate, Team Lead, Manager, Director, Principal, Vice President, Partner).
-- **Sessions**: Authenticated via signed bearer tokens (7-day expiry). Password changes invalidate all existing sessions.
-- **Google sign-in**: Enabled when `GOOGLE_CLIENT_ID` is set. The `GET /api/auth/config` endpoint exposes this to the frontend.
+### Query and status
 
-## Contributions
+| Method | Path | Protection | Purpose |
+|---|---|---|---|
+| `POST` | `/api/query` | Public route | Stream an answer as SSE; accepts `question` and optional `history` |
+| `GET` | `/api/status` | Public | System state, connector health, sync timing, repository counts, and vector statistics |
+| `GET` | `/api/sources` | Public | Counts grouped by source and knowledge type |
 
-Users can submit content to the knowledge repository without connector access.
+The browser application redirects unauthenticated visitors to `/login`, but the `/api/query` route itself currently has no bearer-token dependency.
 
-- Submit text, code snippets, or upload files (.txt, .md, .pdf, .docx). PDFs and DOCX files are parsed server-side.
-- Submitted contributions enter a `pending` queue visible in the admin dashboard.
-- Admins can edit the content, add notes, then approve or reject. Approved contributions are classified by Claude Haiku and written into the Git-backed knowledge repo.
+### Administration
 
-## Knowledge Repository Layout
+All endpoints below require `X-Admin-Key: <ADMIN_KEY>`.
 
-The repository uses a three-layer structure managed automatically by Grasp:
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/sync/trigger` | Start a background sync |
+| `GET` | `/api/sync/status` | Read current workers and sync progress |
+| `GET` | `/api/sync/history` | Return up to 100 stored sync runs |
+| `GET` | `/api/changes/pending` | Get the pending Git change summary |
+| `GET` | `/api/changes/diff/{path}` | View a tracked diff or generated new-file diff |
+| `POST` | `/api/changes/approve` | Commit pending changes and optionally push |
+| `POST` | `/api/changes/reject` | Revert all pending repository changes |
+| `GET` | `/api/admin/users` | List registered users |
+| `POST` | `/api/admin/users/{id}/approve` | Approve a user and assign a role |
+| `POST` | `/api/admin/users/{id}/reject` | Reject or revoke a user |
+| `PUT` | `/api/admin/users/{id}/role` | Change an approved user's role |
+| `GET` | `/api/contributions/pending` | List pending contributions |
+| `GET` | `/api/contributions/count` | Count pending contributions |
+| `GET` | `/api/contributions/{id}` | Read one contribution |
+| `PUT` | `/api/contributions/{id}` | Edit a pending contribution |
+| `POST` | `/api/contributions/{id}/approve` | Approve and write a contribution |
+| `POST` | `/api/contributions/{id}/reject` | Reject a contribution |
 
-```
+### Contribution submission
+
+| Method | Path | Protection | Purpose |
+|---|---|---|---|
+| `POST` | `/api/contributions/submit` | Public; bearer optional | Submit text, code, or a document body |
+| `POST` | `/api/contributions/upload` | Public; bearer optional | Upload TXT, Markdown, PDF, or DOCX |
+| `GET` | `/api/contributions/my` | Public | Find submissions by query-string name or the `grasp_user` cookie |
+| `GET` | `/api/contributions/{id}/download` | Public | Download an original uploaded file |
+
+When a valid bearer token is supplied, the server uses the account's name instead of the submitted name.
+
+## Knowledge repository layout
+
+```text
 knowledge_repo/
-  sources/          Raw ingestion — append-only, immutable after write
-    confluence/
-    jira/
-    slack/
-    docs/
-    emails/
-    meetings/
-  knowledge/        Structured, curated knowledge units
-    decisions/      ADRs, meeting notes, RFCs, design reviews
-    projects/       Feature specs, PRDs, user stories, epics
-    processes/      Runbooks, SOPs, deployment guides, test plans
-    products/       Product areas, roadmaps, strategy, OKRs
-    people/         Expertise profiles (opt-in)
-    topics/         Cross-cutting themes — architecture, incidents, discussions, references
-  teams/            Team-scoped spaces
-  _index/           Auto-generated retrieval layer (graph, tags, embeddings, freshness)
-  _schema/          Frontmatter schemas and source-connector configs
+  .grasp_state/              Internal pending state and uploaded originals (Git-ignored)
+  sources/                   Source-oriented Markdown copies
+    confluence/YYYY-MM/
+    jira/<project>/
+    slack/YYYY-MM/
+    docs/notion/
+    docs/sharepoint/
+    docs/user_contribution/
+  knowledge/                 Classified Markdown copies
+    decisions/
+    projects/
+    processes/
+    products/
+    people/
+    topics/
+      architecture/
+      incidents/
+      discussions/
+      references/
+      security/
+      infrastructure/
+      general/
+  _index/                    Generated graph, tag, people, and freshness JSON
+  _schema/                   Frontmatter and connector schema files
+  teams/                     Reserved team-scoped spaces
 ```
 
-Each file includes YAML frontmatter with the document's ID, source platform, title, URL, classification, and last-updated timestamp. Claude Haiku classifies incoming documents into one of the six `knowledge/` categories at ingest time.
+Source and knowledge paths are derived from source-specific metadata, document titles, dates, project keys, and classification. A later sync can therefore rewrite an existing path; the Git history is the audit trail after changes are approved.
 
-## Project Structure
+## Project structure
 
-```
-main.py                          Entry point
+```text
+main.py                        Composition root and Uvicorn entry point
 src/
-  config.py                      Pydantic settings loaded from .env
-  database.py                    Async PostgreSQL via SQLAlchemy (users, contributions, sync state, checkpoints)
-  auth.py                        User registration, login, session management, and Google OAuth
-  contributions.py               User contribution submission, review, and approval workflow
-  connectors/
-    base.py                      BaseConnector interface, Document model, rate limiter
-    confluence.py                Confluence REST API connector
-    jira.py                      Jira REST API connector
-    sharepoint.py                SharePoint (Microsoft Graph) connector
-    slack.py                     Slack Web API connector
-    notion.py                    Notion API connector
-  sync/
-    orchestrator.py              Parallel sync across all connectors
-    scheduler.py                 APScheduler-based cron scheduling
-    checkpoints.py               Resumable sync state persistence
-  repo/
-    manager.py                   Git repo management, document classification, change approval
-  index/
-    vector_store.py              ChromaDB indexing, OpenAI embeddings, recursive markdown chunking, and semantic search
-  agent/
-    engine.py                    Claude-powered query coordinator with tool use
-    sub_agents.py                Parallel search fan-out with timeout and error handling
-    tools.py                     Tool definitions and executor for the coordinator agent
+  config.py                    Pydantic environment settings
+  database.py                  PostgreSQL tables and initialization
+  auth.py                      Accounts, sessions, Google auth, and roles
+  chat_manager.py              Per-user PostgreSQL chat persistence
+  contributions.py             Submission and review workflow
   api/
-    server.py                    FastAPI application and route definitions
-    models.py                    Pydantic request/response models
-  static/
-    index.html                   Query interface
-    admin.html                   Admin dashboard
-    login.html                   Login and registration page
-    styles.css                   Shared styles
-    app.js                       Query interface logic
-    admin.js                     Admin dashboard logic
-    login.js                     Login/registration logic
+    server.py                  FastAPI routes, static pages, and SSE endpoint
+    models.py                  API request/response models
+  agent/
+    engine.py                  Claude coordinator and conversation handling
+    query_shortener.py         Live-search query decomposition
+    sub_agents.py              Parallel repository/live search dispatcher
+    tools.py                   Coordinator tool definitions and execution
+  connectors/                  Confluence, Jira, SharePoint, Slack, and Notion clients
+  index/vector_store.py        ChromaDB indexing, chunking, and semantic search
+  repo/manager.py              Repository layout, classification, Git review, and indexes
+  sync/                        Scheduler, orchestration, and PostgreSQL checkpoints
+  static/                      Chat, login, and admin HTML/CSS/JavaScript
+Dockerfile                     Python 3.12 application image
+docker-compose.yml             Application, PostgreSQL, health checks, and volumes
+pyproject.toml                 Package metadata and dependencies
 ```
 
-## Tech Stack
+## Technology stack
 
-| Component | Technology |
+| Area | Implementation |
 |---|---|
-| LLM | Anthropic Claude (Sonnet 4.6 for queries, Haiku 4.5 for classification and query shortening) |
-| Embeddings | OpenAI `text-embedding-3-large` (3072 dimensions) |
-| Vector database | ChromaDB (cosine similarity) |
-| Relational database | PostgreSQL (async via SQLAlchemy + asyncpg) |
-| Git operations | GitPython |
-| Scheduler | APScheduler 3.x |
-| HTTP server | FastAPI + Uvicorn |
-| HTTP client | httpx (async) |
-| Auth | bcrypt + itsdangerous (session tokens), Google OAuth |
-| File parsing | PyPDF2 (PDF), python-docx (DOCX) |
-| Frontend | HTML, CSS, JavaScript |
-| Deployment | Docker |
+| Coordinator/classifier | Anthropic Claude via the `anthropic` Python SDK |
+| Embeddings | OpenAI embeddings or ChromaDB's default local embedding function |
+| Vector database | Persistent ChromaDB with cosine distance |
+| Relational data | PostgreSQL + SQLAlchemy asyncio + asyncpg |
+| API/streaming | FastAPI, Uvicorn, and `sse-starlette` |
+| Scheduling | APScheduler 3.x |
+| Knowledge versioning | GitPython and the system Git executable |
+| Connector HTTP | `httpx` with rate-limit retry support |
+| Document conversion | Beautiful Soup, markdownify, PyPDF2, and python-docx |
+| Authentication | bcrypt and itsdangerous; optional Google token verification |
+| Frontend | Static HTML, CSS, and JavaScript served by FastAPI |
+
+## Development checks
+
+The repository currently has no committed automated test suite. Useful local checks are:
+
+```powershell
+python -m compileall main.py src
+ruff check .
+```
+
+Install the optional development dependencies with `python -m pip install -e ".[dev]"` before running Ruff or adding pytest coverage.
