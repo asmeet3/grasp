@@ -62,35 +62,44 @@
                                         <path d="m7 9 5-5 5 5" />
                                     </svg>
                                 </button>
-                                <div class="sidebar-user-dropdown" id="adminMenuDropdown" style="display:none; top: calc(100% + 8px); bottom: auto;">
-                                    <div class="sidebar-user-dropdown-header">
-                                        <div class="sidebar-user-avatar sidebar-user-avatar-sm"
-                                            style="background:linear-gradient(135deg, #00CCFF, #0098c0); color: #fff;">A
-                                        </div>
-                                        <div>
-                                            <div class="sidebar-user-dropdown-name">Admin</div>
-                                            <div class="sidebar-user-dropdown-role"><span
-                                                    class="role-pill role-admin">System Administrator</span></div>
+                                <div class="dropdown-menu-content dropdown-side-bottom" id="adminMenuDropdown">
+                                    <div class="dropdown-menu-group">
+                                        <div class="dropdown-menu-label">Admin</div>
+                                        <div class="dropdown-menu-item" style="pointer-events:none; padding: 6px 12px;">
+                                            <div class="sidebar-user-avatar sidebar-user-avatar-sm"
+                                                style="background:linear-gradient(135deg, #00CCFF, #0098c0); color: #fff;">
+                                                A
+                                            </div>
+                                            <div>
+                                                <div style="font-weight:600;color:var(--text-primary);font-size:13px">
+                                                    Admin</div>
+                                                <div style="font-size:11px;color:var(--text-tertiary)"><span
+                                                        class="role-pill role-admin">System Administrator</span></div>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="sidebar-user-dropdown-sep"></div>
-                                    <button class="sidebar-user-dropdown-item"
-                                        onclick="toggleTheme(); event.stopPropagation();">
-                                        <span class="theme-menu-icon" id="themeMenuIcon">🌙</span> <span
-                                            id="themeMenuLabel">Light Mode</span>
-                                    </button>
-                                    <div class="sidebar-user-dropdown-sep"></div>
-                                    <button class="sidebar-user-dropdown-item sidebar-user-dropdown-danger"
-                                        onclick="adminLogout()">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                            <polyline points="16 17 21 12 16 7" />
-                                            <line x1="21" y1="12" x2="9" y2="12" />
-                                        </svg>
-                                        <span>Sign Out</span>
-                                    </button>
+                                    <div class="dropdown-menu-separator"></div>
+                                    <div class="dropdown-menu-group">
+                                        <button class="dropdown-menu-item"
+                                            onclick="toggleTheme(); event.stopPropagation();">
+                                            <span class="theme-menu-icon" id="themeMenuIcon">🌙</span> <span
+                                                id="themeMenuLabel">Light Mode</span>
+                                        </button>
+                                    </div>
+                                    <div class="dropdown-menu-separator"></div>
+                                    <div class="dropdown-menu-group">
+                                        <button class="dropdown-menu-item dropdown-menu-item-destructive"
+                                            onclick="adminLogout()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                                <polyline points="16 17 21 12 16 7" />
+                                                <line x1="21" y1="12" x2="9" y2="12" />
+                                            </svg>
+                                            <span>Sign Out</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -208,7 +217,7 @@
                                 class="theme-icon-dark" alt="Users"><img src="/icons/usermanagement-light.svg"
                                 class="theme-icon-light" alt="Users"> <span style="margin-left:6px">User
                                 Management</span></h3>
-                        <div id="usersCard" class="admin-card">
+                        <div id="usersCard" class="admin-card" style="display: block;">
                             <p style="color:var(--text-secondary)">Loading users...</p>
                         </div>
                     </div>
@@ -216,7 +225,7 @@
                     <!-- Screen: Contributions -->
                     <div id="screenContributions" class="admin-screen" style="display:none">
                         <h3 class="admin-section-title">✦ Contribution Requests</h3>
-                        <div id="contributionsCard" class="admin-card">
+                        <div id="contributionsCard" class="admin-card" style="display: block;">
                             <p style="color:var(--text-secondary)">Loading contributions...</p>
                         </div>
                     </div>
@@ -247,7 +256,7 @@
     <div class="modal-overlay" id="contributionReviewModal">
         <div class="modal" style="max-width:800px">
             <div class="modal-header">
-                <h2>🗒 Review Contribution</h2>
+                <h2>Review Contribution</h2>
                 <button class="modal-close" onclick="closeContributionReview()">✕</button>
             </div>
             <div class="modal-body" id="contributionReviewBody">
@@ -258,14 +267,34 @@
                     <textarea class="admin-notes-textarea" id="contributionAdminNotes"
                         placeholder="Admin notes (optional — visible to the submitter)..." rows="2"></textarea>
                 </div>
-                <button class="reject-btn" onclick="rejectContribution()">✗ Reject</button>
+                <button class="reject-btn" onclick="rejectContribution()">Reject</button>
                 <button class="approve-btn" id="saveContributionBtn" onclick="saveContributionEdits()"
-                    style="background:var(--accent-primary)">💾 Save Edits</button>
-                <button class="approve-btn" onclick="approveContribution()">✓ Approve & Add</button>
+                    style="background:var(--accent-primary)">Save Edits</button>
+                <button class="approve-btn" onclick="approveContribution()">Approve & Add</button>
             </div>
         </div>
     </div>
 
+    <!-- Role Confirmation Modal -->
+    <div class="modal-overlay" id="roleConfirmModal">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+                <h2>Confirm Role Change</h2>
+                <button class="modal-close" onclick="closeRoleConfirmModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p id="roleConfirmText" style="color:var(--text-secondary);font-size:14px;margin-bottom:16px"></p>
+            </div>
+            <div class="modal-footer" style="justify-content:flex-end;gap:12px">
+                <button class="reject-btn"
+                    style="background:transparent;border:1px solid var(--border);color:var(--text-primary)"
+                    onclick="closeRoleConfirmModal()">Cancel</button>
+                <button class="approve-btn" id="roleConfirmBtn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer"></div>
     <script src="/static/admin.js"></script>
 </body>
 

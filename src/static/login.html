@@ -89,9 +89,39 @@
                         </div>
                     </div>
                     <div class="login-field">
-                        <label class="login-label" for="regDob">Date of Birth</label>
-                        <input type="text" class="login-input" id="regDob" placeholder="DD / MM / YYYY" required
-                            pattern="\d{2}\s*/\s*\d{2}\s*/\s*\d{4}" autocomplete="bday">
+                        <label class="login-label" for="regDobTrigger">Date of Birth</label>
+                        <input type="hidden" id="regDob" value="">
+                        <div class="date-picker-wrapper" id="dobPickerWrapper">
+                            <button type="button" class="date-picker-trigger" id="regDobTrigger"
+                                onclick="toggleDobPicker(event)">
+                                <span class="date-picker-placeholder" id="dobDisplayText">Select date</span>
+                                <span class="date-picker-chevron">▾</span>
+                            </button>
+                            <div class="date-picker-popover" id="dobPickerPopover">
+                                <div class="date-picker-header">
+                                    <button type="button" class="date-picker-nav-btn" onclick="dobNavMonth(-1, event)">‹</button>
+                                    <div class="date-picker-selectors">
+                                        <select class="date-picker-select" id="dobMonthSelect"
+                                            onchange="dobChangeMonth(event)"></select>
+                                        <select class="date-picker-select" id="dobYearSelect"
+                                            onchange="dobChangeYear(event)"></select>
+                                    </div>
+                                    <button type="button" class="date-picker-nav-btn" onclick="dobNavMonth(1, event)">›</button>
+                                </div>
+                                <div class="date-picker-grid">
+                                    <div class="date-picker-weekdays">
+                                        <div class="date-picker-weekday">Su</div>
+                                        <div class="date-picker-weekday">Mo</div>
+                                        <div class="date-picker-weekday">Tu</div>
+                                        <div class="date-picker-weekday">We</div>
+                                        <div class="date-picker-weekday">Th</div>
+                                        <div class="date-picker-weekday">Fr</div>
+                                        <div class="date-picker-weekday">Sa</div>
+                                    </div>
+                                    <div class="date-picker-days" id="dobCalendarDays"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="login-field">
                         <label class="login-label" for="regEmail">Email</label>

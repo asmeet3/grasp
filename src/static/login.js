@@ -49,31 +49,176 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// ── DOB Auto-Formatting ──────────────────────────────────
+// ── Date of Birth Picker ─────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
-    const dobInput = document.getElementById('regDob');
-    if (dobInput) {
-        dobInput.addEventListener('input', (e) => {
-            let val = e.target.value.replace(/[^\d]/g, ''); // strip non-digits
-            let formatted = '';
-            if (val.length > 0) formatted += val.substring(0, 2);
-            if (val.length > 2) formatted += ' / ' + val.substring(2, 4);
-            if (val.length > 4) formatted += ' / ' + val.substring(4, 8);
-            e.target.value = formatted;
-        });
+let dobViewMonth = 0; // 0-indexed month currently displayed
+let dobViewYear = 2000; // year currently displayed  
+let dobSelectedDate = null; // { day, month, year } or null
+
+const DOB_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+function initDobPicker() {
+    const now = new Date();
+    dobViewMonth = now.getMonth();
+    dobViewYear = now.getFullYear() - 20; // Default to ~20 years ago
+    populateDobSelectors();
+    renderDobCalendar();
+}
+
+function populateDobSelectors() {
+    const monthSelect = document.getElementById('dobMonthSelect');
+    const yearSelect = document.getElementById('dobYearSelect');
+    if (!monthSelect || !yearSelect) return;
+
+    // Months
+    monthSelect.innerHTML = DOB_MONTHS.map((m, i) =>
+        `<option value="${i}" ${i === dobViewMonth ? 'selected' : ''}>${m}</option>`
+    ).join('');
+
+    // Years (1920 to current year)
+    const currentYear = new Date().getFullYear();
+    let yearOpts = '';
+    for (let y = currentYear; y >= 1920; y--) {
+        yearOpts += `<option value="${y}" ${y === dobViewYear ? 'selected' : ''}>${y}</option>`;
+    }
+    yearSelect.innerHTML = yearOpts;
+}
+
+function renderDobCalendar() {
+    const container = document.getElementById('dobCalendarDays');
+    if (!container) return;
+
+    const today = new Date();
+    const firstDay = new Date(dobViewYear, dobViewMonth, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(dobViewYear, dobViewMonth + 1, 0).getDate();
+
+    let html = '';
+
+    // Empty cells before first day
+    for (let i = 0; i < firstDay; i++) {
+        html += '<button type="button" class="date-picker-day date-picker-day-empty" disabled></button>';
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const isToday = d === today.getDate() && dobViewMonth === today.getMonth() && dobViewYear === today.getFullYear();
+        const isSelected = dobSelectedDate &&
+            d === dobSelectedDate.day && dobViewMonth === (dobSelectedDate.month - 1) && dobViewYear === dobSelectedDate.year;
+        const isFuture = new Date(dobViewYear, dobViewMonth, d) > today;
+
+        let cls = 'date-picker-day';
+        if (isToday) cls += ' date-picker-day-today';
+        if (isSelected) cls += ' date-picker-day-selected';
+        if (isFuture) cls += ' date-picker-day-disabled';
+
+        html += `<button type="button" class="${cls}" ${isFuture ? 'disabled' : ''}
+            onclick="selectDobDate(${d}, event)">${d}</button>`;
+    }
+
+    container.innerHTML = html;
+
+    // Update selectors to reflect current view
+    const monthSelect = document.getElementById('dobMonthSelect');
+    const yearSelect = document.getElementById('dobYearSelect');
+    if (monthSelect) monthSelect.value = dobViewMonth;
+    if (yearSelect) yearSelect.value = dobViewYear;
+}
+
+function selectDobDate(day, event) {
+    if (event) event.preventDefault();
+    dobSelectedDate = {
+        day,
+        month: dobViewMonth + 1,
+        year: dobViewYear,
+        iso: `${dobViewYear}-${String(dobViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    };
+
+    // Update hidden input
+    const hiddenInput = document.getElementById('regDob');
+    if (hiddenInput) hiddenInput.value = dobSelectedDate.iso;
+
+    // Update trigger display
+    const display = document.getElementById('dobDisplayText');
+    if (display) {
+        display.textContent = `${String(day).padStart(2, '0')} / ${String(dobSelectedDate.month).padStart(2, '0')} / ${dobViewYear}`;
+        display.classList.remove('date-picker-placeholder');
+        display.style.color = 'var(--text-primary)';
+    }
+
+    // Close popover
+    closeDobPicker();
+}
+
+function toggleDobPicker(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const popover = document.getElementById('dobPickerPopover');
+    if (!popover) return;
+
+    const isOpen = popover.classList.contains('date-picker-open');
+    if (isOpen) {
+        closeDobPicker();
+    } else {
+        initDobPicker();
+        popover.classList.add('date-picker-open');
+    }
+}
+
+function closeDobPicker() {
+    const popover = document.getElementById('dobPickerPopover');
+    if (popover) popover.classList.remove('date-picker-open');
+}
+
+function dobNavMonth(delta, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    dobViewMonth += delta;
+    if (dobViewMonth < 0) { dobViewMonth = 11; dobViewYear--; }
+    if (dobViewMonth > 11) { dobViewMonth = 0; dobViewYear++; }
+    renderDobCalendar();
+}
+
+function dobChangeMonth(event) {
+    event.stopPropagation();
+    dobViewMonth = parseInt(event.target.value, 10);
+    renderDobCalendar();
+}
+
+function dobChangeYear(event) {
+    event.stopPropagation();
+    dobViewYear = parseInt(event.target.value, 10);
+    renderDobCalendar();
+}
+
+// Close DOB picker on outside click
+document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('dobPickerWrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        closeDobPicker();
     }
 });
 
 function parseDob(dobStr) {
-    /** Parse DD / MM / YYYY → { day, month, year } or null. */
-    const match = dobStr.match(/^(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})$/);
+    /** Parse ISO date (YYYY-MM-DD) or DD / MM / YYYY → { day, month, year, iso } or null. */
+    // Try ISO format first (from date picker)
+    let match = dobStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+        const year = parseInt(match[1], 10);
+        const month = parseInt(match[2], 10);
+        const day = parseInt(match[3], 10);
+        if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > new Date().getFullYear()) return null;
+        const date = new Date(year, month - 1, day);
+        if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+        return { day, month, year, iso: dobStr };
+    }
+    // Fallback: DD / MM / YYYY
+    match = dobStr.match(/^(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})$/);
     if (!match) return null;
     const day = parseInt(match[1], 10);
     const month = parseInt(match[2], 10);
     const year = parseInt(match[3], 10);
     if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > new Date().getFullYear()) return null;
-    // Quick validity check
     const date = new Date(year, month - 1, day);
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
     return { day, month, year, iso: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` };
@@ -240,7 +385,7 @@ async function handleRegister(e) {
 
     const parsedDob = parseDob(dob);
     if (!parsedDob) {
-        showError('Please enter a valid date of birth in DD / MM / YYYY format');
+        showError('Please select your date of birth');
         return;
     }
 

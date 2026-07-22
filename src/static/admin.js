@@ -87,16 +87,24 @@ function toggleAdminMenu(event) {
     event.stopPropagation();
     const dropdown = document.getElementById('adminMenuDropdown');
     if (!dropdown) return;
-    const isVisible = dropdown.style.display !== 'none';
-    dropdown.style.display = isVisible ? 'none' : 'block';
+    dropdown.classList.toggle('dropdown-menu-open');
 }
 
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('adminMenuDropdown');
     const btn = document.getElementById('adminMenuBtn');
-    if (dropdown && btn && !btn.contains(e.target)) {
-        dropdown.style.display = 'none';
+    if (dropdown && btn && !btn.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.classList.remove('dropdown-menu-open');
     }
+    // Close any open data table action dropdowns
+    document.querySelectorAll('.dropdown-menu-content.dropdown-menu-open').forEach(dd => {
+        if (!dd.closest('.sidebar-menu-item') && !dd.contains(e.target)) {
+            const trigger = dd.previousElementSibling;
+            if (!trigger || !trigger.contains(e.target)) {
+                dd.classList.remove('dropdown-menu-open');
+            }
+        }
+    });
 });
 
 function showAdminDashboard() {
@@ -106,7 +114,7 @@ function showAdminDashboard() {
     checkPendingChanges();
     checkContributionCount();
     checkUserPendingCount();
-    
+
     // Default to Home screen
     showAdminScreen('Home');
 
@@ -601,7 +609,24 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// ── User Management ───────────────────────────────────────
+// ── User Management (Data Table) ──────────────────────────
+
+let usersPage = 0;
+const USERS_PER_PAGE = 10;
+let usersFilterText = '';
+let usersSortCol = 'status';
+let usersSortAsc = true;
+let allUsersData = [];
+
+function toggleActionDropdown(event, id) {
+    event.stopPropagation();
+    // Close all other open dropdowns first
+    document.querySelectorAll('.dropdown-menu-content.dropdown-menu-open').forEach(dd => {
+        if (dd.id !== id) dd.classList.remove('dropdown-menu-open');
+    });
+    const dd = document.getElementById(id);
+    if (dd) dd.classList.toggle('dropdown-menu-open');
+}
 
 async function loadUsers() {
     const card = document.getElementById('usersCard');
@@ -614,77 +639,197 @@ async function loadUsers() {
             return;
         }
         const data = await res.json();
-        const users = data.users || [];
+        allUsersData = data.users || [];
 
-        if (!users.length) {
-            card.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No registered users yet</p></div>';
+        if (!allUsersData.length) {
+            card.innerHTML = '<div class="data-table-empty">No registered users yet</div>';
             return;
         }
 
-        const statusOrder = { pending_approval: 0, approved: 1, rejected: 2 };
-        users.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
-
-        const ALL_ROLES = [
-            'Intern',
-            'Junior Associate',
-            'Associate',
-            'Senior Associate',
-            'Team Lead',
-            'Manager',
-            'Director',
-            'Principal',
-            'Vice President',
-            'Partner',
-        ];
-
-        let html = '<div class="users-list">';
-        for (const u of users) {
-            const statusClass = u.status === 'approved' ? 'approved' : u.status === 'rejected' ? 'rejected' : 'pending';
-            const statusLabel = u.status === 'pending_approval' ? 'Pending' : u.status.charAt(0).toUpperCase() + u.status.slice(1);
-            const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '—';
-            const initials = (u.first_name || '?')[0].toUpperCase();
-            const joinedAt = u.created_at ? timeAgo(u.created_at) : '—';
-            const authIcon = u.auth_method === 'google' ? '🔵' : '✉️';
-
-            html += `<div class="user-card">
-                <div class="user-card-header">
-                    <div class="user-card-avatar">${initials}</div>
-                    <div class="user-card-info">
-                        <div class="user-card-name">${escapeHtml(fullName)}</div>
-                        <div class="user-card-email">${authIcon} ${escapeHtml(u.email)}</div>
-                    </div>
-                    <span class="contribution-status-pill ${statusClass}">${statusLabel}</span>
-                </div>
-                <div class="user-card-meta">
-                    <span>Joined ${joinedAt}</span>
-                    ${u.role ? `<span>Role: <strong>${escapeHtml(u.role)}</strong></span>` : ''}
-                </div>
-                <div class="user-card-actions">`;
-
-            if (u.status === 'pending_approval') {
-                const pendingRoleOptions = `<option value="" disabled selected>— Select Role —</option>` +
-                    ALL_ROLES.map(r => `<option value="${r}">${r}</option>`).join('');
-                html += `<select class="user-role-select" id="role-${u.id}">${pendingRoleOptions}</select>
-                    <button class="approve-btn" style="font-size:12px;padding:6px 14px" onclick="approveUserAction('${u.id}')">✓ Approve</button>
-                    <button class="reject-btn" style="font-size:12px;padding:6px 14px" onclick="rejectUserAction('${u.id}')">✗ Reject</button>`;
-            } else if (u.status === 'approved') {
-                const approvedRoleOptions = ALL_ROLES.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('');
-                html += `<select class="user-role-select" id="role-${u.id}">
-                    ${approvedRoleOptions}
-                </select>
-                    <button class="approve-btn" style="font-size:12px;padding:6px 14px;background:var(--bg-glass);color:var(--text-secondary)" onclick="changeRoleAction('${u.id}')">Update Role</button>
-                    <button class="reject-btn" style="font-size:12px;padding:6px 14px" onclick="rejectUserAction('${u.id}')">Revoke</button>`;
-            } else {
-                html += `<span style="color:var(--text-tertiary);font-size:12px">Account rejected</span>`;
-            }
-
-            html += `</div></div>`;
-        }
-        html += '</div>';
-        card.innerHTML = html;
-
+        renderUsersTable();
     } catch (e) {
         card.innerHTML = `<p style="color:var(--danger)">Error loading users: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+function renderUsersTable() {
+    const card = document.getElementById('usersCard');
+
+    const ALL_ROLES = [
+        'Intern', 'Junior Associate', 'Associate', 'Senior Associate',
+        'Team Lead', 'Manager', 'Director', 'Principal', 'Vice President', 'Partner',
+    ];
+
+    const statusOrder = { pending_approval: 0, approved: 1, rejected: 2 };
+
+    // Capture focus state
+    const searchInput = card.querySelector('.data-table-search');
+    const focusActive = document.activeElement === searchInput;
+    const cursorStart = searchInput ? searchInput.selectionStart : 0;
+    const cursorEnd = searchInput ? searchInput.selectionEnd : 0;
+
+    // Filter
+    let filtered = allUsersData;
+    if (usersFilterText) {
+        const q = usersFilterText.toLowerCase();
+        filtered = allUsersData.filter(u => {
+            const name = `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase();
+            return name.includes(q) || (u.email || '').toLowerCase().includes(q);
+        });
+    }
+
+    // Sort
+    filtered.sort((a, b) => {
+        let va, vb;
+        if (usersSortCol === 'status') {
+            va = statusOrder[a.status] ?? 9;
+            vb = statusOrder[b.status] ?? 9;
+        } else if (usersSortCol === 'name') {
+            va = `${a.first_name || ''} ${a.last_name || ''}`.toLowerCase();
+            vb = `${b.first_name || ''} ${b.last_name || ''}`.toLowerCase();
+        } else if (usersSortCol === 'email') {
+            va = (a.email || '').toLowerCase();
+            vb = (b.email || '').toLowerCase();
+        } else if (usersSortCol === 'joined') {
+            va = a.created_at || '';
+            vb = b.created_at || '';
+        } else {
+            va = a[usersSortCol] || '';
+            vb = b[usersSortCol] || '';
+        }
+        if (va < vb) return usersSortAsc ? -1 : 1;
+        if (va > vb) return usersSortAsc ? 1 : -1;
+        return 0;
+    });
+
+    // Paginate
+    const totalPages = Math.ceil(filtered.length / USERS_PER_PAGE);
+    if (usersPage >= totalPages) usersPage = Math.max(0, totalPages - 1);
+    const pageItems = filtered.slice(usersPage * USERS_PER_PAGE, (usersPage + 1) * USERS_PER_PAGE);
+
+    const sortIcon = (col) => {
+        if (usersSortCol !== col) return '<span class="sort-icon">↕</span>';
+        return usersSortAsc ? '<span class="sort-icon">↑</span>' : '<span class="sort-icon">↓</span>';
+    };
+    const sortClass = (col) => {
+        let cls = 'sortable';
+        if (usersSortCol === col) cls += usersSortAsc ? ' sort-asc' : ' sort-desc';
+        return cls;
+    };
+
+    let html = `
+        <div class="data-table-toolbar">
+            <input type="text" class="data-table-search" placeholder="Filter by name or email..."
+                value="${escapeHtml(usersFilterText)}" oninput="usersFilterText=this.value;usersPage=0;renderUsersTable()">
+        </div>
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width:25%" class="${sortClass('name')}" onclick="usersSortCol='name';usersSortAsc=usersSortCol==='name'?!usersSortAsc:true;renderUsersTable()">Name ${sortIcon('name')}</th>
+                        <th style="width:25%" class="${sortClass('email')}" onclick="usersSortCol='email';usersSortAsc=usersSortCol==='email'?!usersSortAsc:true;renderUsersTable()">Email ${sortIcon('email')}</th>
+                        <th style="width:10%">Auth</th>
+                        <th style="width:15%">Role</th>
+                        <th style="width:15%" class="${sortClass('status')}" onclick="usersSortCol='status';usersSortAsc=usersSortCol==='status'?!usersSortAsc:true;renderUsersTable()">Status ${sortIcon('status')}</th>
+                        <th style="width:10%" class="${sortClass('joined')}" onclick="usersSortCol='joined';usersSortAsc=usersSortCol==='joined'?!usersSortAsc:true;renderUsersTable()">Joined ${sortIcon('joined')}</th>
+                        <th style="width:50px"></th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+    if (pageItems.length === 0) {
+        html += `<tr><td colspan="7" class="data-table-empty">No results.</td></tr>`;
+    }
+
+    for (const u of pageItems) {
+        const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '—';
+        const initials = (u.first_name || '?')[0].toUpperCase();
+        const avatarContent = u.profile_picture ? `<img src="${u.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials;
+        const statusClass = u.status === 'approved' ? 'status-approved' : u.status === 'rejected' ? 'status-rejected' : 'status-pending';
+        const statusLabel = u.status === 'pending_approval' ? 'Pending' : u.status.charAt(0).toUpperCase() + u.status.slice(1);
+        const authIcon = u.auth_method === 'google' ? 'Google' : 'Email';
+        const joinedAt = u.created_at ? timeAgo(u.created_at) : '—';
+        const ddId = `action-dd-user-${u.id}`;
+
+        // Role cell
+        let roleHtml = '';
+        if (u.status === 'pending_approval') {
+            const opts = '<option value="" disabled selected>— Select —</option>' +
+                ALL_ROLES.map(r => `<option value="${r}">${r}</option>`).join('');
+            roleHtml = `<select class="role-select" id="role-${u.id}">${opts}</select>`;
+        } else if (u.status === 'approved') {
+            const opts = ALL_ROLES.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('');
+            roleHtml = `<span id="role-display-${u.id}">${escapeHtml(u.role || '—')}</span>
+                        <select class="role-select" id="role-${u.id}" style="display:none;" data-original-role="${escapeHtml(u.role || '')}" onchange="confirmRoleChange('${u.id}', this.value)">${opts}</select>`;
+        } else {
+            roleHtml = `<span style="color:var(--text-tertiary);font-size:12px">—</span>`;
+        }
+
+        // Actions dropdown
+        let actionsHtml = '';
+        if (u.status === 'pending_approval') {
+            actionsHtml = `
+                <div class="dropdown-menu-group">
+                    <div class="dropdown-menu-label">Actions</div>
+                    <button class="dropdown-menu-item" onclick="approveUserAction('${u.id}')">✓ Approve</button>
+                    <button class="dropdown-menu-item dropdown-menu-item-destructive" onclick="rejectUserAction('${u.id}')">✗ Reject</button>
+                </div>`;
+        } else if (u.status === 'approved') {
+            actionsHtml = `
+                <div class="dropdown-menu-group">
+                    <div class="dropdown-menu-label">Actions</div>
+                    <button class="dropdown-menu-item" onclick="enableRoleEdit('${u.id}')">Update Role</button>
+                    <button class="dropdown-menu-item dropdown-menu-item-destructive" onclick="rejectUserAction('${u.id}')">Revoke Access</button>
+                </div>`;
+        } else {
+            actionsHtml = `
+                <div class="dropdown-menu-group">
+                    <div class="dropdown-menu-label">Actions</div>
+                    <button class="dropdown-menu-item" onclick="approveUserAction('${u.id}')">✓ Re-approve</button>
+                </div>`;
+        }
+
+        html += `<tr>
+            <td>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <div class="user-card-avatar" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${avatarContent}</div>
+                    <span class="cell-primary">${escapeHtml(fullName)}</span>
+                </div>
+            </td>
+            <td class="cell-email">${escapeHtml(u.email)}</td>
+            <td>${authIcon}</td>
+            <td>${roleHtml}</td>
+            <td><span class="status-pill ${statusClass}">${statusLabel}</span></td>
+            <td style="color:var(--text-tertiary);font-size:12px">${joinedAt}</td>
+            <td class="data-table-actions">
+                <div class="dropdown-menu" style="position:relative">
+                    <button class="data-table-action-btn" onclick="toggleActionDropdown(event, '${ddId}')">⋯</button>
+                    <div class="dropdown-menu-content dropdown-side-bottom dropdown-align-end" id="${ddId}" style="min-width:160px">
+                        ${actionsHtml}
+                    </div>
+                </div>
+            </td>
+        </tr>`;
+    }
+
+    html += `</tbody></table></div>
+        <div class="data-table-pagination">
+            <div class="data-table-pagination-info">${filtered.length} user(s) total</div>
+            <div class="data-table-pagination-controls">
+                <button class="data-table-pagination-btn" onclick="usersPage--;renderUsersTable()" ${usersPage <= 0 ? 'disabled' : ''}>Previous</button>
+                <button class="data-table-pagination-btn" onclick="usersPage++;renderUsersTable()" ${usersPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+            </div>
+        </div>`;
+
+    card.innerHTML = html;
+
+    // Restore focus
+    if (focusActive) {
+        const newSearchInput = card.querySelector('.data-table-search');
+        if (newSearchInput) {
+            newSearchInput.focus();
+            newSearchInput.setSelectionRange(cursorStart, cursorEnd);
+        }
     }
 }
 
@@ -742,9 +887,70 @@ async function rejectUserAction(userId) {
     }
 }
 
-async function changeRoleAction(userId) {
+function enableRoleEdit(userId) {
+    document.getElementById(`role-display-${userId}`).style.display = 'none';
     const select = document.getElementById(`role-${userId}`);
-    const role = select ? select.value : 'Associate';
+    select.style.display = 'inline-block';
+    select.focus();
+
+    // Close dropdown menu if open
+    document.querySelectorAll('.dropdown-menu-content.dropdown-menu-open').forEach(dd => {
+        dd.classList.remove('dropdown-menu-open');
+    });
+}
+
+function cancelRoleEdit(userId) {
+    const select = document.getElementById(`role-${userId}`);
+    if (select) {
+        select.value = select.getAttribute('data-original-role');
+        select.style.display = 'none';
+    }
+    const display = document.getElementById(`role-display-${userId}`);
+    if (display) display.style.display = 'inline-block';
+}
+
+function confirmRoleChange(userId, newRole) {
+    const select = document.getElementById(`role-${userId}`);
+    const oldRole = select ? select.getAttribute('data-original-role') : '';
+    if (newRole === oldRole) {
+        cancelRoleEdit(userId);
+        return;
+    }
+
+    // Use custom modal
+    document.getElementById('roleConfirmText').textContent = `Are you sure you want to change this user's role to ${newRole}?`;
+
+    const confirmBtn = document.getElementById('roleConfirmBtn');
+    // Remove old listeners by cloning
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+    newConfirmBtn.onclick = () => {
+        closeRoleConfirmModal();
+        changeRoleAction(userId, newRole);
+    };
+
+    // Handle cancel via modal close
+    const modal = document.getElementById('roleConfirmModal');
+    modal.classList.add('active');
+
+    // Store userId on modal to cancel on close
+    modal.setAttribute('data-cancel-userid', userId);
+}
+
+function closeRoleConfirmModal() {
+    const modal = document.getElementById('roleConfirmModal');
+    modal.classList.remove('active');
+    const userId = modal.getAttribute('data-cancel-userid');
+    if (userId) {
+        cancelRoleEdit(userId);
+        modal.removeAttribute('data-cancel-userid');
+    }
+}
+
+async function changeRoleAction(userId, explicitRole) {
+    const select = document.getElementById(`role-${userId}`);
+    const role = explicitRole || (select ? select.value : 'Associate');
     try {
         const res = await fetch(`${API_BASE}/api/admin/users/${userId}/role`, {
             method: 'PUT',
@@ -777,7 +983,7 @@ async function checkContributionCount() {
             headers: adminHeaders(),
         });
         const data = await res.json();
-        
+
         // Update nav badge instead of inline header badge
         const badge = document.getElementById('navContributionsBadge');
         if (badge) {
@@ -817,6 +1023,11 @@ async function checkUserPendingCount() {
     }
 }
 
+let contribPage = 0;
+const CONTRIBS_PER_PAGE = 10;
+let contribFilterText = '';
+let allContribsData = [];
+
 async function loadContributions() {
     const card = document.getElementById('contributionsCard');
     try {
@@ -828,38 +1039,114 @@ async function loadContributions() {
             return;
         }
         const data = await res.json();
+        allContribsData = data.contributions || [];
 
-        if (!data.contributions || data.contributions.length === 0) {
-            card.innerHTML = '<div style="text-align:center;padding:24px"><p style="color:var(--text-tertiary);font-size:13px">No pending contributions</p><p style="color:var(--text-tertiary);font-size:11px;margin-top:6px">User submissions will appear here for review</p></div>';
+        if (!allContribsData.length) {
+            card.innerHTML = '<div class="data-table-empty"><p style="color:var(--text-tertiary);font-size:13px">No pending contributions</p><p style="color:var(--text-tertiary);font-size:11px;margin-top:6px">User submissions will appear here for review</p></div>';
             return;
         }
 
-        let html = '<div class="contributions-list">';
-        for (const c of data.contributions) {
-            const typeIcons = { document: '📄', code: '💻', plain_text: '📝' };
-            const typeLabels = { document: 'Document', code: 'Code', plain_text: 'Plain Text' };
-            const icon = typeIcons[c.content_type] || '📄';
-            const typeLabel = typeLabels[c.content_type] || c.content_type;
-            const preview = c.content.substring(0, 120).replace(/\n/g, ' ') + (c.content.length > 120 ? '…' : '');
-            const hasFile = c.original_filename ? ' · 📎 ' + escapeHtml(c.original_filename) : '';
-
-            html += `<div class="contribution-card" onclick="openContributionReview('${c.id}')">
-                <div class="contribution-card-header">
-                    <div class="contribution-card-title">${icon} ${escapeHtml(c.title)}</div>
-                    <span class="contribution-type-badge">${typeLabel}</span>
-                </div>
-                <div class="contribution-card-preview">${escapeHtml(preview)}</div>
-                <div class="contribution-card-meta">
-                    <span>By <strong>${escapeHtml(c.submitted_by)}</strong>${hasFile}</span>
-                    <span>${timeAgo(c.submitted_at)}</span>
-                </div>
-            </div>`;
-        }
-        html += '</div>';
-        card.innerHTML = html;
-
+        renderContribsTable();
     } catch (e) {
         card.innerHTML = `<p style="color:var(--danger)">Error loading contributions: ${e.message}</p>`;
+    }
+}
+
+function renderContribsTable() {
+    const card = document.getElementById('contributionsCard');
+    const typeIcons = { document: '📄', code: '💻', plain_text: '📝' };
+    const typeLabels = { document: 'Document', code: 'Code', plain_text: 'Plain Text' };
+
+    // Capture focus state
+    const searchInput = card.querySelector('.data-table-search');
+    const focusActive = document.activeElement === searchInput;
+    const cursorStart = searchInput ? searchInput.selectionStart : 0;
+    const cursorEnd = searchInput ? searchInput.selectionEnd : 0;
+
+    // Filter
+    let filtered = allContribsData;
+    if (contribFilterText) {
+        const q = contribFilterText.toLowerCase();
+        filtered = allContribsData.filter(c => {
+            return (c.title || '').toLowerCase().includes(q) ||
+                (c.submitted_by || '').toLowerCase().includes(q);
+        });
+    }
+
+    // Paginate
+    const totalPages = Math.ceil(filtered.length / CONTRIBS_PER_PAGE);
+    if (contribPage >= totalPages) contribPage = Math.max(0, totalPages - 1);
+    const pageItems = filtered.slice(contribPage * CONTRIBS_PER_PAGE, (contribPage + 1) * CONTRIBS_PER_PAGE);
+
+    let html = `
+        <div class="data-table-toolbar">
+            <input type="text" class="data-table-search" placeholder="Filter by title or submitter..."
+                value="${escapeHtml(contribFilterText)}" oninput="contribFilterText=this.value;contribPage=0;renderContribsTable()">
+        </div>
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width:30%">Title</th>
+                        <th style="width:15%">Type</th>
+                        <th style="width:25%">Submitted By</th>
+                        <th style="width:20%">File</th>
+                        <th style="width:10%">Submitted</th>
+                        <th style="width:50px"></th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+    if (pageItems.length === 0) {
+        html += `<tr><td colspan="6" class="data-table-empty">No results.</td></tr>`;
+    }
+
+    for (const c of pageItems) {
+        const icon = typeIcons[c.content_type] || '📄';
+        const typeLabel = typeLabels[c.content_type] || c.content_type;
+        const hasFile = c.original_filename ? escapeHtml(c.original_filename) : '—';
+        const ddId = `action-dd-contrib-${c.id}`;
+
+        html += `<tr>
+            <td>
+                <span class="cell-primary" style="cursor:pointer" onclick="openContributionReview('${c.id}')">${escapeHtml(c.title)}</span>
+            </td>
+            <td><span class="type-badge">${icon} ${typeLabel}</span></td>
+            <td class="cell-email">${escapeHtml(c.submitted_by)}</td>
+            <td style="font-size:12px;color:var(--text-tertiary)">${hasFile}</td>
+            <td style="color:var(--text-tertiary);font-size:12px">${timeAgo(c.submitted_at)}</td>
+            <td class="data-table-actions">
+                <div class="dropdown-menu" style="position:relative">
+                    <button class="data-table-action-btn" onclick="toggleActionDropdown(event, '${ddId}')">⋯</button>
+                    <div class="dropdown-menu-content dropdown-side-bottom dropdown-align-end" id="${ddId}" style="min-width:160px">
+                        <div class="dropdown-menu-group">
+                            <div class="dropdown-menu-label">Actions</div>
+                            <button class="dropdown-menu-item" onclick="openContributionReview('${c.id}')">Review</button>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>`;
+    }
+
+    html += `</tbody></table></div>
+        <div class="data-table-pagination">
+            <div class="data-table-pagination-info">${filtered.length} contribution(s) total</div>
+            <div class="data-table-pagination-controls">
+                <button class="data-table-pagination-btn" onclick="contribPage--;renderContribsTable()" ${contribPage <= 0 ? 'disabled' : ''}>Previous</button>
+                <button class="data-table-pagination-btn" onclick="contribPage++;renderContribsTable()" ${contribPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+            </div>
+        </div>`;
+
+    card.innerHTML = html;
+
+    // Restore focus
+    if (focusActive) {
+        const newSearchInput = card.querySelector('.data-table-search');
+        if (newSearchInput) {
+            newSearchInput.focus();
+            newSearchInput.setSelectionRange(cursorStart, cursorEnd);
+        }
     }
 }
 

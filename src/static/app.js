@@ -21,7 +21,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await fetchChats();
     refreshStatus();
     renderChatList();
-    initOnboarding();
     setInterval(refreshStatus, 30000);
 });
 
@@ -461,8 +460,6 @@ function startNewChat() {
     welcome.className = 'welcome';
     welcome.id = 'welcome';
 
-    const isOnboarding = localStorage.getItem('grasp_onboarding') === 'true';
-
     welcome.innerHTML = `
         <div class="welcome-motif">
             <div class="motif-line"></div>
@@ -472,27 +469,11 @@ function startNewChat() {
         <h1>Ask <span class="accent-word">anything</span> about your company</h1>
         <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
 
-        <div class="onboarding-banner" id="onboardingBanner" style="display:${isOnboarding ? 'flex' : 'none'}">
-            <div class="onboarding-banner-icon"><img src="/icons/onboarding-dark.png" class="theme-icon-dark" alt="Onboarding" style="width:24px;height:24px;"><img src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding" style="width:24px;height:24px;"></div>
-            <div>
-                <strong>Welcome aboard!</strong> Onboarding mode is active. These prompts are designed to quickly
-                familiarize you with company history, conventions, and current priorities.
-            </div>
-        </div>
-
-        <div class="suggestion-chips" id="defaultChips" style="display:${isOnboarding ? 'none' : ''}">
+        <div class="suggestion-chips" id="defaultChips">
             <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
             <div class="suggestion-chip stagger-2" onclick="askQuestion(this.textContent)">What features are in progress this sprint?</div>
             <div class="suggestion-chip stagger-3" onclick="askQuestion(this.textContent)">Any recent incidents or outages?</div>
             <div class="suggestion-chip stagger-4" onclick="askQuestion(this.textContent)">What decisions were made in last week's meetings?</div>
-        </div>
-
-        <div class="suggestion-chips" id="onboardingChips" style="display:${isOnboarding ? '' : 'none'}">
-            <div class="suggestion-chip stagger-1 onboarding-chip" onclick="askQuestion(this.textContent)">What is the company's history and founding story?</div>
-            <div class="suggestion-chip stagger-2 onboarding-chip" onclick="askQuestion(this.textContent)">What are the key conventions and coding standards?</div>
-            <div class="suggestion-chip stagger-3 onboarding-chip" onclick="askQuestion(this.textContent)">What projects are currently in progress?</div>
-            <div class="suggestion-chip stagger-4 onboarding-chip" onclick="askQuestion(this.textContent)">Who are the key team members and their roles?</div>
-            <div class="suggestion-chip stagger-5 onboarding-chip" onclick="askQuestion(this.textContent)">What tools and platforms does the company use?</div>
         </div>
     `;
 
@@ -1031,7 +1012,6 @@ async function checkAuth() {
             // Always overwrite cache with fresh server data
             localStorage.setItem('grasp_user', JSON.stringify(currentUser));
             populateUserProfile(currentUser);
-            showOnboardingIntro();
         }
     } catch (e) {
         // Network error — use cached user data if available
@@ -1133,13 +1113,12 @@ function toggleUserMenu(event) {
     event.stopPropagation();
     const dropdown = document.getElementById('userMenuDropdown');
     if (!dropdown) return;
-    const isVisible = dropdown.style.display !== 'none';
-    dropdown.style.display = isVisible ? 'none' : 'block';
+    dropdown.classList.toggle('dropdown-menu-open');
 }
 
 function closeUserMenuDropdown() {
     const dropdown = document.getElementById('userMenuDropdown');
-    if (dropdown) dropdown.style.display = 'none';
+    if (dropdown) dropdown.classList.remove('dropdown-menu-open');
 }
 
 // Close user menu when clicking outside
@@ -1147,7 +1126,7 @@ document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('userMenuDropdown');
     const btn = document.getElementById('userMenuBtn');
     if (dropdown && btn && !btn.contains(e.target) && !dropdown.contains(e.target)) {
-        dropdown.style.display = 'none';
+        dropdown.classList.remove('dropdown-menu-open');
     }
 });
 
@@ -1173,51 +1152,7 @@ function toggleSidebarSection(section) {
     }
 }
 
-// ── Onboarding Mode ───────────────────────────────────────
 
-function initOnboarding() {
-    const isOnboarding = localStorage.getItem('grasp_onboarding') === 'true';
-    const checkbox = document.getElementById('onboardingCheckbox');
-    if (checkbox) {
-        checkbox.checked = isOnboarding;
-        applyOnboardingState(isOnboarding);
-    }
-}
-
-function toggleOnboarding() {
-    const checkbox = document.getElementById('onboardingCheckbox');
-    const isOn = checkbox ? checkbox.checked : false;
-    localStorage.setItem('grasp_onboarding', isOn.toString());
-    applyOnboardingState(isOn);
-}
-
-function applyOnboardingState(isOn) {
-    const defaultChips = document.getElementById('defaultChips');
-    const onboardingChips = document.getElementById('onboardingChips');
-    const onboardingBanner = document.getElementById('onboardingBanner');
-
-    if (defaultChips) defaultChips.style.display = isOn ? 'none' : '';
-    if (onboardingChips) onboardingChips.style.display = isOn ? '' : 'none';
-    if (onboardingBanner) onboardingBanner.style.display = isOn ? 'flex' : 'none';
-}
-
-function showOnboardingIntro() {
-    const seen = localStorage.getItem('grasp_seen_onboarding_intro');
-    if (!seen) {
-        const modal = document.getElementById('onboardingIntroModal');
-        if (modal) {
-            modal.style.display = 'flex';
-        }
-    }
-}
-
-function dismissOnboardingIntro() {
-    localStorage.setItem('grasp_seen_onboarding_intro', 'true');
-    const modal = document.getElementById('onboardingIntroModal');
-    if (modal) {
-        modal.style.display = 'none';
-    }
-}
 
 // ── Settings Modal ──────────────────────────────────────
 

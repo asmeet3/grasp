@@ -120,42 +120,48 @@
                                         <path d="m7 9 5-5 5 5" />
                                     </svg>
                                 </button>
-                                <!-- User dropdown (opens upward) -->
-                                <div class="sidebar-user-dropdown" id="userMenuDropdown" style="display:none">
-                                    <div class="sidebar-user-dropdown-header">
-                                        <div class="sidebar-user-avatar sidebar-user-avatar-sm" id="userAvatarDropdown">
-                                            ?</div>
-                                        <div>
-                                            <div class="sidebar-user-dropdown-name" id="userDropdownName">—</div>
-                                            <div class="sidebar-user-dropdown-role" id="userMenuRole"></div>
+                                <!-- User dropdown menu (shadcn-inspired) -->
+                                <div class="dropdown-menu-content dropdown-side-top" id="userMenuDropdown">
+                                    <div class="dropdown-menu-group">
+                                        <div class="dropdown-menu-label">Account</div>
+                                        <div class="dropdown-menu-item" style="pointer-events:none; padding: 6px 12px;">
+                                            <div class="sidebar-user-avatar sidebar-user-avatar-sm" id="userAvatarDropdown">?</div>
+                                            <div>
+                                                <div style="font-weight:600;color:var(--text-primary);font-size:13px" id="userDropdownName">—</div>
+                                                <div style="font-size:11px;color:var(--text-tertiary)" id="userMenuRole"></div>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="sidebar-user-dropdown-sep"></div>
-                                    <button class="sidebar-user-dropdown-item"
-                                        onclick="toggleTheme(); event.stopPropagation();">
-                                        <span class="theme-menu-icon" id="themeMenuIcon">🌙</span>
-                                        <span id="themeMenuLabel">Light Mode</span>
-                                    </button>
-                                    <button class="sidebar-user-dropdown-item"
-                                        onclick="openSettingsModal(); closeUserMenuDropdown();">
-                                        <img src="/icons/settings-dark.png" class="theme-icon-dark" alt="Settings"
-                                            style="width:14px;height:14px;">
-                                        <img src="/icons/settings-light.png" class="theme-icon-light" alt="Settings"
-                                            style="width:14px;height:14px;">
-                                        <span>Settings</span>
-                                    </button>
-                                    <div class="sidebar-user-dropdown-sep"></div>
-                                    <button class="sidebar-user-dropdown-item sidebar-user-dropdown-danger"
-                                        onclick="logout()">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                            <polyline points="16 17 21 12 16 7" />
-                                            <line x1="21" y1="12" x2="9" y2="12" />
-                                        </svg>
-                                        <span>Log out</span>
-                                    </button>
+                                    <div class="dropdown-menu-separator"></div>
+                                    <div class="dropdown-menu-group">
+                                        <button class="dropdown-menu-item"
+                                            onclick="toggleTheme(); event.stopPropagation();">
+                                            <span class="theme-menu-icon" id="themeMenuIcon">🌙</span>
+                                            <span id="themeMenuLabel">Light Mode</span>
+                                        </button>
+                                        <button class="dropdown-menu-item"
+                                            onclick="openSettingsModal(); closeUserMenuDropdown();">
+                                            <img src="/icons/settings-dark.png" class="theme-icon-dark" alt="Settings"
+                                                style="width:14px;height:14px;">
+                                            <img src="/icons/settings-light.png" class="theme-icon-light" alt="Settings"
+                                                style="width:14px;height:14px;">
+                                            <span>Settings</span>
+                                        </button>
+                                    </div>
+                                    <div class="dropdown-menu-separator"></div>
+                                    <div class="dropdown-menu-group">
+                                        <button class="dropdown-menu-item dropdown-menu-item-destructive"
+                                            onclick="logout()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                                <polyline points="16 17 21 12 16 7" />
+                                                <line x1="21" y1="12" x2="9" y2="12" />
+                                            </svg>
+                                            <span>Log out</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -204,18 +210,7 @@
                     <h1>Ask <span class="accent-word">anything</span> about your company</h1>
                     <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
 
-                    <!-- Onboarding banner (hidden by default) -->
-                    <div class="onboarding-banner" id="onboardingBanner" style="display:none">
-                        <div class="onboarding-banner-icon"><img src="/icons/onboarding-dark.png"
-                                class="theme-icon-dark" alt="Onboarding" style="width:24px;height:24px;"><img
-                                src="/icons/onboarding-light.png" class="theme-icon-light" alt="Onboarding"
-                                style="width:24px;height:24px;"></div>
-                        <div>
-                            <strong>Welcome aboard!</strong> Onboarding mode is active. These prompts are designed to
-                            quickly
-                            familiarize you with company history, conventions, and current priorities.
-                        </div>
-                    </div>
+
 
                     <!-- Default suggestion chips -->
                     <div class="suggestion-chips" id="defaultChips">
@@ -229,19 +224,7 @@
                             were made in last week's meetings?</div>
                     </div>
 
-                    <!-- Onboarding suggestion chips (hidden by default) -->
-                    <div class="suggestion-chips" id="onboardingChips" style="display:none">
-                        <div class="suggestion-chip stagger-1 onboarding-chip" onclick="askQuestion(this.textContent)">
-                            What is the company's history and founding story?</div>
-                        <div class="suggestion-chip stagger-2 onboarding-chip" onclick="askQuestion(this.textContent)">
-                            What are the key conventions and coding standards?</div>
-                        <div class="suggestion-chip stagger-3 onboarding-chip" onclick="askQuestion(this.textContent)">
-                            What projects are currently in progress?</div>
-                        <div class="suggestion-chip stagger-4 onboarding-chip" onclick="askQuestion(this.textContent)">
-                            Who are the key team members and their roles?</div>
-                        <div class="suggestion-chip stagger-5 onboarding-chip" onclick="askQuestion(this.textContent)">
-                            What tools and platforms does the company use?</div>
-                    </div>
+
                 </div>
             </div>
 
@@ -362,35 +345,7 @@
         </div>
     </div>
 
-    <!-- Onboarding Intro Modal -->
-    <div class="modal-overlay" id="onboardingIntroModal"
-        style="display:none; z-index: 10001; background: rgba(12, 12, 14, 0.85);">
-        <!-- Animated arrow pointing to sidebar -->
-        <div class="onboarding-pointer">
-            <div class="onboarding-pointer-arrow">↙</div>
-            <div class="onboarding-pointer-text">Enable it here!</div>
-        </div>
 
-        <div class="modal" style="max-width:480px; position: relative; z-index: 10002; margin-top: -100px;">
-            <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
-                <h2 style="font-size: 24px;">Welcome to Grasp 🎓</h2>
-            </div>
-            <div class="modal-body">
-                <p style="color:var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
-                    We noticed this is your first time logging in! Grasp features a special <strong>Onboarding
-                        Mode</strong> designed to help new team members quickly get up to speed.
-                </p>
-                <p style="color:var(--text-secondary); line-height: 1.6;">
-                    When enabled, Grasp will suggest onboarding-specific questions to guide your learning journey. You
-                    can toggle it on or off at any time from the bottom of the sidebar.
-                </p>
-            </div>
-            <div class="modal-footer" style="border-top: none; justify-content: center; padding-top: 0;">
-                <button class="approve-btn" style="width: 100%; padding: 12px; font-size: 14px;"
-                    onclick="dismissOnboardingIntro()">Got it, thanks!</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
