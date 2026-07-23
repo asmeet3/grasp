@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/logos/grasp-invert-transparent.png" alt="Grasp logo" width="35%">
+  <img src="src/logos/grasp-invert-transparent.png" alt="Grasp logo" width="30%">
 </p>
 
 Grasp is a self-hosted institutional knowledge assistant. It syncs content from Confluence, Jira, SharePoint, Slack, and Notion into a local Git-backed Markdown repository and a persistent ChromaDB index, then uses Anthropic Claude to answer questions with links to the source material.
