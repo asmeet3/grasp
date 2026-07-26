@@ -21,16 +21,16 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
-from ..agents import AgentDefinition, SUPPORTED_SKILLS
+from ..agents import SUPPORTED_SKILLS, AgentDefinition
 from ..connectors.base import sanitize_filename
 from ..core.security import AuthContext, Permission, PolicyEngine, SystemRole
 from .models import (
-    ApproveRequest,
-    ApproveResponse,
-    ApproveUserRequest,
     AgentActivationRequest,
     AgentEmergencyStopRequest,
     AgentRunRequest,
+    ApproveRequest,
+    ApproveResponse,
+    ApproveUserRequest,
     AuthResponse,
     ChangePasswordRequest,
     ChatThreadListResponse,

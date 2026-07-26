@@ -843,7 +843,10 @@ class AgentService:
                 .first()
             )
         previous = (row["output"] or {}).get("report", "") if row else ""
-        normalize = lambda value: " ".join(value.lower().split())
+
+        def normalize(value: str) -> str:
+            return " ".join(value.lower().split())
+
         return bool(previous and normalize(previous) == normalize(report))
 
     async def _validate_owner(self, organization_id: str, user_id: str) -> dict[str, Any]:
