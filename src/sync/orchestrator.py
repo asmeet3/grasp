@@ -12,14 +12,15 @@ import asyncio
 import logging
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ..changesets import ChangeSetService
 from ..connectors.base import BaseConnector, Document
 from ..database import sync_state_table
-from ..index.vector_store import VectorStore
+from ..ingestion import IngestionCandidate
 from ..repo.manager import RepoManager
 from .checkpoints import CheckpointManager
 
@@ -61,18 +62,23 @@ class SyncOrchestrator:
         self,
         connectors: dict[str, BaseConnector],
         repo_manager: RepoManager,
-        vector_store: VectorStore,
+        change_sets: ChangeSetService,
         checkpoints: CheckpointManager,
         engine: AsyncEngine,
+        organization_id: str = "default",
+        overlap_seconds: int = 300,
     ):
         self.connectors = connectors
         self.repo_manager = repo_manager
-        self.vector_store = vector_store
+        self.change_sets = change_sets
         self.checkpoints = checkpoints
         self.engine = engine
+        self.organization_id = organization_id
+        self.overlap_seconds = overlap_seconds
 
         self._sync_running = False
         self._worker_statuses: dict[str, WorkerStatus] = {}
+        self._active_change_set_id: str | None = None
 
     # Public interface
 
@@ -88,9 +94,7 @@ class SyncOrchestrator:
         """Read the last sync state from the database."""
         async with self.engine.begin() as conn:
             result = await conn.execute(
-                select(sync_state_table)
-                .order_by(sync_state_table.c.timestamp.desc())
-                .limit(1)
+                select(sync_state_table).order_by(sync_state_table.c.timestamp.desc()).limit(1)
             )
             row = result.mappings().first()
         if row:
@@ -110,8 +114,34 @@ class SyncOrchestrator:
         if self._sync_running:
             return {"error": "Sync already in progress"}
 
+        lock_connection = await self.engine.connect()
+        lock_acquired = bool(
+            (
+                await lock_connection.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext('grasp:sync'))")
+                )
+            ).scalar()
+        )
+        if not lock_acquired:
+            await lock_connection.close()
+            return {"error": "Sync already running on another replica"}
+
         self._sync_running = True
         self._worker_statuses = {}
+        sync_started_at = datetime.now(UTC)
+        try:
+            change_set = await self.change_sets.create(
+                "sync",
+                organization_id=self.organization_id,
+                creator_user_id=None,
+                provenance={"started_at": sync_started_at.isoformat()},
+            )
+        except Exception:
+            self._sync_running = False
+            await lock_connection.execute(text("SELECT pg_advisory_unlock(hashtext('grasp:sync'))"))
+            await lock_connection.close()
+            raise
+        self._active_change_set_id = change_set["id"]
 
         try:
             if await self.needs_full_sync():
@@ -119,14 +149,16 @@ class SyncOrchestrator:
                 result = await self._full_sync()
             else:
                 last_sync = await self.get_last_sync()
-                since_str = last_sync["timestamp"]
-                since = datetime.fromisoformat(since_str) if isinstance(since_str, str) else since_str
+                since_str = last_sync.get("watermark") or last_sync["timestamp"]
+                since = (
+                    datetime.fromisoformat(since_str) if isinstance(since_str, str) else since_str
+                )
+                since = since - timedelta(seconds=self.overlap_seconds)
 
                 # Check which connectors failed last time
                 last_workers = last_sync.get("workers", {})
                 failed_connectors = {
-                    name for name, info in last_workers.items()
-                    if info.get("status") == "failed"
+                    name for name, info in last_workers.items() if info.get("status") == "failed"
                 }
 
                 if failed_connectors:
@@ -139,11 +171,18 @@ class SyncOrchestrator:
                     logger.info(f"Starting INCREMENTAL sync (since {since_str})")
                     result = await self._incremental_sync(since)
 
+            result["started_at"] = sync_started_at.isoformat()
+            result["watermark"] = sync_started_at.isoformat()
+            result["change_set_id"] = self._active_change_set_id
+
+            staged = await self.change_sets.get(self._active_change_set_id)
+            if staged and staged.get("operations"):
+                await self.change_sets.submit(self._active_change_set_id)
+            else:
+                await self.change_sets.close_empty(self._active_change_set_id)
+
             # Save sync state
             await self._save_sync_state(result)
-
-            # Generate pending changeset for human approval
-            self.repo_manager.stage_pending()
 
             return result
         except Exception as e:
@@ -151,6 +190,9 @@ class SyncOrchestrator:
             return {"error": str(e)}
         finally:
             self._sync_running = False
+            self._active_change_set_id = None
+            await lock_connection.execute(text("SELECT pg_advisory_unlock(hashtext('grasp:sync'))"))
+            await lock_connection.close()
 
     # Full sync
 
@@ -169,7 +211,7 @@ class SyncOrchestrator:
         # Process results
         total_docs = 0
         worker_results = {}
-        for name, result in zip(self.connectors.keys(), results):
+        for name, result in zip(self.connectors.keys(), results, strict=True):
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
@@ -183,7 +225,7 @@ class SyncOrchestrator:
             "type": "full",
             "total_docs": total_docs,
             "workers": worker_results,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     async def _mixed_sync(self, since: datetime, full_sync_connectors: set[str]) -> dict:
@@ -203,7 +245,7 @@ class SyncOrchestrator:
 
         total_docs = 0
         worker_results = {}
-        for name, result in zip(self.connectors.keys(), results):
+        for name, result in zip(self.connectors.keys(), results, strict=True):
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
@@ -220,7 +262,7 @@ class SyncOrchestrator:
             "full_connectors": list(full_sync_connectors),
             "total_docs": total_docs,
             "workers": worker_results,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     async def _run_full_worker(
@@ -263,7 +305,7 @@ class SyncOrchestrator:
 
         total_docs = 0
         worker_results = {}
-        for name, result in zip(self.connectors.keys(), results):
+        for name, result in zip(self.connectors.keys(), results, strict=True):
             ws = self._worker_statuses[name]
             if isinstance(result, Exception):
                 ws.status = "failed"
@@ -277,7 +319,7 @@ class SyncOrchestrator:
             "since": since.isoformat(),
             "total_docs": total_docs,
             "workers": worker_results,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     async def _run_incremental_worker(
@@ -305,13 +347,12 @@ class SyncOrchestrator:
     # Document processing
 
     async def _process_document(self, doc: Document):
-        """Write a document to the repo and index it in ChromaDB."""
+        """Normalize and stage a document; committed indexes remain untouched."""
         try:
-            # Classify and write to repo
-            info_type = await self.repo_manager.classify_and_write(doc)
-
-            # Index in vector store
-            self.vector_store.index_document(doc, info_type)
+            if not self._active_change_set_id:
+                raise RuntimeError("No active sync change set")
+            candidate = IngestionCandidate.from_document(doc, organization_id=self.organization_id)
+            await self.change_sets.stage_candidate(self._active_change_set_id, candidate)
 
         except Exception as e:
             logger.error(f"Failed to process document {doc.id}: {e}")
@@ -323,7 +364,7 @@ class SyncOrchestrator:
         """Save the sync result to the database."""
         # Extract fields for the table columns
         sync_type = result.get("type", "unknown")
-        timestamp_str = result.get("timestamp", datetime.now(timezone.utc).isoformat())
+        timestamp_str = result.get("timestamp", datetime.now(UTC).isoformat())
         timestamp = (
             datetime.fromisoformat(timestamp_str)
             if isinstance(timestamp_str, str)
@@ -331,17 +372,36 @@ class SyncOrchestrator:
         )
         total_docs = result.get("total_docs", 0)
         workers = result.get("workers", {})
+        started_at_value = result.get("started_at", timestamp)
+        started_at = (
+            datetime.fromisoformat(started_at_value)
+            if isinstance(started_at_value, str)
+            else started_at_value
+        )
+        watermark_value = result.get("watermark", started_at)
+        watermark = (
+            datetime.fromisoformat(watermark_value)
+            if isinstance(watermark_value, str)
+            else watermark_value
+        )
         # Store additional fields (since, full_connectors, etc.) in details
-        details = {k: v for k, v in result.items() if k not in ("type", "timestamp", "total_docs", "workers")}
+        details = {
+            k: v
+            for k, v in result.items()
+            if k not in ("type", "timestamp", "total_docs", "workers")
+        }
 
         async with self.engine.begin() as conn:
             await conn.execute(
                 sync_state_table.insert().values(
                     sync_type=sync_type,
                     timestamp=timestamp,
+                    started_at=started_at,
+                    watermark=watermark,
                     total_docs=total_docs,
                     workers=workers,
                     details=details,
+                    change_set_id=result.get("change_set_id"),
                 )
             )
 
@@ -357,18 +417,14 @@ class SyncOrchestrator:
             cutoff_row = result_rows.scalar_one_or_none()
             if cutoff_row is not None:
                 await conn.execute(
-                    delete(sync_state_table).where(
-                        sync_state_table.c.id <= cutoff_row
-                    )
+                    delete(sync_state_table).where(sync_state_table.c.id <= cutoff_row)
                 )
 
     async def get_sync_history(self) -> list[dict]:
         """Return the sync history log."""
         async with self.engine.begin() as conn:
             result = await conn.execute(
-                select(sync_state_table)
-                .order_by(sync_state_table.c.timestamp.desc())
-                .limit(100)
+                select(sync_state_table).order_by(sync_state_table.c.timestamp.desc()).limit(100)
             )
             rows = result.mappings().all()
         # Return in chronological order (oldest first) to match old behavior
@@ -385,6 +441,17 @@ class SyncOrchestrator:
                 if hasattr(row_dict.get("timestamp"), "isoformat")
                 else str(row_dict.get("timestamp", ""))
             ),
+            "started_at": (
+                row_dict["started_at"].isoformat()
+                if hasattr(row_dict.get("started_at"), "isoformat")
+                else str(row_dict.get("started_at", ""))
+            ),
+            "watermark": (
+                row_dict["watermark"].isoformat()
+                if hasattr(row_dict.get("watermark"), "isoformat")
+                else str(row_dict.get("watermark", ""))
+            ),
+            "change_set_id": row_dict.get("change_set_id"),
             "total_docs": row_dict.get("total_docs", 0),
             "workers": row_dict.get("workers", {}),
         }

@@ -49,7 +49,11 @@ async function fetchChats() {
 
 async function refreshStatus() {
     try {
-        const res = await fetch(`${API_BASE}/api/status`);
+        const res = await fetch(`${API_BASE}/api/status`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('grasp_session_token')}`,
+            },
+        });
         const data = await res.json();
 
         // System status
@@ -222,9 +226,13 @@ async function submitQuery() {
 
     // Stream response via SSE
     try {
+        const token = localStorage.getItem('grasp_session_token');
         const response = await fetch(`${API_BASE}/api/query`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
             body: JSON.stringify({ question, history: history.length > 0 ? history : null }),
             signal: controller.signal,
         });
@@ -422,7 +430,18 @@ function renderMarkdown(text) {
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
     // Links
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_match, label, href) {
+        const normalized = href.trim();
+        try {
+            const parsed = new URL(normalized, window.location.origin);
+            if (!['http:', 'https:'].includes(parsed.protocol)) {
+                return label;
+            }
+            return `<a href="${normalized}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+        } catch (_error) {
+            return label;
+        }
+    });
 
     // Unordered lists
     html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
@@ -669,18 +688,6 @@ function timeAgo(dateStr, future = false) {
     }
 }
 
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s ease-out';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
 // Contributions
 
 let selectedContentType = 'document';
@@ -837,62 +844,54 @@ document.addEventListener('DOMContentLoaded', () => {
 async function submitContribution() {
     const name = document.getElementById('contributeName').value.trim();
     const title = document.getElementById('contributeTitle').value.trim();
-
-    // Validate name (mandatory)
     if (!name) {
         showToast('Please enter your name', 'warning');
         document.getElementById('contributeName').focus();
         return;
     }
-
     if (!title) {
         showToast('Please enter a title', 'warning');
         document.getElementById('contributeTitle').focus();
         return;
     }
+    if (selectedContentType === 'document' && !selectedFile) {
+        showToast('Please select a file to upload', 'warning');
+        return;
+    }
 
-    // Save name to localStorage for convenience
+    const content = selectedContentType === 'document'
+        ? ''
+        : document.getElementById('contributeContent').value.trim();
+    if (selectedContentType !== 'document' && !content) {
+        showToast('Please enter some content', 'warning');
+        document.getElementById('contributeContent').focus();
+        return;
+    }
+
     localStorage.setItem('grasp_user_name', name);
-
     const btn = document.getElementById('contributeSubmitBtn');
     btn.disabled = true;
     btn.textContent = 'Submitting...';
 
-    try {
-        let res;
-
+    const operation = (async () => {
+        let response;
         if (selectedContentType === 'document') {
-            // File upload path
-            if (!selectedFile) {
-                showToast('Please select a file to upload', 'warning');
-                btn.disabled = false;
-                btn.textContent = '✦ Submit for Review';
-                return;
-            }
-
             const formData = new FormData();
             formData.append('file', selectedFile);
             formData.append('title', title);
             formData.append('submitted_by', name);
-
-            res = await fetch(`${API_BASE}/api/contributions/upload`, {
+            response = await fetch(`${API_BASE}/api/contributions/upload`, {
                 method: 'POST',
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('grasp_session_token')}` },
                 body: formData,
             });
         } else {
-            // Text content path (code / plain_text)
-            const content = document.getElementById('contributeContent').value.trim();
-            if (!content) {
-                showToast('Please enter some content', 'warning');
-                document.getElementById('contributeContent').focus();
-                btn.disabled = false;
-                btn.textContent = '✦ Submit for Review';
-                return;
-            }
-
-            res = await fetch(`${API_BASE}/api/contributions/submit`, {
+            response = await fetch(`${API_BASE}/api/contributions/submit`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('grasp_session_token')}`,
+                },
                 body: JSON.stringify({
                     title,
                     content,
@@ -902,18 +901,23 @@ async function submitContribution() {
             });
         }
 
-        const data = await res.json();
-        if (res.ok) {
-            closeContributeModal();
-            showToast(data.message || 'Contribution submitted for review ✓', 'success');
-        } else {
-            showToast(`Error: ${data.detail || 'Submission failed'}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || 'Submission failed');
+        closeContributeModal();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Submitting contribution for review...',
+            success: data => data.message || 'Contribution submitted for review.',
+            error: error => `Could not submit contribution: ${error.message}`,
+        });
+    } catch (_) {
+        // The promise toast presents the error.
     } finally {
         btn.disabled = false;
-        btn.textContent = '✦ Submit for Review';
+        btn.textContent = 'Submit for Review';
     }
 }
 
@@ -1112,6 +1116,34 @@ async function checkAuth() {
 }
 
 
+function safeProfilePictureUrl(value) {
+    if (typeof value !== 'string' || !value) return '';
+    if (/^data:image\/(png|jpeg|webp);base64,/i.test(value)) return value;
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function setProfileAvatar(container, picture, initials) {
+    if (!container) return;
+    container.textContent = initials;
+    const source = safeProfilePictureUrl(picture);
+    if (!source) return;
+
+    const image = document.createElement('img');
+    image.src = source;
+    image.alt = 'Avatar';
+    image.referrerPolicy = 'no-referrer';
+    image.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+    image.addEventListener('error', () => {
+        container.textContent = initials;
+    }, { once: true });
+    container.replaceChildren(image);
+}
+
 function populateUserProfile(user) {
     if (!user) return;
 
@@ -1128,23 +1160,8 @@ function populateUserProfile(user) {
     const initials = (user.first_name || '?')[0].toUpperCase();
     const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || '—';
 
-    // Main avatar
-    if (avatar) {
-        if (user.profile_picture) {
-            avatar.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
-
-        } else {
-            avatar.textContent = initials;
-        }
-    }
-    // Dropdown avatar (mirrors main)
-    if (avatarDropdown) {
-        if (user.profile_picture) {
-            avatarDropdown.innerHTML = `<img src="${user.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
-        } else {
-            avatarDropdown.textContent = initials;
-        }
-    }
+    setProfileAvatar(avatar, user.profile_picture, initials);
+    setProfileAvatar(avatarDropdown, user.profile_picture, initials);
 
     if (name) name.textContent = fullName;
     if (dropdownName) dropdownName.textContent = fullName;
@@ -1252,8 +1269,14 @@ function openSettingsModal() {
         // Avatar preview
         const initial = document.getElementById('settingsAvatarInitial');
         const img = document.getElementById('settingsAvatarImg');
-        if (currentUser.profile_picture) {
-            img.src = currentUser.profile_picture;
+        const profilePicture = safeProfilePictureUrl(currentUser.profile_picture);
+        if (profilePicture) {
+            img.src = profilePicture;
+            img.referrerPolicy = 'no-referrer';
+            img.onerror = () => {
+                img.style.display = 'none';
+                if (initial) initial.style.display = '';
+            };
             img.style.display = '';
             if (initial) initial.style.display = 'none';
         } else {
@@ -1620,23 +1643,41 @@ function handleAvatarDrop(event) {
 
 async function saveSettings() {
     const btn = document.getElementById('settingsSaveBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const pwdError = document.getElementById('settingsPwdError');
+    const currentPwd = document.getElementById('settingsCurrentPwd').value;
+    const newPwd = document.getElementById('settingsNewPwd').value;
+    const confirmPwd = document.getElementById('settingsConfirmPwd').value;
+    const isChangingPassword = Boolean(currentPwd || newPwd || confirmPwd);
+
+    let validationError = '';
+    if (isChangingPassword && !currentPwd) validationError = 'Please enter your current password.';
+    else if (isChangingPassword && newPwd.length < 8) validationError = 'New password must be at least 8 characters.';
+    else if (isChangingPassword && newPwd !== confirmPwd) validationError = 'New passwords do not match.';
+
+    if (validationError) {
+        if (pwdError) {
+            pwdError.textContent = validationError;
+            pwdError.style.display = '';
+        }
+        showToast(validationError, 'warning');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+    }
+    if (pwdError) pwdError.style.display = 'none';
 
     const token = localStorage.getItem('grasp_session_token');
-    let profileSaved = false;
-    let passwordChanged = false;
-    let errors = [];
-
-    // Save the profile before changing the password because the latter logs out.
-    try {
+    const operation = (async () => {
         const profilePayload = {
             first_name: document.getElementById('settingsFirstName').value.trim() || null,
             last_name: document.getElementById('settingsLastName').value.trim() || null,
             dob: document.getElementById('settingsDob').value || null,
             profile_picture: _pendingProfilePicture || null,
         };
-
-        const profileRes = await fetch(`${API_BASE}/api/auth/profile`, {
+        const profileResponse = await fetch(`${API_BASE}/api/auth/profile`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -1644,80 +1685,52 @@ async function saveSettings() {
             },
             body: JSON.stringify(profilePayload),
         });
+        const profileData = await profileResponse.json().catch(() => ({}));
+        if (!profileResponse.ok) throw new Error(profileData.detail || 'Failed to save profile');
 
-        if (profileRes.ok) {
-            const updated = await profileRes.json();
-            currentUser = { ...currentUser, ...updated };
-            localStorage.setItem('grasp_user', JSON.stringify(currentUser));
-            populateUserProfile(currentUser);
-            profileSaved = true;
-        } else {
-            const err = await profileRes.json();
-            errors.push(err.detail || 'Failed to save profile');
+        currentUser = { ...currentUser, ...profileData };
+        localStorage.setItem('grasp_user', JSON.stringify(currentUser));
+        populateUserProfile(currentUser);
+
+        if (isChangingPassword) {
+            const passwordResponse = await fetch(`${API_BASE}/api/auth/password`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    current_password: currentPwd,
+                    new_password: newPwd,
+                    confirm_new_password: confirmPwd,
+                }),
+            });
+            const passwordData = await passwordResponse.json().catch(() => ({}));
+            if (!passwordResponse.ok) throw new Error(passwordData.detail || 'Failed to change password');
         }
-    } catch (e) {
-        errors.push(`Profile save error: ${e.message}`);
-    }
+        return { passwordChanged: isChangingPassword };
+    })();
 
-    // Change the password only when the user filled in that section.
-    const currentPwd = document.getElementById('settingsCurrentPwd').value;
-    const newPwd = document.getElementById('settingsNewPwd').value;
-    const confirmPwd = document.getElementById('settingsConfirmPwd').value;
-    const pwdError = document.getElementById('settingsPwdError');
-
-    if (currentPwd || newPwd || confirmPwd) {
-        // Validate client-side first
-        if (!currentPwd) {
-            errors.push('Please enter your current password.');
-        } else if (newPwd.length < 8) {
-            errors.push('New password must be at least 8 characters.');
-        } else if (newPwd !== confirmPwd) {
-            errors.push('New passwords do not match.');
-        } else {
-            try {
-                const pwdRes = await fetch(`${API_BASE}/api/auth/password`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({
-                        current_password: currentPwd,
-                        new_password: newPwd,
-                        confirm_new_password: confirmPwd,
-                    }),
-                });
-
-                if (pwdRes.ok) {
-                    passwordChanged = true;
-                } else {
-                    const err = await pwdRes.json();
-                    errors.push(err.detail || 'Failed to change password.');
-                }
-            } catch (e) {
-                errors.push(`Password change error: ${e.message}`);
-            }
-        }
-    }
-
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
-
-    if (errors.length > 0) {
+    try {
+        const result = await toast.promise(operation, {
+            loading: isChangingPassword ? 'Saving profile and changing password...' : 'Saving profile settings...',
+            success: data => data.passwordChanged
+                ? 'Password changed. Sign in again to continue.'
+                : 'Settings saved.',
+            error: error => `Could not save settings: ${error.message}`,
+        });
+        closeSettingsModal();
+        if (result.passwordChanged) window.setTimeout(() => logout(), 1500);
+    } catch (error) {
         if (pwdError) {
-            pwdError.textContent = errors.join(' ');
+            pwdError.textContent = error.message;
             pwdError.style.display = '';
         }
-        showToast(errors.join(' '), 'error');
-        return;
-    }
-
-    closeSettingsModal();
-
-    if (passwordChanged) {
-        showToast('Password changed. Please sign in again.', 'success');
-        setTimeout(() => logout(), 1500);
-    } else if (profileSaved) {
-        showToast('Settings saved ✓', 'success');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Save Changes';
+        }
     }
 }
 
@@ -1779,7 +1792,7 @@ async function confirmDeleteAccount() {
     if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
     if (errEl) { errEl.style.display = 'none'; }
 
-    try {
+    const operation = (async () => {
         const token = localStorage.getItem('grasp_session_token');
         const payload = {};
         if (!isGoogle) {
@@ -1795,20 +1808,23 @@ async function confirmDeleteAccount() {
             body: JSON.stringify(payload),
         });
 
-        if (res.ok) {
-            // Clear session and redirect
-            localStorage.removeItem('grasp_session_token');
-            localStorage.removeItem('grasp_user');
-            currentUser = null;
-            showToast('Your account has been deleted.', 'success');
-            setTimeout(() => { window.location.href = '/login'; }, 1200);
-        } else {
-            const err = await res.json();
-            showErr(err.detail || 'Failed to delete account. Please try again.');
-            if (btn) { btn.disabled = false; btn.textContent = 'Yes, Delete My Account'; }
-        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Failed to delete account. Please try again.');
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Deleting your account...',
+            success: 'Your account has been deleted.',
+            error: error => `Could not delete account: ${error.message}`,
+        });
+        localStorage.removeItem('grasp_session_token');
+        localStorage.removeItem('grasp_user');
+        currentUser = null;
+        setTimeout(() => { window.location.href = '/login'; }, 1200);
     } catch (e) {
-        showErr(`Error: ${e.message}`);
+        showErr(e.message);
         if (btn) { btn.disabled = false; btn.textContent = 'Yes, Delete My Account'; }
     }
 }

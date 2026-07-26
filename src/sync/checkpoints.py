@@ -7,9 +7,9 @@ interrupted full syncs can resume from the last successful batch.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -30,11 +30,11 @@ class CheckpointManager:
             stmt = pg_insert(checkpoints_table).values(
                 connector=connector,
                 state=state,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["connector"],
-                set_={"state": state, "updated_at": datetime.now(timezone.utc)},
+                set_={"state": state, "updated_at": datetime.now(UTC)},
             )
             async with self.engine.begin() as conn:
                 await conn.execute(stmt)
@@ -64,8 +64,6 @@ class CheckpointManager:
         """Remove checkpoint for a connector."""
         async with self.engine.begin() as conn:
             await conn.execute(
-                delete(checkpoints_table).where(
-                    checkpoints_table.c.connector == connector
-                )
+                delete(checkpoints_table).where(checkpoints_table.c.connector == connector)
             )
         logger.debug(f"Checkpoint cleared for {connector}")

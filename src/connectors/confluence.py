@@ -6,12 +6,13 @@ both incremental and live search modes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from .base import BaseConnector, Document, html_to_markdown
+
 
 class ConfluenceConnector(BaseConnector):
     """Connector for Atlassian Confluence Cloud."""
@@ -41,7 +42,9 @@ class ConfluenceConnector(BaseConnector):
 
     # Full retrieval
 
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Retrieve all Confluence pages across all spaces."""
         # Determine starting point from checkpoint
         processed_spaces: set[str] = set()
@@ -52,7 +55,9 @@ class ConfluenceConnector(BaseConnector):
             processed_spaces = set(checkpoint.get("processed_spaces", []))
             resume_space = checkpoint.get("current_space")
             resume_cursor = checkpoint.get("cursor")
-            self.logger.info(f"Resuming from checkpoint: space={resume_space}, processed={len(processed_spaces)}")
+            self.logger.info(
+                f"Resuming from checkpoint: space={resume_space}, processed={len(processed_spaces)}"
+            )
 
         # Get all spaces
         spaces = await self._get_all_spaces()
@@ -154,7 +159,7 @@ class ConfluenceConnector(BaseConnector):
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Confluence for recent content matching the query."""
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
         since_str = since.strftime("%Y-%m-%d %H:%M")
         cql = f'text ~ "{query}" AND lastModified >= "{since_str}" ORDER BY lastModified DESC'
 
@@ -227,7 +232,7 @@ class ConfluenceConnector(BaseConnector):
                 page_url = f"{self.base_url}{web_ui}"
 
             updated_str = page.get("version", {}).get("createdAt", "")
-            updated_at = datetime.now(timezone.utc)
+            updated_at = datetime.now(UTC)
             if updated_str:
                 try:
                     updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
@@ -258,11 +263,13 @@ class ConfluenceConnector(BaseConnector):
             space_key = result.get("space", {}).get("key", "unknown")
 
             web_ui = result.get("_links", {}).get("webui", "")
-            page_url = f"{self.base_url}{web_ui}" if web_ui else f"{self.base_url}/pages/{content_id}"
+            page_url = (
+                f"{self.base_url}{web_ui}" if web_ui else f"{self.base_url}/pages/{content_id}"
+            )
 
             version = result.get("version", {})
             updated_str = version.get("when", "")
-            updated_at = datetime.now(timezone.utc)
+            updated_at = datetime.now(UTC)
             if updated_str:
                 try:
                     updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))

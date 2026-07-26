@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import AsyncGenerator, Any
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -23,21 +25,41 @@ class Document:
     """A single piece of retrieved content from any platform."""
 
     id: str
-    source: str                    # confluence | jira | sharepoint | slack | notion
+    source: str  # confluence | jira | sharepoint | slack | notion
     title: str
-    content: str                   # Markdown-formatted body text
+    content: str  # Markdown-formatted body text
     url: str = ""
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class RateLimiter:
     """Simple async rate limiter with exponential backoff on 429s."""
 
-    def __init__(self, max_retries: int = 5, base_delay: float = 1.0):
+    def __init__(
+        self,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        max_concurrency: int = 4,
+        requests_per_second: float = 5.0,
+        overall_timeout: float = 30.0,
+    ):
         self.max_retries = max_retries
         self.base_delay = base_delay
-        self._lock = asyncio.Lock()
+        self.overall_timeout = overall_timeout
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._token_lock = asyncio.Lock()
+        self._minimum_interval = 1.0 / max(requests_per_second, 0.1)
+        self._last_request_at = 0.0
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
+    async def _take_token(self) -> None:
+        async with self._token_lock:
+            delay = self._minimum_interval - (time.monotonic() - self._last_request_at)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._last_request_at = time.monotonic()
 
     async def execute(
         self,
@@ -47,22 +69,34 @@ class RateLimiter:
         **kwargs,
     ) -> httpx.Response:
         """Execute an HTTP request with automatic retry on rate limits."""
+        if time.monotonic() < self._circuit_open_until:
+            raise RuntimeError("Connector circuit breaker is open")
         for attempt in range(self.max_retries + 1):
             try:
-                async with self._lock:
-                    response = await client.request(method, url, **kwargs)
+                await self._take_token()
+                async with self._semaphore:
+                    async with asyncio.timeout(self.overall_timeout):
+                        response = await client.request(method, url, **kwargs)
                 if response.status_code == 429:
                     if attempt == self.max_retries:
                         response.raise_for_status()
-                    retry_after = float(response.headers.get("Retry-After", self.base_delay * (2 ** attempt)))
-                    logger.warning(f"Rate limited on {url}, retrying in {retry_after:.1f}s (attempt {attempt + 1})")
+                    retry_after = float(
+                        response.headers.get("Retry-After", self.base_delay * (2**attempt))
+                    )
+                    logger.warning(
+                        f"Rate limited on {url}, retrying in {retry_after:.1f}s (attempt {attempt + 1})"
+                    )
                     await asyncio.sleep(retry_after)
                     continue
                 response.raise_for_status()
+                self._consecutive_failures = 0
                 return response
-            except (httpx.ConnectError, httpx.ReadTimeout) as e:
+            except (httpx.ConnectError, httpx.TimeoutException, TimeoutError) as e:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= 5:
+                    self._circuit_open_until = time.monotonic() + 60.0
                 if attempt < self.max_retries:
-                    delay = self.base_delay * (2 ** attempt)
+                    delay = self.base_delay * (2**attempt)
                     logger.warning(f"Connection error on {url}: {e}, retrying in {delay:.1f}s")
                     await asyncio.sleep(delay)
                     continue
@@ -85,7 +119,9 @@ class BaseConnector(ABC):
         self.logger = logging.getLogger(f"grasp.connector.{name}")
 
     @abstractmethod
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Yield batches of documents for a full sync.
 
         If a checkpoint is provided, resume from that state.
@@ -122,8 +158,8 @@ class BaseConnector(ABC):
 
 def html_to_markdown(html: str) -> str:
     """Convert HTML content to clean Markdown."""
-    from markdownify import markdownify
     from bs4 import BeautifulSoup
+    from markdownify import markdownify
 
     if not html or not html.strip():
         return ""
@@ -152,10 +188,10 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     """Convert a title into a safe filename."""
     import re
 
-    safe = re.sub(r'[<>:"/\\|?*]', '_', name)
-    safe = re.sub(r'\s+', '_', safe)
-    safe = re.sub(r'_+', '_', safe)
-    safe = safe.strip('_. ')
+    safe = re.sub(r'[<>:"/\\|?*]', "_", name)
+    safe = re.sub(r"\s+", "_", safe)
+    safe = re.sub(r"_+", "_", safe)
+    safe = safe.strip("_. ")
     if len(safe) > max_length:
-        safe = safe[:max_length].rstrip('_')
+        safe = safe[:max_length].rstrip("_")
     return safe or "untitled"

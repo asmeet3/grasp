@@ -2,6 +2,11 @@ const API_BASE = '';
 let isRegisterMode = false;
 let googleClientId = null;
 
+function loginDestination() {
+    const destination = new URLSearchParams(window.location.search).get('next');
+    return destination === '/admin' ? '/admin' : '/';
+}
+
 // Theme
 
 function initTheme() {
@@ -23,7 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 headers: { 'Authorization': `Bearer ${token}` },
             });
             if (res.ok) {
-                window.location.href = '/';
+                window.location.href = loginDestination();
                 return;
             }
         } catch (e) {
@@ -352,7 +357,7 @@ async function handleLogin(e) {
         if (data.token) {
             localStorage.setItem('grasp_session_token', data.token);
             localStorage.setItem('grasp_user', JSON.stringify(data.user));
-            window.location.href = '/';
+            window.location.href = loginDestination();
         }
     } catch (e) {
         showError('Connection error. Please try again.');
@@ -509,7 +514,7 @@ async function handleGoogleCredential(response) {
         if (data.token) {
             localStorage.setItem('grasp_session_token', data.token);
             localStorage.setItem('grasp_user', JSON.stringify(data.user));
-            window.location.href = '/';
+            window.location.href = loginDestination();
         }
     } catch (e) {
         showError('Google sign-in failed. Please try again.');

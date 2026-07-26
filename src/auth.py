@@ -6,18 +6,23 @@ New accounts require admin approval before access.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 import bcrypt
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from sqlalchemy import select, delete, func
+import httpx
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from .audit import PostgresAuditStore
+from .core.security import SystemRole
 from .database import users_table
 
 logger = logging.getLogger(__name__)
@@ -34,25 +39,43 @@ VALID_ROLES = (
     "Vice President",
     "Partner",
 )
-SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+VALID_SYSTEM_ROLES = tuple(role.value for role in SystemRole)
+LEGACY_IMPORTER_USER_ID = "legacy000000"
+
+
+def decode_google_id_token_claims(id_token: str) -> dict[str, Any]:
+    """Decode claims only after the token has been verified by Google tokeninfo."""
+    try:
+        payload = id_token.split(".")[1]
+        padded = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        return claims if isinstance(claims, dict) else {}
+    except (binascii.Error, IndexError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return {}
 
 
 class UserManager:
     """Manages user accounts stored in PostgreSQL."""
 
-    def __init__(self, engine: AsyncEngine, session_secret: str, google_client_id: str = ""):
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        session_secret: str,
+        google_client_id: str = "",
+        session_max_age: int = 3600,
+    ):
         self.engine = engine
         self.session_secret = session_secret
         self.google_client_id = google_client_id
+        self.session_max_age = session_max_age
         self._serializer = URLSafeTimedSerializer(session_secret)
+        self.audit = PostgresAuditStore(engine)
 
     # Persistence
 
     async def _load(self, user_id: str) -> dict[str, Any] | None:
         async with self.engine.begin() as conn:
-            result = await conn.execute(
-                select(users_table).where(users_table.c.id == user_id)
-            )
+            result = await conn.execute(select(users_table).where(users_table.c.id == user_id))
             row = result.mappings().first()
             return dict(row) if row else None
 
@@ -70,9 +93,7 @@ class UserManager:
         email_lower = email.strip().lower()
         async with self.engine.begin() as conn:
             result = await conn.execute(
-                select(users_table).where(
-                    func.lower(users_table.c.email) == email_lower
-                )
+                select(users_table).where(func.lower(users_table.c.email) == email_lower)
             )
             row = result.mappings().first()
             return dict(row) if row else None
@@ -102,13 +123,12 @@ class UserManager:
                 "conflict": "email",
             }
 
-        password_hash = bcrypt.hashpw(
-            password.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
+        password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
         user_id = str(uuid.uuid4())[:12]
         user = {
             "id": user_id,
+            "organization_id": "default",
             "first_name": first_name.strip(),
             "last_name": last_name.strip(),
             "dob": dob,
@@ -117,7 +137,9 @@ class UserManager:
             "auth_method": "email",
             "status": "pending_approval",
             "role": None,
-            "created_at": datetime.now(timezone.utc),
+            "job_title": None,
+            "system_role": SystemRole.MEMBER.value,
+            "created_at": datetime.now(UTC),
             "approved_at": None,
             "google_id": None,
         }
@@ -149,12 +171,16 @@ class UserManager:
                     "conflict": "email",
                 }
             if existing.get("status") == "pending_approval":
-                await self._refresh_google_profile(existing, given_name, family_name, google_id, profile_picture)
+                await self._refresh_google_profile(
+                    existing, given_name, family_name, google_id, profile_picture
+                )
                 return {
                     "user": self._public_user(existing),
                     "pending": True,
                 }
-            await self._refresh_google_profile(existing, given_name, family_name, google_id, profile_picture)
+            await self._refresh_google_profile(
+                existing, given_name, family_name, google_id, profile_picture
+            )
             pv = existing.get("password_version", 0)
             token = self._create_token(existing["id"], pv)
             return {"user": self._public_user(existing), "token": token}
@@ -162,6 +188,7 @@ class UserManager:
         user_id = str(uuid.uuid4())[:12]
         user = {
             "id": user_id,
+            "organization_id": "default",
             "first_name": given_name,
             "last_name": family_name,
             "dob": "",
@@ -170,7 +197,9 @@ class UserManager:
             "auth_method": "google",
             "status": "pending_approval",
             "role": None,
-            "created_at": datetime.now(timezone.utc),
+            "job_title": None,
+            "system_role": SystemRole.MEMBER.value,
+            "created_at": datetime.now(UTC),
             "approved_at": None,
             "google_id": google_id,
             "profile_picture": profile_picture,
@@ -303,7 +332,7 @@ class UserManager:
     async def verify_token(self, token: str) -> dict[str, Any] | None:
         """Verify a session token and return the user, or None."""
         try:
-            data = self._serializer.loads(token, max_age=SESSION_MAX_AGE)
+            data = self._serializer.loads(token, max_age=self.session_max_age)
             user = await self._load(data["uid"])
             if not user or user.get("status") != "approved":
                 return None
@@ -362,9 +391,7 @@ class UserManager:
         ):
             return {"error": "Current password is incorrect."}
 
-        new_hash = bcrypt.hashpw(
-            new_password.encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
+        new_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         user["password_hash"] = new_hash
         # Increment password_version to invalidate all existing session tokens
         user["password_version"] = user.get("password_version", 0) + 1
@@ -398,56 +425,136 @@ class UserManager:
                 return {"error": "Incorrect password. Account was not deleted."}
 
         async with self.engine.begin() as conn:
-            await conn.execute(
-                delete(users_table).where(users_table.c.id == user_id)
-            )
+            await conn.execute(delete(users_table).where(users_table.c.id == user_id))
 
         logger.info(f"User {user_id} ({user.get('email', '')}) deleted their account")
         return {"message": "Account deleted successfully."}
 
     # Admin actions
 
-    async def approve_user(self, user_id: str, role: str) -> dict[str, Any]:
-        """Approve a user and assign a role."""
+    async def approve_user(
+        self,
+        user_id: str,
+        job_title: str,
+        system_role: str = SystemRole.MEMBER.value,
+        *,
+        actor_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Approve a user and assign separate organizational and security roles."""
         user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
-        if role not in VALID_ROLES:
+        if job_title not in VALID_ROLES:
             return {"error": f"Invalid role. Must be one of: {', '.join(VALID_ROLES)}"}
+        if system_role not in VALID_SYSTEM_ROLES:
+            return {
+                "error": f"Invalid system role. Must be one of: {', '.join(VALID_SYSTEM_ROLES)}"
+            }
 
+        old_status = user.get("status")
+        old_system_role = user.get("system_role") or SystemRole.MEMBER.value
         user["status"] = "approved"
-        user["role"] = role
-        user["approved_at"] = datetime.now(timezone.utc)
+        user["role"] = job_title  # compatibility for older browser clients
+        user["job_title"] = job_title
+        user["system_role"] = system_role
+        user["approved_at"] = datetime.now(UTC)
         await self._save(user)
+        await self.audit.record(
+            "user.access_approved",
+            actor_id=actor_user_id,
+            organization_id=user.get("organization_id") or "default",
+            resource_type="user",
+            resource_id=user_id,
+            details={
+                "old_status": old_status,
+                "new_status": "approved",
+                "old_system_role": old_system_role,
+                "new_system_role": system_role,
+                "job_title": job_title,
+            },
+        )
 
-        logger.info(f"User {user_id} ({user['email']}) approved with role '{role}'")
-        return {"user": self._public_user(user), "message": f"User approved as {role}"}
+        logger.info(
+            "User %s approved with job title '%s' and system role '%s'",
+            user_id,
+            job_title,
+            system_role,
+        )
+        return {"user": self._public_user(user), "message": f"User approved as {job_title}"}
 
-    async def reject_user(self, user_id: str) -> dict[str, Any]:
+    async def reject_user(
+        self,
+        user_id: str,
+        *,
+        actor_user_id: str | None = None,
+    ) -> dict[str, Any]:
         """Reject a pending user."""
         user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
 
+        old_status = user.get("status")
         user["status"] = "rejected"
         await self._save(user)
+        await self.audit.record(
+            "user.access_revoked",
+            actor_id=actor_user_id,
+            organization_id=user.get("organization_id") or "default",
+            resource_type="user",
+            resource_id=user_id,
+            details={
+                "old_status": old_status,
+                "new_status": "rejected",
+                "system_role": user.get("system_role") or SystemRole.MEMBER.value,
+            },
+        )
 
         logger.info(f"User {user_id} ({user['email']}) rejected")
         return {"message": "User rejected"}
 
-    async def update_role(self, user_id: str, new_role: str) -> dict[str, Any]:
-        """Change an approved user's role."""
+    async def update_role(
+        self,
+        user_id: str,
+        new_role: str,
+        system_role: str | None = None,
+        *,
+        actor_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Change an approved user's job title and optionally security role."""
         user = await self._load(user_id)
         if not user:
             return {"error": "User not found"}
+        if user.get("status") != "approved":
+            return {"error": "Access can only be changed for an approved user"}
 
         if new_role not in VALID_ROLES:
             return {"error": f"Invalid role. Must be one of: {', '.join(VALID_ROLES)}"}
 
         old_role = user.get("role")
+        old_system_role = user.get("system_role") or SystemRole.MEMBER.value
         user["role"] = new_role
+        user["job_title"] = new_role
+        if system_role is not None:
+            if system_role not in VALID_SYSTEM_ROLES:
+                return {
+                    "error": f"Invalid system role. Must be one of: {', '.join(VALID_SYSTEM_ROLES)}"
+                }
+            user["system_role"] = system_role
         await self._save(user)
+        await self.audit.record(
+            "user.access_changed",
+            actor_id=actor_user_id,
+            organization_id=user.get("organization_id") or "default",
+            resource_type="user",
+            resource_id=user_id,
+            details={
+                "old_job_title": old_role,
+                "new_job_title": new_role,
+                "old_system_role": old_system_role,
+                "new_system_role": user.get("system_role") or SystemRole.MEMBER.value,
+            },
+        )
 
         logger.info(f"User {user_id} role changed: {old_role} → {new_role}")
         return {
@@ -455,14 +562,31 @@ class UserManager:
             "message": f"Role changed from {old_role} to {new_role}",
         }
 
-    async def list_users(self) -> list[dict[str, Any]]:
+    async def list_users(self, organization_id: str | None = None) -> list[dict[str, Any]]:
         """List all registered users."""
         async with self.engine.begin() as conn:
-            result = await conn.execute(
-                select(users_table).order_by(users_table.c.created_at.desc())
-            )
+            statement = select(users_table)
+            if organization_id is not None:
+                statement = statement.where(users_table.c.organization_id == organization_id)
+            result = await conn.execute(statement.order_by(users_table.c.created_at.desc()))
             rows = result.mappings().all()
         return [self._public_user(dict(row)) for row in rows]
+
+    async def count_administrators(self, organization_id: str | None = None) -> int:
+        """Count approved administrators, optionally within one organization."""
+        statement = (
+            select(func.count())
+            .select_from(users_table)
+            .where(
+                users_table.c.status == "approved",
+                users_table.c.system_role == SystemRole.ADMINISTRATOR.value,
+                users_table.c.id != LEGACY_IMPORTER_USER_ID,
+            )
+        )
+        if organization_id is not None:
+            statement = statement.where(users_table.c.organization_id == organization_id)
+        async with self.engine.begin() as conn:
+            return int((await conn.execute(statement)).scalar_one())
 
     # Google token verification
 
@@ -490,12 +614,17 @@ class UserManager:
             if not info.get("email"):
                 return {"error": "Google account has no email."}
 
+            # Google Identity credentials carry the standard profile claims.
+            # tokeninfo occasionally omits optional presentation fields, so use
+            # the already-verified ID token as a fallback for those fields only.
+            claims = decode_google_id_token_claims(id_token)
+
             return {
                 "email": info["email"],
-                "given_name": info.get("given_name", ""),
-                "family_name": info.get("family_name", ""),
+                "given_name": info.get("given_name") or claims.get("given_name", ""),
+                "family_name": info.get("family_name") or claims.get("family_name", ""),
                 "sub": info.get("sub", ""),
-                "picture": info.get("picture", ""),
+                "picture": info.get("picture") or claims.get("picture", ""),
             }
         except Exception as e:
             logger.error(f"Google token verification failed: {e}")
@@ -522,6 +651,9 @@ class UserManager:
             "auth_method": user.get("auth_method", "email"),
             "status": user.get("status", "pending_approval"),
             "role": user.get("role"),
+            "job_title": user.get("job_title") or user.get("role"),
+            "system_role": user.get("system_role") or SystemRole.MEMBER.value,
+            "organization_id": user.get("organization_id") or "default",
             "created_at": created_at,
             "approved_at": approved_at,
             "profile_picture": user.get("profile_picture"),

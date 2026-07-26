@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # Query
+
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="Message role: 'user' or 'assistant'")
@@ -15,7 +15,12 @@ class ChatMessage(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    question: str = Field(..., description="The question to ask the institutional brain")
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=20_000,
+        description="The question to ask the institutional brain",
+    )
     history: list[ChatMessage] | None = Field(
         None,
         description="Prior conversation messages for multi-turn chat context",
@@ -23,6 +28,7 @@ class QueryRequest(BaseModel):
 
 
 # Sync
+
 
 class SyncTriggerResponse(BaseModel):
     status: str
@@ -38,13 +44,18 @@ class SyncStatusResponse(BaseModel):
 
 # Changes
 
+
 class PendingChangesResponse(BaseModel):
     has_pending: bool
     changeset: dict | None = None
 
 
 class ApproveRequest(BaseModel):
+    change_set_id: str | None = Field(
+        None, description="Change set to approve; defaults to oldest pending"
+    )
     message: str | None = Field(None, description="Optional custom commit message")
+    explanation: str = Field("", description="Reviewer explanation")
 
 
 class ApproveResponse(BaseModel):
@@ -61,7 +72,13 @@ class RejectResponse(BaseModel):
     error: str | None = None
 
 
+class RejectRequest(BaseModel):
+    change_set_id: str | None = None
+    explanation: str = ""
+
+
 # Status
+
 
 class SystemStatusResponse(BaseModel):
     status: str = "online"
@@ -78,11 +95,14 @@ class SourcesResponse(BaseModel):
 
 # Contributions
 
+
 class ContributionSubmitRequest(BaseModel):
-    title: str = Field(..., description="Title for the contribution")
-    content: str = Field(..., description="The content to contribute")
+    title: str = Field(..., min_length=1, max_length=300, description="Title for the contribution")
+    content: str = Field(
+        ..., min_length=1, max_length=2_000_000, description="The content to contribute"
+    )
     content_type: str = Field("document", description="Type: document, code, or plain_text")
-    submitted_by: str = Field(..., description="Name of the submitter")
+    submitted_by: str = Field("", description="Deprecated; identity comes from the session")
 
 
 class ContributionResponse(BaseModel):
@@ -123,6 +143,7 @@ class ContributionActionResponse(BaseModel):
 
 # Chat threads
 
+
 class SaveChatThreadRequest(BaseModel):
     id: str = Field(..., description="Unique chat ID")
     title: str = Field(..., description="Chat title")
@@ -143,6 +164,7 @@ class ChatThreadListResponse(BaseModel):
 
 
 # Authentication
+
 
 class RegisterRequest(BaseModel):
     first_name: str = Field(..., description="First name")
@@ -172,13 +194,32 @@ class AuthResponse(BaseModel):
 
 class ApproveUserRequest(BaseModel):
     role: str = Field(..., description="Role to assign")
+    system_role: str = Field("member", description="Security role to assign")
 
 
 class UpdateRoleRequest(BaseModel):
     role: str = Field(..., description="New role")
+    system_role: str | None = Field(None, description="Optional new security role")
+
+
+# Company-brain agents
+
+
+class AgentRunRequest(BaseModel):
+    prompt: str = Field("", max_length=4_000, description="Optional focus for this run")
+
+
+class AgentActivationRequest(BaseModel):
+    active: bool
+
+
+class AgentEmergencyStopRequest(BaseModel):
+    stopped: bool
+    reason: str = Field("", max_length=500)
 
 
 # User self-service
+
 
 class UpdateProfileRequest(BaseModel):
     first_name: str | None = Field(None, description="Updated first name")
@@ -194,5 +235,6 @@ class ChangePasswordRequest(BaseModel):
 
 
 class DeleteAccountRequest(BaseModel):
-    password: str | None = Field(None, description="Current password (required for email accounts, omit for Google)")
-
+    password: str | None = Field(
+        None, description="Current password (required for email accounts, omit for Google)"
+    )

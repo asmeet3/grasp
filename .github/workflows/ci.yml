@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: grasp
+          POSTGRES_PASSWORD: grasp
+          POSTGRES_DB: grasp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U grasp" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      ANTHROPIC_API_KEY: test
+      ADMIN_KEY: test-bootstrap-key
+      DATABASE_URL: postgresql+asyncpg://grasp:grasp@localhost:5432/grasp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -e .[dev]
+      - run: alembic upgrade head
+      - run: alembic check
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest --cov --cov-report=term-missing
+      - run: bandit -q -r src -x src/connectors
+      - run: pip check

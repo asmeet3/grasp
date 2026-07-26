@@ -6,12 +6,13 @@ issue descriptions, comments, and metadata.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from .base import BaseConnector, Document
+
 
 class JiraConnector(BaseConnector):
     """Connector for Atlassian Jira Cloud."""
@@ -52,7 +53,9 @@ class JiraConnector(BaseConnector):
 
     # Full retrieval
 
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Retrieve all Jira issues across the instance."""
         # Enhanced JQL endpoint requires a restriction — cannot use bare ORDER BY
         jql = 'created >= "2000-01-01" ORDER BY created ASC'
@@ -81,7 +84,7 @@ class JiraConnector(BaseConnector):
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Jira for recently updated issues matching the query."""
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
         since_str = since.strftime("%Y-%m-%d %H:%M")
         jql = f'text ~ "{query}" AND updated >= "{since_str}" ORDER BY updated DESC'
 
@@ -106,14 +109,25 @@ class JiraConnector(BaseConnector):
         total_fetched = 0
 
         while True:
-            page_size = min(self.batch_size, max_results - total_fetched if max_results else self.batch_size)
+            page_size = min(
+                self.batch_size, max_results - total_fetched if max_results else self.batch_size
+            )
             body = {
                 "jql": jql,
                 "maxResults": page_size,
                 "fields": [
-                    "summary", "description", "status", "assignee", "reporter",
-                    "priority", "project", "comment", "issuetype", "created",
-                    "updated", "labels",
+                    "summary",
+                    "description",
+                    "status",
+                    "assignee",
+                    "reporter",
+                    "priority",
+                    "project",
+                    "comment",
+                    "issuetype",
+                    "created",
+                    "updated",
+                    "labels",
                 ],
             }
             if next_page_token:
@@ -204,7 +218,7 @@ class JiraConnector(BaseConnector):
 
             # Parse timestamp
             updated_str = fields.get("updated", "")
-            updated_at = datetime.now(timezone.utc)
+            updated_at = datetime.now(UTC)
             if updated_str:
                 try:
                     updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))

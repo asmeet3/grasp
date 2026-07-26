@@ -6,12 +6,13 @@ and uses search.messages for live queries.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from .base import BaseConnector, Document
+
 
 class SlackConnector(BaseConnector):
     """Connector for Slack via the Web API."""
@@ -24,7 +25,7 @@ class SlackConnector(BaseConnector):
         self.batch_size = batch_size
         self._checkpoint: dict = {}
         self._channel_cache: dict[str, str] = {}  # id -> name
-        self._user_cache: dict[str, str] = {}      # id -> display_name
+        self._user_cache: dict[str, str] = {}  # id -> display_name
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -64,7 +65,9 @@ class SlackConnector(BaseConnector):
 
     # Full retrieval
 
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Retrieve all messages from all accessible channels."""
         processed_channels: set[str] = set()
         resume_channel: str | None = None
@@ -144,7 +147,7 @@ class SlackConnector(BaseConnector):
 
             for msg in data.get("messages", []):
                 ts = float(msg.get("ts", 0))
-                date_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                date_str = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%d")
 
                 # Fetch thread replies if this is a parent message
                 if msg.get("reply_count", 0) > 0:
@@ -221,25 +224,30 @@ class SlackConnector(BaseConnector):
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Slack for recent messages matching the query."""
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-            data = await self._api_get("search.messages", {
-                "query": query,
-                "sort": "timestamp",
-                "sort_dir": "desc",
-                "count": 10,
-            })
+            cutoff = datetime.now(UTC) - timedelta(hours=hours)
+            data = await self._api_get(
+                "search.messages",
+                {
+                    "query": query,
+                    "sort": "timestamp",
+                    "sort_dir": "desc",
+                    "count": 10,
+                },
+            )
 
             results = []
             matches = data.get("messages", {}).get("matches", [])
 
             for match in matches[:10]:
                 ts = float(match.get("ts", 0))
-                msg_time = datetime.fromtimestamp(ts, tz=timezone.utc)
+                msg_time = datetime.fromtimestamp(ts, tz=UTC)
                 if msg_time < cutoff:
                     continue
 
                 channel = match.get("channel", {})
-                channel_name = channel.get("name", "unknown") if isinstance(channel, dict) else "unknown"
+                channel_name = (
+                    channel.get("name", "unknown") if isinstance(channel, dict) else "unknown"
+                )
                 user_name = match.get("username", match.get("user", "unknown"))
 
                 doc = Document(
@@ -270,7 +278,7 @@ class SlackConnector(BaseConnector):
         parts = []
         for msg in sorted(messages, key=lambda m: float(m.get("ts", 0))):
             ts = float(msg.get("ts", 0))
-            time_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M")
+            time_str = datetime.fromtimestamp(ts, tz=UTC).strftime("%H:%M")
             user_id = msg.get("user", "unknown")
             user_name = await self._get_user_name(user_id) if user_id != "unknown" else "unknown"
             text = msg.get("text", "")
@@ -280,7 +288,7 @@ class SlackConnector(BaseConnector):
             # Include thread replies
             for reply in msg.get("_thread_replies", []):
                 reply_ts = float(reply.get("ts", 0))
-                reply_time = datetime.fromtimestamp(reply_ts, tz=timezone.utc).strftime("%H:%M")
+                reply_time = datetime.fromtimestamp(reply_ts, tz=UTC).strftime("%H:%M")
                 reply_user = await self._get_user_name(reply.get("user", "unknown"))
                 reply_text = reply.get("text", "")
                 parts.append(f"  ↳ **[{reply_time}] {reply_user}:** {reply_text}")
@@ -293,7 +301,7 @@ class SlackConnector(BaseConnector):
             title=f"#{channel_name} — {date_str}",
             content=content,
             url=f"https://app.slack.com/client/{channel_id}",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
             metadata={"channel_id": channel_id, "channel_name": channel_name, "date": date_str},
         )
 

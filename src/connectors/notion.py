@@ -6,12 +6,13 @@ search endpoint for both incremental and live queries.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from .base import BaseConnector, Document
+
 
 class NotionConnector(BaseConnector):
     """Connector for Notion via the official API."""
@@ -50,7 +51,9 @@ class NotionConnector(BaseConnector):
 
     # Full retrieval
 
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Retrieve all pages and database items from Notion."""
         start_cursor = None
         if checkpoint:
@@ -148,7 +151,7 @@ class NotionConnector(BaseConnector):
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search Notion for pages matching the query."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
         results = []
         async for batch in self._search_all(query=query):
             results.extend(doc for doc in batch if doc.updated_at >= cutoff)
@@ -183,7 +186,7 @@ class NotionConnector(BaseConnector):
         content = await self._get_page_blocks(page_id)
 
         last_edited = page.get("last_edited_time", "")
-        updated_at = datetime.now(timezone.utc)
+        updated_at = datetime.now(UTC)
         if last_edited:
             try:
                 updated_at = datetime.fromisoformat(last_edited.replace("Z", "+00:00"))
@@ -229,7 +232,7 @@ class NotionConnector(BaseConnector):
             content_parts.append("\n## Properties\n" + "\n".join(prop_lines))
 
         last_edited = db.get("last_edited_time", "")
-        updated_at = datetime.now(timezone.utc)
+        updated_at = datetime.now(UTC)
         if last_edited:
             try:
                 updated_at = datetime.fromisoformat(last_edited.replace("Z", "+00:00"))

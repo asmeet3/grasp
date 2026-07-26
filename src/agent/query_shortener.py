@@ -55,14 +55,12 @@ class QueryShortener:
 
             if short_queries:
                 logger.info(
-                    f"Query shortened into {len(short_queries)} sub-queries: "
-                    f"{short_queries}"
+                    f"Query shortened into {len(short_queries)} sub-queries: {short_queries}"
                 )
                 return short_queries[:MAX_SHORT_QUERIES]
 
             logger.warning(
-                "Query shortener returned unparseable output, "
-                "falling back to original query"
+                "Query shortener returned unparseable output, falling back to original query"
             )
             return [query]
 

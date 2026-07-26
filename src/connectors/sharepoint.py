@@ -7,14 +7,15 @@ and the Microsoft Search API for live queries.
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone, timedelta
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from docx import Document as DocxDocument
 from PyPDF2 import PdfReader
 
 from .base import BaseConnector, Document
+
 
 class SharePointConnector(BaseConnector):
     """Connector for SharePoint Online via Microsoft Graph API."""
@@ -37,7 +38,7 @@ class SharePointConnector(BaseConnector):
         self.batch_size = batch_size
         self._checkpoint: dict = {}
         self._access_token: str | None = None
-        self._token_expires: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._token_expires: datetime = datetime.min.replace(tzinfo=UTC)
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -49,7 +50,7 @@ class SharePointConnector(BaseConnector):
 
     async def _ensure_token(self):
         """Acquire or refresh the OAuth2 access token."""
-        if self._access_token and datetime.now(timezone.utc) < self._token_expires:
+        if self._access_token and datetime.now(UTC) < self._token_expires:
             return
 
         client = await self._get_client()
@@ -67,19 +68,23 @@ class SharePointConnector(BaseConnector):
 
         self._access_token = token_data["access_token"]
         expires_in = int(token_data.get("expires_in", 3600))
-        self._token_expires = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
+        self._token_expires = datetime.now(UTC) + timedelta(seconds=expires_in - 60)
         self.logger.info("SharePoint access token acquired/refreshed")
 
     async def _api_get(self, url: str, params: dict | None = None) -> dict:
         await self._ensure_token()
         client = await self._get_client()
         headers = {"Authorization": f"Bearer {self._access_token}"}
-        response = await self.rate_limiter.execute(client, "GET", url, headers=headers, params=params)
+        response = await self.rate_limiter.execute(
+            client, "GET", url, headers=headers, params=params
+        )
         return response.json()
 
     # Full retrieval
 
-    async def full_retrieve(self, checkpoint: dict | None = None) -> AsyncGenerator[list[Document], None]:
+    async def full_retrieve(
+        self, checkpoint: dict | None = None
+    ) -> AsyncGenerator[list[Document], None]:
         """Retrieve all SharePoint content: drive items + list items."""
         processed_drives: set[str] = set()
         processed_lists: set[str] = set()
@@ -136,8 +141,10 @@ class SharePointConnector(BaseConnector):
                 if item.get("folder"):
                     # Recurse into subfolders
                     child_url = f"{self.GRAPH_BASE}/drives/{drive_id}/items/{item['id']}/children"
-                    child_path = f"{path}/{item['name']}" if path else item['name']
-                    async for child_batch in self._walk_drive_folder(drive_id, child_url, drive_name, child_path):
+                    child_path = f"{path}/{item['name']}" if path else item["name"]
+                    async for child_batch in self._walk_drive_folder(
+                        drive_id, child_url, drive_name, child_path
+                    ):
                         yield child_batch
                 elif item.get("file"):
                     doc = await self._drive_item_to_document(item, drive_name, path)
@@ -262,7 +269,7 @@ class SharePointConnector(BaseConnector):
 
     async def live_search(self, query: str, hours: int = 4) -> list[Document]:
         """Search SharePoint via the Microsoft Search API."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
         await self._ensure_token()
         client = await self._get_client()
 
@@ -292,13 +299,11 @@ class SharePointConnector(BaseConnector):
             for hit_container in result_set.get("hitsContainers", []):
                 for hit in hit_container.get("hits", []):
                     resource = hit.get("resource", {})
-                    updated_at = datetime.now(timezone.utc)
+                    updated_at = datetime.now(UTC)
                     updated_str = resource.get("lastModifiedDateTime", "")
                     if updated_str:
                         try:
-                            updated_at = datetime.fromisoformat(
-                                updated_str.replace("Z", "+00:00")
-                            )
+                            updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
                         except ValueError:
                             pass
                     if updated_at < cutoff:
@@ -318,7 +323,9 @@ class SharePointConnector(BaseConnector):
 
     # Document conversion
 
-    async def _drive_item_to_document(self, item: dict, drive_name: str, path: str) -> Document | None:
+    async def _drive_item_to_document(
+        self, item: dict, drive_name: str, path: str
+    ) -> Document | None:
         """Convert a drive item to a Document, downloading file content when possible."""
         try:
             name = item.get("name", "Untitled")
@@ -339,7 +346,7 @@ class SharePointConnector(BaseConnector):
             size = item.get("size", 0)
 
             updated_str = item.get("lastModifiedDateTime", "")
-            updated_at = datetime.now(timezone.utc)
+            updated_at = datetime.now(UTC)
             if updated_str:
                 try:
                     updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
@@ -400,16 +407,12 @@ class SharePointConnector(BaseConnector):
 
             if mime == "application/pdf":
                 reader = PdfReader(io.BytesIO(response.content))
-                return "\n\n".join(
-                    text for page in reader.pages if (text := page.extract_text())
-                )
+                return "\n\n".join(text for page in reader.pages if (text := page.extract_text()))
 
             if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 document = DocxDocument(io.BytesIO(response.content))
                 return "\n\n".join(
-                    paragraph.text
-                    for paragraph in document.paragraphs
-                    if paragraph.text.strip()
+                    paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()
                 )
 
             return ""
@@ -437,7 +440,7 @@ class SharePointConnector(BaseConnector):
             web_url = item.get("webUrl", "")
 
             updated_str = item.get("lastModifiedDateTime", "")
-            updated_at = datetime.now(timezone.utc)
+            updated_at = datetime.now(UTC)
             if updated_str:
                 try:
                     updated_at = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))

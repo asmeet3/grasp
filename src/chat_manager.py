@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import select, delete, desc
+from sqlalchemy import delete, desc, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -16,9 +16,11 @@ class ChatManager:
     async def get_user_chats(self, user_id: str) -> list[dict]:
         """Get all chat threads for a given user, ordered by latest updated."""
         async with self.engine.begin() as conn:
-            stmt = select(chat_threads_table).where(
-                chat_threads_table.c.user_id == user_id
-            ).order_by(desc(chat_threads_table.c.updated_at))
+            stmt = (
+                select(chat_threads_table)
+                .where(chat_threads_table.c.user_id == user_id)
+                .order_by(desc(chat_threads_table.c.updated_at))
+            )
 
             result = await conn.execute(stmt)
             rows = result.fetchall()
@@ -27,14 +29,10 @@ class ChatManager:
             for row in rows:
                 row_dict = dict(row._mapping)
                 row_dict["created_at"] = (
-                    row_dict["created_at"].isoformat()
-                    if row_dict["created_at"]
-                    else None
+                    row_dict["created_at"].isoformat() if row_dict["created_at"] else None
                 )
                 row_dict["updated_at"] = (
-                    row_dict["updated_at"].isoformat()
-                    if row_dict["updated_at"]
-                    else None
+                    row_dict["updated_at"].isoformat() if row_dict["updated_at"] else None
                 )
                 chats.append(row_dict)
 
@@ -58,9 +56,7 @@ class ChatManager:
             }
             if created_at:
                 try:
-                    parsed_dt = datetime.fromisoformat(
-                        created_at.replace("Z", "+00:00")
-                    )
+                    parsed_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                     values["created_at"] = parsed_dt
                 except ValueError:
                     pass

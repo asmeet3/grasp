@@ -8,13 +8,15 @@ individual platform search tools.
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from ..core.security import AuthContext, PolicyEngine
 
 if TYPE_CHECKING:
-    from .sub_agents import SubAgentDispatcher
+    from ..connectors.base import BaseConnector
     from ..index.vector_store import VectorStore
     from ..repo.manager import RepoManager
-    from ..connectors.base import BaseConnector
+    from .sub_agents import SubAgentDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +66,12 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": "Optional: filter by information type.",
                     "enum": [
-                        "decisions", "projects", "processes", "products",
-                        "people", "topics",
+                        "decisions",
+                        "projects",
+                        "processes",
+                        "products",
+                        "people",
+                        "topics",
                     ],
                 },
                 "n_results": {
@@ -121,8 +127,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "search_confluence_live",
         "description": (
-            "Search Confluence in real time for recent content. "
-            "Use for targeted follow-up."
+            "Search Confluence in real time for recent content. Use for targeted follow-up."
         ),
         "input_schema": {
             "type": "object",
@@ -137,9 +142,7 @@ TOOL_DEFINITIONS = [
         "description": "Search Jira in real-time for recently updated issues. Use for targeted follow-up.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query for Jira."}
-            },
+            "properties": {"query": {"type": "string", "description": "Search query for Jira."}},
             "required": ["query"],
         },
     },
@@ -162,9 +165,7 @@ TOOL_DEFINITIONS = [
         "description": "Search Slack in real-time for recent messages and threads. Use for targeted follow-up.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query for Slack."}
-            },
+            "properties": {"query": {"type": "string", "description": "Search query for Slack."}},
             "required": ["query"],
         },
     },
@@ -173,9 +174,7 @@ TOOL_DEFINITIONS = [
         "description": "Search Notion in real-time for recent pages and database entries. Use for targeted follow-up.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query for Notion."}
-            },
+            "properties": {"query": {"type": "string", "description": "Search query for Notion."}},
             "required": ["query"],
         },
     },
@@ -196,53 +195,72 @@ class ToolExecutor:
         self.vector_store = vector_store
         self.repo_manager = repo_manager
         self.connectors = connectors
+        self.policy = PolicyEngine()
 
-    async def execute(self, tool_name: str, tool_input: dict[str, Any]) -> str:
+    async def execute(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        auth_context: AuthContext | None = None,
+    ) -> str:
         """Execute a tool and return the result as a string."""
+        if auth_context is None:
+            return "Access denied: authenticated policy context is required."
         try:
             if tool_name == "fan_out_search":
-                return await self._fan_out_search(tool_input["query"])
+                return await self._fan_out_search(tool_input["query"], auth_context)
             elif tool_name == "search_knowledge_repo":
-                return self._search_repo(
+                return await self._search_repo(
                     tool_input["query"],
                     tool_input.get("source_filter"),
                     tool_input.get("info_type_filter"),
                     tool_input.get("n_results", 10),
+                    auth_context,
                 )
             elif tool_name == "read_repo_file":
-                return self._read_file(tool_input["file_path"])
+                return await self._read_file(tool_input["file_path"], auth_context)
             elif tool_name == "read_full_documents":
-                return self._read_full_documents(tool_input["repo_paths"])
+                return await self._read_full_documents(tool_input["repo_paths"], auth_context)
             elif tool_name == "search_confluence_live":
-                return await self._search_live("confluence", tool_input["query"])
+                return await self._search_live("confluence", tool_input["query"], auth_context)
             elif tool_name == "search_jira_live":
-                return await self._search_live("jira", tool_input["query"])
+                return await self._search_live("jira", tool_input["query"], auth_context)
             elif tool_name == "search_sharepoint_live":
-                return await self._search_live("sharepoint", tool_input["query"])
+                return await self._search_live("sharepoint", tool_input["query"], auth_context)
             elif tool_name == "search_slack_live":
-                return await self._search_live("slack", tool_input["query"])
+                return await self._search_live("slack", tool_input["query"], auth_context)
             elif tool_name == "search_notion_live":
-                return await self._search_live("notion", tool_input["query"])
+                return await self._search_live("notion", tool_input["query"], auth_context)
             else:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
             logger.error(f"Tool execution failed for {tool_name}: {e}")
             return f"Error executing {tool_name}: {e}"
 
-    async def _fan_out_search(self, query: str) -> str:
+    async def _fan_out_search(self, query: str, auth_context: AuthContext) -> str:
         """Execute parallel fan-out search across all sources."""
-        results = await self.dispatcher.fan_out(query)
+        results = await self.dispatcher.fan_out(query, auth_context)
         return self.dispatcher.format_all_results(results)
 
-    def _search_repo(
-        self, query: str, source: str | None, info_type: str | None, n: int
+    async def _search_repo(
+        self,
+        query: str,
+        source: str | None,
+        info_type: str | None,
+        n: int,
+        auth_context: AuthContext,
     ) -> str:
         """Search the vector store with optional filters."""
-        results = self.vector_store.search(
-            query=query,
+        import asyncio
+
+        results = await asyncio.to_thread(
+            self.vector_store.search,
+            query,
             n_results=n,
             source_filter=source,
             info_type_filter=info_type,
+            auth_context=auth_context,
         )
 
         if not results:
@@ -259,14 +277,19 @@ class ToolExecutor:
 
         return "\n".join(lines)
 
-    def _read_file(self, file_path: str) -> str:
+    async def _read_file(self, file_path: str, auth_context: AuthContext) -> str:
         """Read a file from the knowledge repository."""
-        content = self.repo_manager.get_file_content(file_path)
+        import asyncio
+
+        metadata = await asyncio.to_thread(self.repo_manager.get_committed_file_metadata, file_path)
+        if not self.policy.can_access_document(auth_context, metadata):
+            return "Access denied or file not found."
+        content = await asyncio.to_thread(self.repo_manager.read_committed_file, file_path)
         if content:
             return f"Content of {file_path}:\n\n{content}"
         return f"File not found: {file_path}"
 
-    def _read_full_documents(self, repo_paths: list[str]) -> str:
+    async def _read_full_documents(self, repo_paths: list[str], auth_context: AuthContext) -> str:
         """Batch-read full documents from the knowledge repository.
 
         Used for the follow-up round when Sonnet determines that
@@ -275,30 +298,43 @@ class ToolExecutor:
         MAX_DOCS = 5
         paths = repo_paths[:MAX_DOCS]
 
-        parts = []
-        for path in paths:
-            content = self.repo_manager.get_file_content(path)
-            if content:
-                parts.append(f"--- Full Document: {path} ---\n\n{content}")
-            else:
-                parts.append(f"--- {path}: NOT FOUND ---")
+        import asyncio
+
+        def read_documents() -> list[str]:
+            parts: list[str] = []
+            for path in paths:
+                metadata = self.repo_manager.get_committed_file_metadata(path)
+                content = (
+                    self.repo_manager.read_committed_file(path)
+                    if self.policy.can_access_document(auth_context, metadata)
+                    else ""
+                )
+                if content:
+                    parts.append(f"--- Full Document: {path} ---\n\n{content}")
+                else:
+                    parts.append(f"--- {path}: NOT FOUND ---")
+            return parts
+
+        parts = await asyncio.to_thread(read_documents)
 
         if not parts:
             return "No documents could be read from the provided paths."
 
-        return (
-            f"Retrieved {len(parts)} full document(s):\n\n"
-            + "\n\n".join(parts)
-        )
+        return f"Retrieved {len(parts)} full document(s):\n\n" + "\n\n".join(parts)
 
-    async def _search_live(self, platform: str, query: str) -> str:
+    async def _search_live(self, platform: str, query: str, auth_context: AuthContext) -> str:
         """Search a specific platform live."""
         connector = self.connectors.get(platform)
         if not connector:
             return f"Platform '{platform}' is not configured."
 
         try:
-            results = await connector.live_search(query)
+            raw_results = await connector.live_search(query)
+            results = [
+                doc
+                for doc in raw_results
+                if self.policy.can_access_document(auth_context, doc.metadata)
+            ]
             if not results:
                 return f"No recent results found on {platform}."
 

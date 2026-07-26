@@ -1,5 +1,12 @@
 const API_BASE = '';
 let adminKey = sessionStorage.getItem('grasp_admin_key') || '';
+let bootstrapMode = false;
+let adminIntervalsStarted = false;
+let currentAdminUser = null;
+let allAgentsData = [];
+let allAgentRuns = [];
+let agentOwners = [];
+let agentControlState = { enabled: false, emergency_stopped: false, reason: '' };
 
 // Theme
 
@@ -55,30 +62,97 @@ function toggleSidebar() {
 
 async function authenticateAdmin() {
     const input = document.getElementById('adminKeyInput');
-    const key = input.value.trim();
-    if (!key) return;
+    const key = input ? input.value.trim() : '';
+    const token = localStorage.getItem('grasp_session_token');
+    if (!key) {
+        showAdminGateError('Enter the configured bootstrap key.');
+        return;
+    }
 
-    // Verify key by calling a protected endpoint
     try {
-        const res = await fetch(`${API_BASE}/api/sync/status`, {
-            headers: { 'X-Admin-Key': key },
-        });
-        if (res.status === 403) {
-            document.getElementById('authError').style.display = 'block';
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (key) headers['X-Admin-Key'] = key;
+        const res = await fetch(`${API_BASE}/api/admin/access`, { headers });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showAdminGateError(data.detail || 'Invalid bootstrap key.');
             return;
         }
+        const access = await res.json();
         adminKey = key;
-        sessionStorage.setItem('grasp_admin_key', key);
-        showAdminDashboard();
+        if (key) sessionStorage.setItem('grasp_admin_key', key);
+        showAdminDashboard(Boolean(access.bootstrap));
     } catch (e) {
-        document.getElementById('authError').style.display = 'block';
+        showAdminGateError('Grasp could not verify bootstrap access. Try again.');
     }
 }
 
 function adminLogout() {
     sessionStorage.removeItem('grasp_admin_key');
+    localStorage.removeItem('grasp_session_token');
+    localStorage.removeItem('grasp_user');
     adminKey = '';
-    window.location.reload();
+    redirectToAdminLogin();
+}
+
+function redirectToAdminLogin() {
+    window.location.replace('/login?next=%2Fadmin');
+}
+
+function signInWithDifferentAccount() {
+    sessionStorage.removeItem('grasp_admin_key');
+    localStorage.removeItem('grasp_session_token');
+    localStorage.removeItem('grasp_user');
+    adminKey = '';
+    redirectToAdminLogin();
+}
+
+function showAdminGateError(message) {
+    const error = document.getElementById('authError');
+    if (!error) return;
+    error.textContent = message;
+    error.style.display = 'block';
+}
+
+function showBootstrapGate(configured) {
+    document.getElementById('adminApp').style.display = 'none';
+    document.getElementById('authGate').style.display = 'flex';
+    document.getElementById('adminGateTitle').textContent = configured
+        ? 'Set up Grasp Admin'
+        : 'Administrator setup unavailable';
+    document.getElementById('adminGateMessage').textContent = configured
+        ? 'No administrator account exists yet. Enter the one-time bootstrap key to establish the first administrator.'
+        : 'No administrator exists and no bootstrap key is configured. Set GRASP_ADMIN_KEY on the server and restart Grasp.';
+    document.getElementById('adminBootstrapForm').style.display = configured ? 'block' : 'none';
+    document.getElementById('adminDeniedActions').style.display = 'none';
+    const error = document.getElementById('authError');
+    error.textContent = '';
+    error.style.display = 'none';
+}
+
+function showAdminAccessDenied() {
+    document.getElementById('adminApp').style.display = 'none';
+    document.getElementById('authGate').style.display = 'flex';
+    document.getElementById('adminGateTitle').textContent = 'Operations access required';
+    document.getElementById('adminGateMessage').textContent =
+        'Your account is signed in, but it does not have Operator or Administrator access.';
+    document.getElementById('adminBootstrapForm').style.display = 'none';
+    document.getElementById('adminDeniedActions').style.display = 'flex';
+    const error = document.getElementById('authError');
+    error.textContent = '';
+    error.style.display = 'none';
+}
+
+function showAdminStartupError() {
+    document.getElementById('adminApp').style.display = 'none';
+    document.getElementById('authGate').style.display = 'flex';
+    document.getElementById('adminGateTitle').textContent = 'Grasp is unavailable';
+    document.getElementById('adminGateMessage').textContent =
+        'The server could not determine administrator status. Confirm that Grasp is running, then refresh this page.';
+    document.getElementById('adminBootstrapForm').style.display = 'none';
+    document.getElementById('adminDeniedActions').style.display = 'none';
+    showAdminGateError('Administrator status check failed.');
 }
 
 function toggleAdminMenu(event) {
@@ -103,23 +177,117 @@ document.addEventListener('click', (e) => {
             }
         }
     });
+
+    const clickTarget = e.target instanceof Element ? e.target : null;
+    const clickedInsideCustomSelect = Boolean(
+        clickTarget && clickTarget.closest('.shadcn-select, .shadcn-select-content')
+    );
+    if (!clickedInsideCustomSelect) closeAllShadcnSelects();
+
+    const clickedInsideUsersTable = Boolean(clickTarget && clickTarget.closest('.users-table-shell'));
+    const clickedInsideEditConfirmation = Boolean(
+        clickTarget && clickTarget.closest('#roleConfirmModal, #accessConfirmModal')
+    );
+    if (editingUserId && !clickedInsideUsersTable && !clickedInsideCustomSelect && !clickedInsideEditConfirmation) {
+        cancelUserEdit(editingUserId);
+    }
 });
 
-function showAdminDashboard() {
+async function loadAdminProfile() {
+    const token = localStorage.getItem('grasp_session_token');
+    let user = null;
+    if (token) {
+        try {
+            const response = await fetch(`${API_BASE}/api/auth/me`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (response.ok) user = await response.json();
+        } catch (_) {
+            // Fall back to the last authenticated profile below.
+        }
+    }
+    if (!user) {
+        try {
+            user = JSON.parse(localStorage.getItem('grasp_user') || 'null');
+        } catch (_) {
+            user = null;
+        }
+    }
+    if (!user) return;
+    currentAdminUser = user;
+    configureAdminNavigation(user);
+
+    const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Admin';
+    const initials = (user.first_name || 'A')[0].toUpperCase();
+    const nameElement = document.getElementById('adminProfileName');
+    if (nameElement) nameElement.textContent = name;
+    const menuNameElement = document.getElementById('adminMenuName');
+    if (menuNameElement) menuNameElement.textContent = name;
+    const accessElement = document.getElementById('adminProfileAccess');
+    const menuAccessElement = document.getElementById('adminMenuAccess');
+    if (accessElement) {
+        const label = (user.system_role || 'member').replaceAll('_', ' ');
+        accessElement.textContent = label.replace(/\b\w/g, character => character.toUpperCase());
+        if (menuAccessElement) menuAccessElement.textContent = accessElement.textContent;
+    }
+    setAdminAvatar(document.getElementById('adminAvatar'), user.profile_picture, initials);
+    setAdminAvatar(document.getElementById('adminMenuAvatar'), user.profile_picture, initials);
+    if (allUsersData.length) renderUsersTable();
+}
+
+function showAdminDashboard(isBootstrap = false) {
+    bootstrapMode = isBootstrap;
     document.getElementById('authGate').style.display = 'none';
     document.getElementById('adminApp').style.display = 'flex';
+    loadAdminProfile();
+
+    document.getElementById('statusPanel').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('connectorsToggle').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('connectorsSectionBody').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navHome').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navContributions').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navAgents').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('syncBtn').style.display = isBootstrap ? 'none' : '';
+
+    if (isBootstrap) {
+        showAdminScreen('Users');
+        return;
+    }
+
     refreshStatus();
     checkPendingChanges();
     checkContributionCount();
-    checkUserPendingCount();
 
     // Default to Home screen
     showAdminScreen('Home');
 
-    setInterval(refreshStatus, 15000);
-    setInterval(checkPendingChanges, 15000);
-    setInterval(checkContributionCount, 15000);
-    setInterval(checkUserPendingCount, 15000);
+    if (!adminIntervalsStarted) {
+        adminIntervalsStarted = true;
+        setInterval(refreshStatus, 15000);
+        setInterval(checkPendingChanges, 15000);
+        setInterval(checkContributionCount, 15000);
+        setInterval(() => {
+            if (currentAdminUser?.system_role === 'administrator') checkUserPendingCount();
+        }, 15000);
+        setInterval(() => {
+            if (['operator', 'administrator'].includes(currentAdminUser?.system_role)) loadAgents();
+        }, 15000);
+    }
+}
+
+function configureAdminNavigation(user) {
+    if (bootstrapMode) return;
+    const role = user?.system_role || 'member';
+    const canManageUsers = role === 'administrator';
+    const canManageAgents = role === 'operator' || role === 'administrator';
+    document.getElementById('navUsers').style.display = canManageUsers ? '' : 'none';
+    document.getElementById('navAgents').style.display = canManageAgents ? '' : 'none';
+    if (canManageUsers) checkUserPendingCount();
+
+    const usersScreen = document.getElementById('screenUsers');
+    const agentsScreen = document.getElementById('screenAgents');
+    if (!canManageUsers && usersScreen?.style.display !== 'none') showAdminScreen('Home');
+    if (!canManageAgents && agentsScreen?.style.display !== 'none') showAdminScreen('Home');
 }
 
 // Screen routing
@@ -128,7 +296,7 @@ function showAdminScreen(screenName) {
     // Hide all screens
     document.querySelectorAll('.admin-screen').forEach(el => el.style.display = 'none');
     // Remove active class from all nav items
-    document.querySelectorAll('.admin-nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.admin-sidebar-button').forEach(el => el.classList.remove('active'));
 
     const titleEl = document.getElementById('adminScreenTitle');
 
@@ -147,27 +315,101 @@ function showAdminScreen(screenName) {
         document.getElementById('navContributions').classList.add('active');
         titleEl.textContent = 'Contribution Requests';
         loadContributions();
+    } else if (screenName === 'Agents') {
+        document.getElementById('screenAgents').style.display = 'block';
+        document.getElementById('navAgents').classList.add('active');
+        titleEl.textContent = 'Company-brain Agents';
+        loadAgents();
     }
 }
 
-// Auto-authenticate if key is stored in session
-document.addEventListener('DOMContentLoaded', () => {
-    if (adminKey) {
-        showAdminDashboard();
+async function getAdminBootstrapStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/api/admin/bootstrap/status`);
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (_) {
+        return null;
     }
+}
+
+async function hasValidSignedInUser(token) {
+    if (!token) return false;
+    try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        return response.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function initializeAdminPage() {
+    const token = localStorage.getItem('grasp_session_token');
+    if (adminKey || token) {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/access`, {
+                headers: bootstrapHeaders(),
+            });
+            if (res.ok) {
+                const access = await res.json();
+                showAdminDashboard(Boolean(access.bootstrap));
+                return;
+            }
+        } catch (_) {
+            // Resolve the correct logged-out, denied, or bootstrap state below.
+        }
+        sessionStorage.removeItem('grasp_admin_key');
+        adminKey = '';
+    }
+
+    const signedIn = await hasValidSignedInUser(token);
+    if (token && !signedIn) {
+        localStorage.removeItem('grasp_session_token');
+        localStorage.removeItem('grasp_user');
+    }
+
+    const bootstrapStatus = await getAdminBootstrapStatus();
+    if (!bootstrapStatus) {
+        showAdminStartupError();
+        return;
+    }
+    if (bootstrapStatus.bootstrap_required) {
+        showBootstrapGate(Boolean(bootstrapStatus.bootstrap_configured));
+        return;
+    }
+    if (signedIn) {
+        showAdminAccessDenied();
+        return;
+    }
+    redirectToAdminLogin();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initializeAdminPage();
 });
 
 // API helpers
 
 function adminHeaders(extra = {}) {
-    return { 'X-Admin-Key': adminKey, ...extra };
+    const token = localStorage.getItem('grasp_session_token');
+    const headers = { ...extra };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+}
+
+function bootstrapHeaders(extra = {}) {
+    const headers = adminHeaders(extra);
+    if (adminKey) headers['X-Admin-Key'] = adminKey;
+    return headers;
 }
 
 // Status polling
 
 async function refreshStatus() {
     try {
-        const res = await fetch(`${API_BASE}/api/status`);
+        const res = await fetch(`${API_BASE}/api/status`, { headers: adminHeaders() });
         const data = await res.json();
 
         const dot = document.getElementById('statusDot');
@@ -218,31 +460,118 @@ async function refreshStatus() {
     }
 }
 
+function adminDashboardIcon(name) {
+    const icons = {
+        activity: '<path d="M4 12h3l2-5 4 10 2-5h5" />',
+        database: '<ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />',
+        layers: '<path d="m12 3-9 5 9 5 9-5-9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" />',
+        clock: '<circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />',
+        history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" />',
+        source: '<path d="M8 6h13M8 12h13M8 18h13" /><circle cx="3.5" cy="6" r="1" /><circle cx="3.5" cy="12" r="1" /><circle cx="3.5" cy="18" r="1" />',
+        empty: '<path d="M4 5h16v14H4z" /><path d="M8 10h8M8 14h5" />',
+    };
+    return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${icons[name] || icons.activity}</svg>`;
+}
+
+function adminDashboardEmptyState(title, description) {
+    return `<div class="admin-dashboard-empty-item">
+        <div class="admin-dashboard-item-media">${adminDashboardIcon('empty')}</div>
+        <div class="admin-dashboard-item-content">
+            <div class="admin-dashboard-item-title">${escapeHtml(title)}</div>
+            <div class="admin-dashboard-item-description">${escapeHtml(description)}</div>
+        </div>
+    </div>`;
+}
+
 function updateSyncStatusCard(data) {
     const card = document.getElementById('syncStatusCard');
-    const ls = data.last_sync;
+    const lastSync = data.last_sync;
+    const isSyncing = data.status === 'syncing';
+    const numberValue = value => typeof value === 'number' ? value.toLocaleString() : value ?? '—';
+    const metrics = [
+        {
+            icon: 'activity',
+            title: 'Sync engine',
+            description: isSyncing ? 'Processing connected knowledge sources' : 'Ready for scheduled or manual runs',
+            value: isSyncing ? 'Syncing' : 'Idle',
+            tone: isSyncing ? 'warning' : 'success',
+        },
+        {
+            icon: 'database',
+            title: 'Documents',
+            description: 'Knowledge records available to Grasp',
+            value: numberValue(data.document_stats?.total),
+            tone: 'neutral',
+        },
+        {
+            icon: 'layers',
+            title: 'Index chunks',
+            description: 'Embedded segments ready for retrieval',
+            value: numberValue(data.vector_index?.total_chunks),
+            tone: 'neutral',
+        },
+        {
+            icon: 'clock',
+            title: 'Next sync',
+            description: 'Next scheduled automation window',
+            value: data.next_scheduled ? timeAgo(data.next_scheduled, true) : 'Not scheduled',
+            tone: 'neutral',
+        },
+    ];
 
-    let html = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">';
-    html += `<div class="stat-card"><div class="stat-number" style="color:var(--text-primary)">${data.status === 'syncing' ? '⟳' : '✓'}</div><div class="stat-label">${data.status === 'syncing' ? 'Syncing' : 'Idle'}</div></div>`;
-    html += `<div class="stat-card"><div class="stat-number" style="color:var(--text-primary)">${data.document_stats?.total ?? '—'}</div><div class="stat-label">Documents</div></div>`;
-    html += `<div class="stat-card"><div class="stat-number" style="color:var(--text-primary)">${data.vector_index?.total_chunks ?? '—'}</div><div class="stat-label">Index Chunks</div></div>`;
-    html += '</div>';
+    let html = `<div class="admin-dashboard-item-grid" role="list">${metrics.map(metric => `
+        <article class="admin-dashboard-item admin-dashboard-metric-item" role="listitem">
+            <div class="admin-dashboard-item-media ${metric.tone}">${adminDashboardIcon(metric.icon)}</div>
+            <div class="admin-dashboard-item-content">
+                <div class="admin-dashboard-item-title">${metric.title}</div>
+                <div class="admin-dashboard-item-description">${metric.description}</div>
+            </div>
+            <div class="admin-dashboard-item-actions">
+                <strong class="admin-dashboard-metric-value ${metric.tone}">${metric.value}</strong>
+            </div>
+        </article>`).join('')}</div>`;
 
-    if (ls) {
-        html += `<div style="margin-top:20px;font-size:12px;color:var(--text-secondary);line-height:1.8">`;
-        html += `Last sync: <strong style="color:var(--text-primary)">${ls.type || 'unknown'}</strong> — ${ls.total_docs ?? 0} docs — ${timeAgo(ls.timestamp)}`;
-        if (ls.workers) {
-            html += '<div style="margin-top:10px">';
-            for (const [name, info] of Object.entries(ls.workers)) {
-                const icon = info.status === 'completed' ? '✓' : '✗';
-                const color = info.status === 'completed' ? 'var(--success)' : 'var(--danger)';
-                html += `<div style="padding:2px 0"><span style="color:${color}">${icon}</span> ${name}: ${info.docs ?? 0} docs</div>`;
-            }
-            html += '</div>';
+    html += '<div class="admin-dashboard-detail-block">';
+    html += '<div class="admin-dashboard-detail-label">Latest run</div>';
+    if (!lastSync) {
+        html += adminDashboardEmptyState('No synchronization recorded', 'Run a sync to populate source and document activity.');
+    } else {
+        const workers = Object.entries(lastSync.workers || {});
+        const failedWorkers = workers.filter(([, info]) => info.status !== 'completed');
+        const resultTone = failedWorkers.length ? 'danger' : 'success';
+        const resultLabel = failedWorkers.length ? 'Needs attention' : 'Completed';
+        const typeLabel = String(lastSync.type || 'sync').replaceAll('_', ' ');
+        const completedLabel = lastSync.timestamp ? timeAgo(lastSync.timestamp) : 'Time unavailable';
+
+        html += `<article class="admin-dashboard-item admin-dashboard-latest-item">
+            <div class="admin-dashboard-item-media ${resultTone}">${adminDashboardIcon('history')}</div>
+            <div class="admin-dashboard-item-content">
+                <div class="admin-dashboard-item-title">${escapeHtml(typeLabel)} sync</div>
+                <div class="admin-dashboard-item-description">${numberValue(lastSync.total_docs ?? 0)} documents · ${completedLabel}</div>
+            </div>
+            <div class="admin-dashboard-item-actions">
+                <span class="admin-dashboard-result-badge ${resultTone}">${resultLabel}</span>
+            </div>
+        </article>`;
+
+        if (workers.length) {
+            html += `<div class="admin-dashboard-worker-grid" role="list">${workers.map(([name, info]) => {
+                const completed = info.status === 'completed';
+                const statusLabel = String(info.status || 'unknown').replaceAll('_', ' ');
+                return `<div class="admin-dashboard-item admin-dashboard-worker-item" role="listitem">
+                    <div class="admin-dashboard-item-media ${completed ? 'success' : 'danger'}">${adminDashboardIcon('source')}</div>
+                    <div class="admin-dashboard-item-content">
+                        <div class="admin-dashboard-item-title">${escapeHtml(name)}</div>
+                        <div class="admin-dashboard-item-description">${numberValue(info.docs ?? 0)} documents processed</div>
+                    </div>
+                    <div class="admin-dashboard-item-actions">
+                        <span class="admin-dashboard-result-badge ${completed ? 'success' : 'danger'}">${escapeHtml(statusLabel)}</span>
+                    </div>
+                </div>`;
+            }).join('')}</div>`;
         }
-        html += '</div>';
     }
-
+    html += '</div>';
     card.innerHTML = html;
 }
 
@@ -253,24 +582,53 @@ async function loadSyncHistory() {
             headers: adminHeaders(),
         });
         if (!res.ok) {
-            card.innerHTML = '<p style="color:var(--text-secondary)">No sync history available.</p>';
+            card.innerHTML = adminDashboardEmptyState('History unavailable', 'Grasp could not retrieve synchronization history.');
             return;
         }
         const history = await res.json();
         if (!history || !history.length) {
-            card.innerHTML = '<p style="color:var(--text-secondary)">No sync history yet.</p>';
+            card.innerHTML = adminDashboardEmptyState('No sync history yet', 'Completed synchronization runs will appear here.');
             return;
         }
 
-        let html = '';
-        for (const entry of history.slice(0, 10)) {
-            html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-secondary);line-height:1.6">`;
-            html += `<strong style="color:var(--text-primary)">${entry.type || 'sync'}</strong> — ${entry.total_docs ?? 0} docs — <span style="color:var(--text-tertiary)">${timeAgo(entry.timestamp)}</span>`;
-            html += '</div>';
-        }
-        card.innerHTML = html || '<p style="color:var(--text-secondary)">No history.</p>';
+        const recentHistory = history.slice(-10).reverse();
+        const rows = recentHistory.map(entry => {
+            const workers = Object.entries(entry.workers || {});
+            const failedCount = workers.filter(([, info]) => info.status !== 'completed').length;
+            const resultTone = failedCount ? 'danger' : 'success';
+            const resultLabel = failedCount ? `${failedCount} failed` : 'Completed';
+            const typeLabel = String(entry.type || 'sync').replaceAll('_', ' ');
+            const completedLabel = entry.timestamp ? timeAgo(entry.timestamp) : '—';
+            return `<tr>
+                <td>
+                    <div class="admin-dashboard-table-primary">${escapeHtml(typeLabel)}</div>
+                    <div class="admin-dashboard-table-secondary">Synchronization run</div>
+                </td>
+                <td><span class="admin-dashboard-result-badge ${resultTone}">${resultLabel}</span></td>
+                <td class="admin-dashboard-table-sources">${workers.length}</td>
+                <td class="admin-dashboard-table-number">${Number(entry.total_docs ?? 0).toLocaleString()}</td>
+                <td class="admin-dashboard-table-time"><time datetime="${escapeHtml(entry.timestamp || '')}">${completedLabel}</time></td>
+            </tr>`;
+        }).join('');
+
+        card.innerHTML = `<div class="admin-dashboard-table-frame">
+            <table class="admin-dashboard-table">
+                <caption class="sr-only">Ten most recent synchronization runs</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Sync</th>
+                        <th scope="col">Result</th>
+                        <th scope="col" class="admin-dashboard-table-sources">Sources</th>
+                        <th scope="col" class="admin-dashboard-table-number">Documents</th>
+                        <th scope="col" class="admin-dashboard-table-time">Completed</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <div class="admin-dashboard-table-footer">Showing ${recentHistory.length} of ${history.length} recorded sync${history.length === 1 ? '' : 's'}</div>
+        </div>`;
     } catch (e) {
-        card.innerHTML = '<p style="color:var(--text-secondary)">Could not load history.</p>';
+        card.innerHTML = adminDashboardEmptyState('History unavailable', 'Grasp could not retrieve synchronization history.');
     }
 }
 
@@ -511,39 +869,52 @@ function toggleAllDiffs() {
 
 async function approveChanges() {
     const msg = document.getElementById('commitMessage').value || null;
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/changes/approve`, {
             method: 'POST',
             headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: msg }),
         });
-        const data = await res.json();
-        if (data.status === 'committed') {
-            closePendingModal();
-            checkPendingChanges();
-            const branchInfo = data.branch ? ` → branch: ${data.branch}` : '';
-            showToast(`Changes committed & pushed ✓${branchInfo}`, 'success');
-        } else {
-            showToast(`Error: ${data.error}`, 'error');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status !== 'active') {
+            throw new Error(data.detail || data.error || 'Approval failed');
         }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+        closePendingModal();
+        await checkPendingChanges();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Approving and indexing changes...',
+            success: 'Changes committed, indexed, and activated.',
+            error: error => `Could not approve changes: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 async function rejectChanges() {
-    if (!confirm('Are you sure? This will revert all uncommitted changes.')) return;
-    try {
-        await fetch(`${API_BASE}/api/changes/reject`, {
+    if (!confirm('Reject this isolated proposal? Active knowledge will not change.')) return;
+    const operation = (async () => {
+        const response = await fetch(`${API_BASE}/api/changes/reject`, {
             method: 'POST',
-            headers: adminHeaders(),
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
         });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || data.error || 'Rejection failed');
         closePendingModal();
-        checkPendingChanges();
-        showToast('Changes rejected', 'warning');
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+        await checkPendingChanges();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Rejecting proposed changes...',
+            success: { type: 'warning', description: 'Changes rejected.' },
+            error: error => `Could not reject changes: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 // Sync
@@ -553,16 +924,23 @@ async function triggerSync() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Syncing...';
 
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/sync/trigger`, {
             method: 'POST',
             headers: adminHeaders(),
         });
-        const data = await res.json();
-        showToast(data.message, 'success');
-    } catch (e) {
-        showToast(`Sync error: ${e.message}`, 'error');
-    }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.message || 'Sync could not be started');
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Starting knowledge sync...',
+            success: data => data.message || 'Knowledge sync started.',
+            error: error => `Sync could not be started: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 
     setTimeout(() => {
         btn.disabled = false;
@@ -577,6 +955,39 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.appendChild(document.createTextNode(text));
     return div.innerHTML;
+}
+
+function safeProfilePictureUrl(value) {
+    if (typeof value !== 'string' || !value) return '';
+    if (/^data:image\/(png|jpeg|webp);base64,/i.test(value)) return value;
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function setAdminAvatar(container, picture, initials) {
+    if (!container) return;
+    container.textContent = initials;
+    const source = safeProfilePictureUrl(picture);
+    if (!source) return;
+    const image = document.createElement('img');
+    image.src = source;
+    image.alt = 'Avatar';
+    image.referrerPolicy = 'no-referrer';
+    image.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+    image.addEventListener('error', () => {
+        container.textContent = initials;
+    }, { once: true });
+    container.replaceChildren(image);
+}
+
+function avatarMarkup(picture, initials) {
+    const source = safeProfilePictureUrl(picture);
+    if (!source) return escapeHtml(initials);
+    return `<img src="${escapeHtml(source)}" alt="Avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.remove();this.parentElement.textContent='${escapeHtml(initials)}'">`;
 }
 
 function timeAgo(dateStr, future = false) {
@@ -595,18 +1006,6 @@ function timeAgo(dateStr, future = false) {
     }
 }
 
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s ease-out';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
 // User management
 
 let usersPage = 0;
@@ -615,6 +1014,230 @@ let usersFilterText = '';
 let usersSortCol = 'status';
 let usersSortAsc = true;
 let allUsersData = [];
+let editingUserId = null;
+let revokeDialogTrigger = null;
+const SYSTEM_ROLES = [
+    ['member', 'Member'],
+    ['knowledge_editor', 'Knowledge Editor'],
+    ['operator', 'Operator'],
+    ['administrator', 'Administrator'],
+];
+
+function userSelectIds(field, userId) {
+    const prefix = field === 'role' ? 'role' : 'system-role';
+    return {
+        control: `${prefix}-control-${userId}`,
+        input: `${prefix}-${userId}`,
+        content: `${prefix}-content-${userId}`,
+        display: `${prefix}-display-${userId}`,
+    };
+}
+
+function shadcnSelectMarkup({
+    field,
+    userId,
+    value,
+    originalValue,
+    options,
+    label,
+    placeholder,
+    disabled = false,
+    hidden = false,
+}) {
+    const ids = userSelectIds(field, userId);
+    const selectedOption = options.find(([optionValue]) => optionValue === value);
+    const selectedLabel = selectedOption ? selectedOption[1] : placeholder;
+    const originalData = field === 'role'
+        ? `data-original-role="${escapeHtml(originalValue || '')}"`
+        : `data-original-system-role="${escapeHtml(originalValue || 'member')}"`;
+    const items = options.map(([optionValue, optionLabel]) => {
+        const selected = optionValue === value;
+        return `<button type="button" class="shadcn-select-item" role="option" tabindex="-1"
+            data-value="${escapeHtml(optionValue)}" data-state="${selected ? 'checked' : 'unchecked'}"
+            aria-selected="${selected ? 'true' : 'false'}"
+            onclick="selectShadcnOption(event, '${field}', '${userId}', '${optionValue}')"
+            onkeydown="handleShadcnSelectItemKeydown(event, this)">
+            <span class="shadcn-select-check" aria-hidden="true">✓</span>
+            <span class="shadcn-select-item-label">${escapeHtml(optionLabel)}</span>
+        </button>`;
+    }).join('');
+
+    return `<div class="shadcn-select user-edit-control" id="${ids.control}"
+            data-field="${field}" data-content-id="${ids.content}"${hidden ? ' style="display:none"' : ''}>
+        <input type="hidden" id="${ids.input}" value="${escapeHtml(value || '')}" ${originalData}>
+        <button type="button" class="shadcn-select-trigger" aria-haspopup="listbox" aria-expanded="false"
+            aria-controls="${ids.content}" aria-label="${escapeHtml(label)}"
+            onclick="toggleShadcnSelect(event, '${ids.control}')"
+            onkeydown="handleShadcnSelectTriggerKeydown(event, '${ids.control}')"${disabled ? ' disabled' : ''}>
+            <span class="shadcn-select-value${selectedOption ? '' : ' placeholder'}">${escapeHtml(selectedLabel)}</span>
+            <svg class="shadcn-select-chevron" viewBox="0 0 20 20" aria-hidden="true">
+                <path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+        </button>
+        <div class="shadcn-select-content" id="${ids.content}" role="listbox"
+            aria-label="${escapeHtml(label)}" data-owner-id="${ids.control}" data-field="${field}"
+            data-user-id="${userId}" hidden>
+            <div class="shadcn-select-viewport">${items}</div>
+        </div>
+    </div>`;
+}
+
+function positionShadcnSelect(root, content) {
+    const trigger = root.querySelector('.shadcn-select-trigger');
+    const triggerRect = trigger.getBoundingClientRect();
+    const viewportPadding = 8;
+    const width = Math.min(Math.max(triggerRect.width, 190), window.innerWidth - viewportPadding * 2);
+    const left = Math.min(
+        Math.max(triggerRect.left, viewportPadding),
+        window.innerWidth - width - viewportPadding
+    );
+
+    content.style.width = `${width}px`;
+    content.style.left = `${left}px`;
+    content.style.top = `${triggerRect.bottom + 5}px`;
+    const contentHeight = content.getBoundingClientRect().height;
+    const availableBelow = window.innerHeight - triggerRect.bottom - viewportPadding;
+    const availableAbove = triggerRect.top - viewportPadding;
+    if (contentHeight > availableBelow && availableAbove > availableBelow) {
+        content.style.top = `${Math.max(viewportPadding, triggerRect.top - contentHeight - 5)}px`;
+    }
+}
+
+function openShadcnSelect(rootId, focusDirection = null) {
+    const root = document.getElementById(rootId);
+    if (!root) return;
+    const trigger = root.querySelector('.shadcn-select-trigger');
+    if (!trigger || trigger.disabled) return;
+
+    closeAllShadcnSelects(rootId);
+    const content = document.getElementById(root.dataset.contentId);
+    if (!content) return;
+    content.hidden = false;
+    document.body.appendChild(content);
+    trigger.setAttribute('aria-expanded', 'true');
+    root.dataset.open = 'true';
+    positionShadcnSelect(root, content);
+
+    if (focusDirection) {
+        const items = Array.from(content.querySelectorAll('.shadcn-select-item'));
+        if (!items.length) return;
+        const selected = content.querySelector('[aria-selected="true"]');
+        const item = focusDirection === 'last' ? items[items.length - 1] : selected || items[0];
+        item.focus();
+    }
+}
+
+function closeShadcnSelect(rootId, restoreFocus = false) {
+    const root = document.getElementById(rootId);
+    if (!root) return;
+    const trigger = root.querySelector('.shadcn-select-trigger');
+    const content = document.getElementById(root.dataset.contentId);
+    if (content) {
+        content.hidden = true;
+        content.removeAttribute('style');
+        root.appendChild(content);
+    }
+    if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+        if (restoreFocus) trigger.focus();
+    }
+    delete root.dataset.open;
+}
+
+function closeAllShadcnSelects(exceptRootId = null) {
+    document.querySelectorAll('.shadcn-select[data-open="true"]').forEach(root => {
+        if (root.id !== exceptRootId) closeShadcnSelect(root.id);
+    });
+}
+
+function toggleShadcnSelect(event, rootId) {
+    event.stopPropagation();
+    const root = document.getElementById(rootId);
+    if (!root) return;
+    if (root.dataset.open === 'true') closeShadcnSelect(rootId);
+    else openShadcnSelect(rootId);
+}
+
+function handleShadcnSelectTriggerKeydown(event, rootId) {
+    if (!['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openShadcnSelect(rootId, event.key === 'ArrowUp' ? 'last' : 'selected');
+}
+
+function handleShadcnSelectItemKeydown(event, item) {
+    const content = item.closest('.shadcn-select-content');
+    if (!content) return;
+    const items = Array.from(content.querySelectorAll('.shadcn-select-item'));
+    const currentIndex = items.indexOf(item);
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        closeShadcnSelect(content.dataset.ownerId, true);
+        return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectShadcnOption(
+            event,
+            content.dataset.field,
+            content.dataset.userId,
+            item.dataset.value
+        );
+        return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+
+    event.preventDefault();
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = items.length - 1;
+    items[nextIndex].focus();
+}
+
+function setShadcnSelectValue(field, userId, value) {
+    const ids = userSelectIds(field, userId);
+    const root = document.getElementById(ids.control);
+    const input = document.getElementById(ids.input);
+    if (!root || !input) return;
+
+    input.value = value;
+    const content = document.getElementById(ids.content);
+    const items = content ? Array.from(content.querySelectorAll('.shadcn-select-item')) : [];
+    const selectedItem = items.find(item => item.dataset.value === value);
+    items.forEach(item => {
+        const selected = item.dataset.value === value;
+        item.dataset.state = selected ? 'checked' : 'unchecked';
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
+    });
+    const valueElement = root.querySelector('.shadcn-select-value');
+    if (valueElement && selectedItem) {
+        valueElement.textContent = selectedItem.querySelector('.shadcn-select-item-label').textContent;
+        valueElement.classList.remove('placeholder');
+    }
+    root.querySelector('.shadcn-select-trigger')?.classList.remove('role-select-error');
+}
+
+function selectShadcnOption(event, field, userId, value) {
+    event.preventDefault();
+    event.stopPropagation();
+    const ids = userSelectIds(field, userId);
+    setShadcnSelectValue(field, userId, value);
+    closeShadcnSelect(ids.control, true);
+
+    const user = allUsersData.find(item => item.id === userId);
+    if (!user || user.status !== 'approved') return;
+    if (field === 'role') confirmRoleChange(userId, value);
+    else confirmSystemRoleChange(userId, value);
+}
+
+window.addEventListener('resize', () => closeAllShadcnSelects());
+document.addEventListener('scroll', event => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !target.closest('.shadcn-select-content')) closeAllShadcnSelects();
+}, true);
 
 function toggleActionDropdown(event, id) {
     event.stopPropagation();
@@ -630,7 +1253,7 @@ async function loadUsers() {
     const card = document.getElementById('usersCard');
     try {
         const res = await fetch(`${API_BASE}/api/admin/users`, {
-            headers: adminHeaders(),
+            headers: bootstrapMode ? bootstrapHeaders() : adminHeaders(),
         });
         if (!res.ok) {
             card.innerHTML = '<p style="color:var(--text-secondary)">Could not load users. Check admin key.</p>';
@@ -650,180 +1273,264 @@ async function loadUsers() {
     }
 }
 
+function sortUsersBy(column) {
+    if (usersSortCol === column) {
+        usersSortAsc = !usersSortAsc;
+    } else {
+        usersSortCol = column;
+        usersSortAsc = true;
+    }
+    usersPage = 0;
+    renderUsersTable();
+}
+
+function setUsersSortColumn(column) {
+    if (usersSortCol !== column) {
+        usersSortCol = column;
+        usersSortAsc = true;
+    }
+    usersPage = 0;
+    renderUsersTable();
+}
+
+function toggleUsersSortDirection() {
+    usersSortAsc = !usersSortAsc;
+    usersPage = 0;
+    renderUsersTable();
+}
+
 function renderUsersTable() {
     const card = document.getElementById('usersCard');
-
+    closeAllShadcnSelects();
+    editingUserId = null;
     const ALL_ROLES = [
         'Intern', 'Junior Associate', 'Associate', 'Senior Associate',
         'Team Lead', 'Manager', 'Director', 'Principal', 'Vice President', 'Partner',
     ];
-
     const statusOrder = { pending_approval: 0, approved: 1, rejected: 2 };
 
-    // Capture focus state
-    const searchInput = card.querySelector('.data-table-search');
+    const searchInput = card.querySelector('.user-table-search');
     const focusActive = document.activeElement === searchInput;
     const cursorStart = searchInput ? searchInput.selectionStart : 0;
     const cursorEnd = searchInput ? searchInput.selectionEnd : 0;
 
-    // Filter
-    let filtered = allUsersData;
-    if (usersFilterText) {
-        const q = usersFilterText.toLowerCase();
-        filtered = allUsersData.filter(u => {
-            const name = `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase();
-            return name.includes(q) || (u.email || '').toLowerCase().includes(q);
-        });
-    }
+    const query = usersFilterText.trim().toLowerCase();
+    const filtered = allUsersData.filter(user => {
+        if (!query) return true;
+        const name = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
+        return name.includes(query) || (user.email || '').toLowerCase().includes(query);
+    });
 
-    // Sort
     filtered.sort((a, b) => {
-        let va, vb;
+        const aIsCurrentUser = Boolean(currentAdminUser && currentAdminUser.id === a.id);
+        const bIsCurrentUser = Boolean(currentAdminUser && currentAdminUser.id === b.id);
+        if (aIsCurrentUser !== bIsCurrentUser) return aIsCurrentUser ? -1 : 1;
+
+        let valueA;
+        let valueB;
         if (usersSortCol === 'status') {
-            va = statusOrder[a.status] ?? 9;
-            vb = statusOrder[b.status] ?? 9;
+            valueA = statusOrder[a.status] ?? 9;
+            valueB = statusOrder[b.status] ?? 9;
         } else if (usersSortCol === 'name') {
-            va = `${a.first_name || ''} ${a.last_name || ''}`.toLowerCase();
-            vb = `${b.first_name || ''} ${b.last_name || ''}`.toLowerCase();
+            valueA = `${a.first_name || ''} ${a.last_name || ''}`.toLowerCase();
+            valueB = `${b.first_name || ''} ${b.last_name || ''}`.toLowerCase();
         } else if (usersSortCol === 'email') {
-            va = (a.email || '').toLowerCase();
-            vb = (b.email || '').toLowerCase();
+            valueA = (a.email || '').toLowerCase();
+            valueB = (b.email || '').toLowerCase();
         } else if (usersSortCol === 'joined') {
-            va = a.created_at || '';
-            vb = b.created_at || '';
+            valueA = a.created_at || '';
+            valueB = b.created_at || '';
         } else {
-            va = a[usersSortCol] || '';
-            vb = b[usersSortCol] || '';
+            valueA = a[usersSortCol] || '';
+            valueB = b[usersSortCol] || '';
         }
-        if (va < vb) return usersSortAsc ? -1 : 1;
-        if (va > vb) return usersSortAsc ? 1 : -1;
+        if (valueA < valueB) return usersSortAsc ? -1 : 1;
+        if (valueA > valueB) return usersSortAsc ? 1 : -1;
         return 0;
     });
 
-    // Paginate
     const totalPages = Math.ceil(filtered.length / USERS_PER_PAGE);
     if (usersPage >= totalPages) usersPage = Math.max(0, totalPages - 1);
     const pageItems = filtered.slice(usersPage * USERS_PER_PAGE, (usersPage + 1) * USERS_PER_PAGE);
+    const visiblePage = totalPages ? usersPage + 1 : 1;
+    const visibleTotalPages = Math.max(totalPages, 1);
 
-    const sortIcon = (col) => {
-        if (usersSortCol !== col) return '<span class="sort-icon">↕</span>';
-        return usersSortAsc ? '<span class="sort-icon">↑</span>' : '<span class="sort-icon">↓</span>';
+    const sortIcon = column => {
+        if (usersSortCol !== column) return '<span class="user-sort-icon" aria-hidden="true">↕</span>';
+        return `<span class="user-sort-icon active" aria-hidden="true">${usersSortAsc ? '↑' : '↓'}</span>`;
     };
-    const sortClass = (col) => {
-        let cls = 'sortable';
-        if (usersSortCol === col) cls += usersSortAsc ? ' sort-asc' : ' sort-desc';
-        return cls;
+    const ariaSort = column => {
+        if (usersSortCol !== column) return 'none';
+        return usersSortAsc ? 'ascending' : 'descending';
     };
 
-    let html = `
-        <div class="data-table-toolbar">
-            <input type="text" class="data-table-search" placeholder="Filter by name or email..."
-                value="${escapeHtml(usersFilterText)}" oninput="usersFilterText=this.value;usersPage=0;renderUsersTable()">
+    let html = bootstrapMode
+        ? `<div class="user-bootstrap-banner">
+                <div><strong>Administrator setup required</strong><span>Claim administrator access to unlock user management and the full dashboard.</span></div>
+                <button type="button" class="approve-btn" onclick="claimAdministratorAccess()">Make me Administrator</button>
+           </div>`
+        : '';
+
+    html += `
+        <div class="user-management-toolbar">
+            <label class="user-search-field">
+                <span class="user-search-icon" aria-hidden="true">⌕</span>
+                <span class="sr-only">Search users</span>
+                <input type="search" class="user-table-search" placeholder="Search by name or email"
+                    aria-label="Search users by name or email" value="${escapeHtml(usersFilterText)}"
+                    oninput="usersFilterText=this.value;usersPage=0;renderUsersTable()">
+            </label>
+            <span class="user-results-count">${filtered.length} of ${allUsersData.length} users</span>
+            <div class="user-mobile-sort">
+                <label for="usersMobileSort">Sort by</label>
+                <select id="usersMobileSort" onchange="setUsersSortColumn(this.value)">
+                    <option value="status" ${usersSortCol === 'status' ? 'selected' : ''}>Status</option>
+                    <option value="name" ${usersSortCol === 'name' ? 'selected' : ''}>Name</option>
+                    <option value="email" ${usersSortCol === 'email' ? 'selected' : ''}>Email</option>
+                    <option value="joined" ${usersSortCol === 'joined' ? 'selected' : ''}>Joined</option>
+                </select>
+                <button type="button" class="user-sort-direction" onclick="toggleUsersSortDirection()"
+                    aria-label="Reverse sort direction" title="Reverse sort direction">${usersSortAsc ? '↑' : '↓'}</button>
+            </div>
         </div>
-        <div class="data-table-wrapper">
-            <table class="data-table">
+        <div class="users-table-shell">
+            <table class="users-table">
+                <caption class="sr-only">Registered Grasp users and their access settings</caption>
+                <colgroup>
+                    <col class="user-col-identity">
+                    <col class="user-col-auth">
+                    <col class="user-col-role">
+                    <col class="user-col-access">
+                    <col class="user-col-status">
+                    <col class="user-col-joined">
+                    <col class="user-col-actions">
+                </colgroup>
                 <thead>
                     <tr>
-                        <th style="width:25%" class="${sortClass('name')}" onclick="usersSortCol='name';usersSortAsc=usersSortCol==='name'?!usersSortAsc:true;renderUsersTable()">Name ${sortIcon('name')}</th>
-                        <th style="width:25%" class="${sortClass('email')}" onclick="usersSortCol='email';usersSortAsc=usersSortCol==='email'?!usersSortAsc:true;renderUsersTable()">Email ${sortIcon('email')}</th>
-                        <th style="width:10%">Auth</th>
-                        <th style="width:15%">Role</th>
-                        <th style="width:15%" class="${sortClass('status')}" onclick="usersSortCol='status';usersSortAsc=usersSortCol==='status'?!usersSortAsc:true;renderUsersTable()">Status ${sortIcon('status')}</th>
-                        <th style="width:10%" class="${sortClass('joined')}" onclick="usersSortCol='joined';usersSortAsc=usersSortCol==='joined'?!usersSortAsc:true;renderUsersTable()">Joined ${sortIcon('joined')}</th>
-                        <th style="width:50px"></th>
+                        <th scope="col" aria-sort="${ariaSort('name')}"><button type="button" class="user-sort-button" onclick="sortUsersBy('name')">User ${sortIcon('name')}</button></th>
+                        <th scope="col">Auth</th>
+                        <th scope="col">Job role</th>
+                        <th scope="col">System access</th>
+                        <th scope="col" aria-sort="${ariaSort('status')}"><button type="button" class="user-sort-button" onclick="sortUsersBy('status')">Status ${sortIcon('status')}</button></th>
+                        <th scope="col" aria-sort="${ariaSort('joined')}"><button type="button" class="user-sort-button" onclick="sortUsersBy('joined')">Joined ${sortIcon('joined')}</button></th>
+                        <th scope="col" class="user-actions-heading">Actions</th>
                     </tr>
                 </thead>
                 <tbody>`;
 
     if (pageItems.length === 0) {
-        html += `<tr><td colspan="7" class="data-table-empty">No results.</td></tr>`;
+        html += `<tr class="user-empty-row"><td colspan="7"><div class="user-empty-state"><strong>No users found</strong><span>Try a different name or email.</span></div></td></tr>`;
     }
 
-    for (const u of pageItems) {
-        const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '—';
-        const initials = (u.first_name || '?')[0].toUpperCase();
-        const avatarContent = u.profile_picture ? `<img src="${u.profile_picture}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials;
-        const statusClass = u.status === 'approved' ? 'status-approved' : u.status === 'rejected' ? 'status-rejected' : 'status-pending';
-        const statusLabel = u.status === 'pending_approval' ? 'Pending' : u.status.charAt(0).toUpperCase() + u.status.slice(1);
-        const authIcon = u.auth_method === 'google' ? 'Google' : 'Email';
-        const joinedAt = u.created_at ? timeAgo(u.created_at) : '—';
-        const ddId = `action-dd-user-${u.id}`;
+    for (const user of pageItems) {
+        const isCurrentUser = Boolean(currentAdminUser && currentAdminUser.id === user.id);
+        const status = user.status || 'pending_approval';
+        const baseName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Unnamed user';
+        const initials = (user.first_name || user.email || '?')[0].toUpperCase();
+        const avatarContent = avatarMarkup(user.profile_picture, initials);
+        const statusClass = status === 'approved' ? 'status-approved' : status === 'rejected' ? 'status-rejected' : 'status-pending';
+        const statusLabel = status === 'pending_approval' ? 'Pending' : status.charAt(0).toUpperCase() + status.slice(1);
+        const authLabel = user.auth_method === 'google' ? 'Google' : 'Email';
+        const authClass = user.auth_method === 'google' ? 'auth-google' : 'auth-email';
+        const joinedAt = user.created_at ? timeAgo(user.created_at) : '—';
 
-        // Role cell
-        let roleHtml = '';
-        if (u.status === 'pending_approval') {
-            const opts = '<option value="" disabled selected>— Select —</option>' +
-                ALL_ROLES.map(r => `<option value="${r}">${r}</option>`).join('');
-            roleHtml = `<select class="role-select" id="role-${u.id}">${opts}</select>`;
-        } else if (u.status === 'approved') {
-            const opts = ALL_ROLES.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('');
-            roleHtml = `<span id="role-display-${u.id}">${escapeHtml(u.role || '—')}</span>
-                        <select class="role-select" id="role-${u.id}" style="display:none;" data-original-role="${escapeHtml(u.role || '')}" onchange="confirmRoleChange('${u.id}', this.value)">${opts}</select>`;
-        } else {
-            roleHtml = `<span style="color:var(--text-tertiary);font-size:12px">—</span>`;
+        const roleSelectOptions = ALL_ROLES.map(role => [role, role]);
+        const roleControl = shadcnSelectMarkup({
+            field: 'role',
+            userId: user.id,
+            value: user.role || '',
+            originalValue: user.role || '',
+            options: roleSelectOptions,
+            label: `Job role for ${baseName}`,
+            placeholder: 'Select role',
+            hidden: status === 'approved',
+        });
+        const roleHtml = status === 'approved'
+            ? `<span class="user-role-value" id="role-display-${user.id}">${escapeHtml(user.role || '—')}</span>${roleControl}`
+            : roleControl;
+
+        const currentSystemRole = user.system_role || 'member';
+        const selectedSystemRole = bootstrapMode && status !== 'approved'
+            ? 'administrator'
+            : currentSystemRole;
+        const accessTitle = isCurrentUser
+            ? 'You cannot change your own access level'
+            : bootstrapMode
+                ? 'Claim administrator access before managing users'
+                : 'Change access level';
+        const accessDisabled = (status === 'approved' && (isCurrentUser || bootstrapMode)) || bootstrapMode;
+        const accessControl = shadcnSelectMarkup({
+            field: 'access',
+            userId: user.id,
+            value: selectedSystemRole,
+            originalValue: currentSystemRole,
+            options: SYSTEM_ROLES,
+            label: `System access for ${baseName}. ${accessTitle}`,
+            placeholder: 'Select access',
+            disabled: accessDisabled,
+            hidden: status === 'approved',
+        });
+        const accessHtml = status === 'approved'
+            ? `<span class="user-role-value" id="system-role-display-${user.id}">${escapeHtml(systemRoleLabel(currentSystemRole))}</span>${accessControl}`
+            : accessControl;
+
+        const actionButtons = [];
+        if (status === 'pending_approval' || status === 'rejected') {
+            const approveLabel = status === 'rejected' ? 'Re-approve' : 'Approve';
+            actionButtons.push(`<button type="button" class="user-row-action user-row-action-primary"
+                onclick="approveUserAction('${user.id}')" aria-label="${approveLabel} ${escapeHtml(baseName)}" title="${approveLabel}">
+                <span aria-hidden="true">✓</span><span class="user-action-label">${approveLabel}</span></button>`);
+            if (status === 'pending_approval' && !bootstrapMode) {
+                actionButtons.push(`<button type="button" class="user-row-action user-row-action-danger"
+                    onclick="rejectUserAction('${user.id}')" aria-label="Reject ${escapeHtml(baseName)}" title="Reject">
+                    <span aria-hidden="true">×</span><span class="user-action-label">Reject</span></button>`);
+            }
+        } else if (status === 'approved' && !bootstrapMode) {
+            actionButtons.push(`<button type="button" class="user-row-action"
+                onclick="enableUserEdit('${user.id}')" aria-label="Edit ${escapeHtml(baseName)}" title="Edit user">
+                <span aria-hidden="true">✎</span><span class="user-action-label">Edit</span></button>`);
+            if (!isCurrentUser) {
+                actionButtons.push(`<button type="button" class="user-row-action user-row-action-danger"
+                    onclick="openRevokeUserModal('${user.id}', this)" aria-label="Revoke access for ${escapeHtml(baseName)}" title="Revoke access">
+                    <span aria-hidden="true">×</span><span class="user-action-label">Revoke</span></button>`);
+            }
         }
+        const actionsHtml = actionButtons.length
+            ? `<div class="user-row-actions">${actionButtons.join('')}</div>`
+            : '<span class="user-no-actions">—</span>';
 
-        // Actions dropdown
-        let actionsHtml = '';
-        if (u.status === 'pending_approval') {
-            actionsHtml = `
-                <div class="dropdown-menu-group">
-                    <div class="dropdown-menu-label">Actions</div>
-                    <button class="dropdown-menu-item" onclick="approveUserAction('${u.id}')">✓ Approve</button>
-                    <button class="dropdown-menu-item dropdown-menu-item-destructive" onclick="rejectUserAction('${u.id}')">✗ Reject</button>
-                </div>`;
-        } else if (u.status === 'approved') {
-            actionsHtml = `
-                <div class="dropdown-menu-group">
-                    <div class="dropdown-menu-label">Actions</div>
-                    <button class="dropdown-menu-item" onclick="enableRoleEdit('${u.id}')">Update Role</button>
-                    <button class="dropdown-menu-item dropdown-menu-item-destructive" onclick="rejectUserAction('${u.id}')">Revoke Access</button>
-                </div>`;
-        } else {
-            actionsHtml = `
-                <div class="dropdown-menu-group">
-                    <div class="dropdown-menu-label">Actions</div>
-                    <button class="dropdown-menu-item" onclick="approveUserAction('${u.id}')">✓ Re-approve</button>
-                </div>`;
-        }
-
-        html += `<tr>
-            <td>
-                <div style="display:flex;align-items:center;gap:10px">
-                    <div class="user-card-avatar" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${avatarContent}</div>
-                    <span class="cell-primary">${escapeHtml(fullName)}</span>
-                </div>
-            </td>
-            <td class="cell-email">${escapeHtml(u.email)}</td>
-            <td>${authIcon}</td>
-            <td>${roleHtml}</td>
-            <td><span class="status-pill ${statusClass}">${statusLabel}</span></td>
-            <td style="color:var(--text-tertiary);font-size:12px">${joinedAt}</td>
-            <td class="data-table-actions">
-                <div class="dropdown-menu" style="position:relative">
-                    <button class="data-table-action-btn" onclick="toggleActionDropdown(event, '${ddId}')">⋯</button>
-                    <div class="dropdown-menu-content dropdown-side-bottom dropdown-align-end" id="${ddId}" style="min-width:160px">
-                        ${actionsHtml}
+        html += `<tr class="user-table-row" data-user-id="${user.id}"${isCurrentUser ? ' data-current-user="true"' : ''}>
+            <td class="user-identity-cell" data-label="User">
+                <div class="user-identity">
+                    <div class="user-table-avatar">${avatarContent}</div>
+                    <div class="user-identity-copy">
+                        <div class="user-display-name" title="${escapeHtml(baseName)}">${escapeHtml(baseName)}${isCurrentUser ? '<span class="user-you-badge">You</span>' : ''}</div>
+                        <div class="user-email" title="${escapeHtml(user.email || '')}">${escapeHtml(user.email || 'No email')}</div>
                     </div>
                 </div>
             </td>
+            <td class="user-auth-cell" data-label="Authentication"><span class="user-auth-badge ${authClass}">${authLabel}</span></td>
+            <td class="user-role-cell" data-label="Job role">${roleHtml}</td>
+            <td class="user-access-cell" data-label="System access">${accessHtml}</td>
+            <td class="user-status-cell" data-label="Status"><span class="status-pill ${statusClass}">${statusLabel}</span></td>
+            <td class="user-joined-cell" data-label="Joined">${joinedAt}</td>
+            <td class="user-actions-cell" data-label="Actions">${actionsHtml}</td>
         </tr>`;
     }
 
     html += `</tbody></table></div>
-        <div class="data-table-pagination">
-            <div class="data-table-pagination-info">${filtered.length} user(s) total</div>
-            <div class="data-table-pagination-controls">
-                <button class="data-table-pagination-btn" onclick="usersPage--;renderUsersTable()" ${usersPage <= 0 ? 'disabled' : ''}>Previous</button>
-                <button class="data-table-pagination-btn" onclick="usersPage++;renderUsersTable()" ${usersPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        <div class="user-table-pagination">
+            <div class="user-pagination-summary">Page ${visiblePage} of ${visibleTotalPages}<span>•</span>${filtered.length} user${filtered.length === 1 ? '' : 's'}</div>
+            <div class="user-pagination-controls">
+                <button type="button" onclick="usersPage--;renderUsersTable()" ${usersPage <= 0 ? 'disabled' : ''}>Previous</button>
+                <button type="button" onclick="usersPage++;renderUsersTable()" ${usersPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
             </div>
         </div>`;
 
     card.innerHTML = html;
 
-    // Restore focus
     if (focusActive) {
-        const newSearchInput = card.querySelector('.data-table-search');
+        const newSearchInput = card.querySelector('.user-table-search');
         if (newSearchInput) {
             newSearchInput.focus();
             newSearchInput.setSelectionRange(cursorStart, cursorEnd);
@@ -834,84 +1541,200 @@ function renderUsersTable() {
 async function approveUserAction(userId) {
     const select = document.getElementById(`role-${userId}`);
     const role = select ? select.value : '';
+    const systemRoleSelect = document.getElementById(`system-role-${userId}`);
+    const systemRole = systemRoleSelect ? systemRoleSelect.value : 'member';
 
-    // Validate that a role has been selected
     if (!role) {
         showToast('Please select a role before approving', 'warning');
-        if (select) {
-            select.classList.add('role-select-error');
-            select.focus();
-            setTimeout(() => select.classList.remove('role-select-error'), 2000);
+        const trigger = document.querySelector(`#role-control-${userId} .shadcn-select-trigger`);
+        if (trigger) {
+            trigger.classList.add('role-select-error');
+            trigger.focus();
+            setTimeout(() => trigger.classList.remove('role-select-error'), 2000);
         }
         return;
     }
 
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/admin/users/${userId}/approve`, {
             method: 'POST',
-            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ role }),
+            headers: {
+                ...(bootstrapMode ? bootstrapHeaders() : adminHeaders()),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ role, system_role: systemRole }),
         });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(`User approved as ${role} ✓`, 'success');
-            loadUsers();
-            checkUserPendingCount();
-        } else {
-            showToast(`Error: ${data.detail || 'Approval failed'}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Approval failed');
+        await loadUsers();
+        await checkUserPendingCount();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Approving user...',
+            success: `User approved as ${role}.`,
+            error: error => `Could not approve user: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 async function rejectUserAction(userId) {
     if (!confirm('Are you sure you want to reject/revoke this user?')) return;
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/admin/users/${userId}/reject`, {
             method: 'POST',
             headers: adminHeaders(),
         });
-        if (res.ok) {
-            showToast('User rejected', 'warning');
-            loadUsers();
-            checkUserPendingCount();
-        } else {
-            const data = await res.json();
-            showToast(`Error: ${data.detail || 'Rejection failed'}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Rejection failed');
+        await loadUsers();
+        await checkUserPendingCount();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Rejecting user...',
+            success: { type: 'warning', description: 'User rejected.' },
+            error: error => `Could not reject user: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
-function enableRoleEdit(userId) {
-    document.getElementById(`role-display-${userId}`).style.display = 'none';
-    const select = document.getElementById(`role-${userId}`);
-    select.style.display = 'inline-block';
-    select.focus();
+function enableUserEdit(userId) {
+    if (editingUserId && editingUserId !== userId) cancelUserEdit(editingUserId);
+    closeAllShadcnSelects();
 
-    // Close dropdown menu if open
+    let firstEditableTrigger = null;
+    for (const field of ['role', 'access']) {
+        const ids = userSelectIds(field, userId);
+        const control = document.getElementById(ids.control);
+        const display = document.getElementById(ids.display);
+        const trigger = control ? control.querySelector('.shadcn-select-trigger') : null;
+        if (!control || !trigger || trigger.disabled) continue;
+        if (display) display.style.display = 'none';
+        control.style.display = 'block';
+        if (!firstEditableTrigger) firstEditableTrigger = trigger;
+    }
+
+    if (!firstEditableTrigger) return;
+    editingUserId = userId;
+    firstEditableTrigger.focus();
+
     document.querySelectorAll('.dropdown-menu-content.dropdown-menu-open').forEach(dd => {
         dd.classList.remove('dropdown-menu-open');
     });
 }
 
-function cancelRoleEdit(userId) {
-    const select = document.getElementById(`role-${userId}`);
-    if (select) {
-        select.value = select.getAttribute('data-original-role');
-        select.style.display = 'none';
+function cancelUserEdit(userId) {
+    for (const field of ['role', 'access']) {
+        const ids = userSelectIds(field, userId);
+        const control = document.getElementById(ids.control);
+        const input = document.getElementById(ids.input);
+        const display = document.getElementById(ids.display);
+        if (!control || !input) continue;
+
+        closeShadcnSelect(ids.control);
+        const originalValue = field === 'role'
+            ? input.dataset.originalRole || ''
+            : input.dataset.originalSystemRole || 'member';
+        setShadcnSelectValue(field, userId, originalValue);
+        control.style.display = 'none';
+        if (display) display.style.display = '';
     }
-    const display = document.getElementById(`role-display-${userId}`);
-    if (display) display.style.display = 'inline-block';
+    if (editingUserId === userId) editingUserId = null;
+}
+
+function openRevokeUserModal(userId, trigger = null) {
+    const user = allUsersData.find(item => item.id === userId);
+    if (!user || (currentAdminUser && currentAdminUser.id === userId)) return;
+
+    const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email || 'this user';
+    const modal = document.getElementById('revokeUserModal');
+    const input = document.getElementById('revokeUserConfirmInput');
+    const error = document.getElementById('revokeUserConfirmError');
+    const confirmButton = document.getElementById('revokeUserConfirmBtn');
+
+    revokeDialogTrigger = trigger instanceof HTMLElement ? trigger : document.activeElement;
+    modal.dataset.userId = userId;
+    document.getElementById('revokeUserConfirmText').textContent =
+        `Revoking ${fullName}'s access will prevent them from signing in until an administrator re-approves the account.`;
+    input.value = '';
+    error.textContent = '';
+    confirmButton.disabled = true;
+    confirmButton.textContent = 'Revoke access';
+    modal.classList.add('active');
+    requestAnimationFrame(() => input.focus());
+}
+
+function validateRevokeUserConfirmation() {
+    const input = document.getElementById('revokeUserConfirmInput');
+    const confirmButton = document.getElementById('revokeUserConfirmBtn');
+    const error = document.getElementById('revokeUserConfirmError');
+    const isConfirmed = input.value.trim() === 'Confirm';
+    confirmButton.disabled = !isConfirmed;
+    if (isConfirmed) error.textContent = '';
+}
+
+function closeRevokeUserModal() {
+    const modal = document.getElementById('revokeUserModal');
+    modal.classList.remove('active');
+    delete modal.dataset.userId;
+    document.getElementById('revokeUserConfirmInput').value = '';
+    document.getElementById('revokeUserConfirmError').textContent = '';
+    document.getElementById('revokeUserConfirmBtn').disabled = true;
+    if (revokeDialogTrigger && revokeDialogTrigger.isConnected) revokeDialogTrigger.focus();
+    revokeDialogTrigger = null;
+}
+
+async function confirmRevokeUserAction() {
+    const modal = document.getElementById('revokeUserModal');
+    const input = document.getElementById('revokeUserConfirmInput');
+    const error = document.getElementById('revokeUserConfirmError');
+    const confirmButton = document.getElementById('revokeUserConfirmBtn');
+    const userId = modal.dataset.userId;
+
+    if (!userId || input.value.trim() !== 'Confirm') {
+        error.textContent = 'Type Confirm exactly to revoke this user.';
+        input.focus();
+        return;
+    }
+
+    confirmButton.disabled = true;
+    confirmButton.textContent = 'Revoking...';
+    const operation = (async () => {
+        const res = await fetch(`${API_BASE}/api/admin/users/${userId}/reject`, {
+            method: 'POST',
+            headers: adminHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Revocation failed. Please try again.');
+        await loadUsers();
+        await checkUserPendingCount();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Revoking user access...',
+            success: { type: 'warning', description: 'User access revoked.' },
+            error: error => `Could not revoke access: ${error.message}`,
+        });
+        closeRevokeUserModal();
+    } catch (e) {
+        error.textContent = e.message;
+        confirmButton.disabled = false;
+        confirmButton.textContent = 'Revoke access';
+    }
 }
 
 function confirmRoleChange(userId, newRole) {
     const select = document.getElementById(`role-${userId}`);
     const oldRole = select ? select.getAttribute('data-original-role') : '';
     if (newRole === oldRole) {
-        cancelRoleEdit(userId);
+        cancelUserEdit(userId);
         return;
     }
 
@@ -941,7 +1764,7 @@ function closeRoleConfirmModal() {
     modal.classList.remove('active');
     const userId = modal.getAttribute('data-cancel-userid');
     if (userId) {
-        cancelRoleEdit(userId);
+        cancelUserEdit(userId);
         modal.removeAttribute('data-cancel-userid');
     }
 }
@@ -949,22 +1772,138 @@ function closeRoleConfirmModal() {
 async function changeRoleAction(userId, explicitRole) {
     const select = document.getElementById(`role-${userId}`);
     const role = explicitRole || (select ? select.value : 'Associate');
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/admin/users/${userId}/role`, {
             method: 'PUT',
             headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ role }),
         });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(`Role updated to ${role} ✓`, 'success');
-            loadUsers();
-        } else {
-            showToast(`Error: ${data.detail || 'Update failed'}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Update failed');
+        await loadUsers();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Updating job role...',
+            success: `Role updated to ${role}.`,
+            error: error => `Could not update role: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
+}
+
+function systemRoleLabel(systemRole) {
+    const match = SYSTEM_ROLES.find(([value]) => value === systemRole);
+    return match ? match[1] : systemRole.replaceAll('_', ' ');
+}
+
+function confirmSystemRoleChange(userId, newSystemRole) {
+    const user = allUsersData.find(item => item.id === userId);
+    const select = document.getElementById(`system-role-${userId}`);
+    if (!user || !select) return;
+
+    const oldSystemRole = select.dataset.originalSystemRole || user.system_role || 'member';
+    if (newSystemRole === oldSystemRole) {
+        cancelUserEdit(userId);
+        return;
     }
+
+    const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email;
+    document.getElementById('accessConfirmText').textContent =
+        `Change ${fullName}'s access from ${systemRoleLabel(oldSystemRole)} to ${systemRoleLabel(newSystemRole)}?`;
+
+    const modal = document.getElementById('accessConfirmModal');
+    modal.dataset.userId = userId;
+    modal.dataset.oldSystemRole = oldSystemRole;
+    modal.dataset.newSystemRole = newSystemRole;
+    modal.classList.add('active');
+
+    const confirmButton = document.getElementById('accessConfirmBtn');
+    confirmButton.disabled = false;
+    confirmButton.textContent = 'Change Access';
+    confirmButton.onclick = confirmSystemRoleChangeAction;
+}
+
+function closeAccessConfirmModal(revertSelection = true) {
+    const modal = document.getElementById('accessConfirmModal');
+    const userId = modal.dataset.userId;
+    if (revertSelection && userId) {
+        setShadcnSelectValue('access', userId, modal.dataset.oldSystemRole || 'member');
+    }
+    modal.classList.remove('active');
+    delete modal.dataset.userId;
+    delete modal.dataset.oldSystemRole;
+    delete modal.dataset.newSystemRole;
+    if (userId) cancelUserEdit(userId);
+}
+
+async function confirmSystemRoleChangeAction() {
+    const modal = document.getElementById('accessConfirmModal');
+    const userId = modal.dataset.userId;
+    const systemRole = modal.dataset.newSystemRole;
+    if (!userId || !systemRole) return;
+
+    const confirmButton = document.getElementById('accessConfirmBtn');
+    confirmButton.disabled = true;
+    confirmButton.textContent = 'Changing...';
+    closeAccessConfirmModal(false);
+    await changeSystemRoleAction(userId, systemRole);
+}
+
+async function changeSystemRoleAction(userId, systemRole) {
+    const user = allUsersData.find(item => item.id === userId);
+    const jobRole = user ? (user.job_title || user.role || 'Associate') : 'Associate';
+    const operation = (async () => {
+        const res = await fetch(`${API_BASE}/api/admin/users/${userId}/role`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: jobRole, system_role: systemRole }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Access update failed');
+        await loadUsers();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Updating system access...',
+            success: `Access updated to ${systemRoleLabel(systemRole)}.`,
+            error: error => `Could not update access: ${error.message}`,
+        });
+    } catch (_) {
+        await loadUsers();
+    }
+}
+
+async function claimAdministratorAccess() {
+    const token = localStorage.getItem('grasp_session_token');
+    if (!token) {
+        showToast('Sign in first, then return to the admin panel.', 'warning');
+        return;
+    }
+
+    const operation = (async () => {
+        const response = await fetch(`${API_BASE}/api/admin/bootstrap/claim`, {
+            method: 'POST',
+            headers: bootstrapHeaders(),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || 'Administrator claim failed');
+        currentAdminUser = data.user;
+        localStorage.setItem('grasp_user', JSON.stringify(data.user));
+        showAdminDashboard(false);
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Claiming administrator access...',
+            success: 'Administrator access granted.',
+            error: error => `Could not claim administrator access: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 // Contribution management
@@ -1219,69 +2158,72 @@ function closeContributionReview() {
 
 async function saveContributionEdits() {
     if (!currentContributionId) return;
-
     const title = document.getElementById('reviewTitle').value.trim();
     const content = document.getElementById('reviewContent').value;
-
     if (!title || !content) {
         showToast('Title and content cannot be empty', 'warning');
         return;
     }
 
-    try {
+    const operation = (async () => {
         const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}`, {
             method: 'PUT',
             headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ title, content }),
         });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        return data;
+    })();
 
-        if (res.ok) {
-            showToast('Edits saved ✓', 'success');
-        } else {
-            const data = await res.json();
-            showToast(`Error: ${data.detail || 'Save failed'}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+    try {
+        await toast.promise(operation, {
+            loading: 'Saving contribution edits...',
+            success: 'Contribution edits saved.',
+            error: error => `Could not save edits: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 async function approveContribution() {
     if (!currentContributionId) return;
-
-    // Save any edits first
     const title = document.getElementById('reviewTitle').value.trim();
     const content = document.getElementById('reviewContent').value;
-    if (title && content) {
-        await fetch(`${API_BASE}/api/contributions/${currentContributionId}`, {
-            method: 'PUT',
-            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, content }),
-        });
-    }
-
     const adminNotes = document.getElementById('contributionAdminNotes').value;
+    const contributionId = currentContributionId;
+    const operation = (async () => {
+        if (title && content) {
+            const saveResponse = await fetch(`${API_BASE}/api/contributions/${contributionId}`, {
+                method: 'PUT',
+                headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, content }),
+            });
+            const saveData = await saveResponse.json().catch(() => ({}));
+            if (!saveResponse.ok) throw new Error(saveData.detail || 'Could not save contribution edits');
+        }
 
-    try {
-        const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}/approve`, {
+        const res = await fetch(`${API_BASE}/api/contributions/${contributionId}/approve`, {
             method: 'POST',
             headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ admin_notes: adminNotes }),
         });
-        const data = await res.json();
-
-        if (data.status === 'approved') {
-            closeContributionReview();
-            loadContributions();
-            checkContributionCount();
-            checkPendingChanges();
-            showToast(`Approved! Classified as "${data.info_type}" — now in pending changes`, 'success');
-        } else {
-            showToast(`Error: ${data.message || 'Approval failed'}`, 'error');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status !== 'approved') {
+            throw new Error(data.detail || data.message || 'Approval failed');
         }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
+        closeContributionReview();
+        await loadContributions();
+        await Promise.all([checkContributionCount(), checkPendingChanges()]);
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Approving and activating contribution...',
+            success: data => `Approved and activated as "${data.info_type}".`,
+            error: error => `Could not approve contribution: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
 }
 
 async function rejectContribution() {
@@ -1289,26 +2231,401 @@ async function rejectContribution() {
     if (!confirm('Are you sure you want to reject this contribution?')) return;
 
     const adminNotes = document.getElementById('contributionAdminNotes').value;
-
-    try {
-        const res = await fetch(`${API_BASE}/api/contributions/${currentContributionId}/reject`, {
+    const contributionId = currentContributionId;
+    const operation = (async () => {
+        const res = await fetch(`${API_BASE}/api/contributions/${contributionId}/reject`, {
             method: 'POST',
             headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ admin_notes: adminNotes }),
         });
-        const data = await res.json();
-
-        if (data.status === 'rejected') {
-            closeContributionReview();
-            loadContributions();
-            checkContributionCount();
-            showToast('Contribution rejected', 'warning');
-        } else {
-            showToast(`Error: ${data.message || 'Rejection failed'}`, 'error');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status !== 'rejected') {
+            throw new Error(data.detail || data.message || 'Rejection failed');
         }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
+        closeContributionReview();
+        await loadContributions();
+        await checkContributionCount();
+        return data;
+    })();
+
+    try {
+        await toast.promise(operation, {
+            loading: 'Rejecting contribution...',
+            success: { type: 'warning', description: 'Contribution rejected.' },
+            error: error => `Could not reject contribution: ${error.message}`,
+        });
+    } catch (_) { /* The promise toast presents the error. */ }
+}
+
+// Company-brain agents
+
+function agentApiError(data, fallback) {
+    if (typeof data?.detail === 'string') return data.detail;
+    if (Array.isArray(data?.detail) && data.detail.length) {
+        return data.detail.map(item => item.msg || String(item)).join('; ');
     }
+    return data?.error || fallback;
+}
+
+async function loadAgents() {
+    const grid = document.getElementById('agentsGrid');
+    if (!grid || !['operator', 'administrator'].includes(currentAdminUser?.system_role)) return;
+    try {
+        const [statusResponse, agentsResponse, runsResponse, ownersResponse] = await Promise.all([
+            fetch(`${API_BASE}/api/agents/status`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents/runs?limit=50`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents/owners`, { headers: adminHeaders() }),
+        ]);
+        if (![statusResponse, agentsResponse, runsResponse, ownersResponse].every(response => response.ok)) {
+            throw new Error('Agent operations could not be loaded.');
+        }
+        agentControlState = await statusResponse.json();
+        allAgentsData = (await agentsResponse.json()).agents || [];
+        allAgentRuns = (await runsResponse.json()).runs || [];
+        agentOwners = (await ownersResponse.json()).owners || [];
+        renderAgentControls();
+        renderAgents();
+        renderAgentRuns();
+    } catch (error) {
+        grid.innerHTML = `<div class="agent-empty-state agent-error-state">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function renderAgentControls() {
+    const banner = document.getElementById('agentControlBanner');
+    const title = document.getElementById('agentControlTitle');
+    const description = document.getElementById('agentControlDescription');
+    const button = document.getElementById('agentEmergencyButton');
+    if (!banner || !title || !description || !button) return;
+
+    banner.classList.toggle('stopped', Boolean(agentControlState.emergency_stopped));
+    if (!agentControlState.enabled) {
+        title.textContent = 'Agent execution is disabled';
+        description.textContent = 'Set AGENTS_ENABLED=true and restart Grasp.';
+        button.disabled = true;
+        return;
+    }
+    button.disabled = false;
+    if (agentControlState.emergency_stopped) {
+        title.textContent = 'Emergency stop is active';
+        description.textContent = agentControlState.reason || 'No agent runs will be started.';
+        button.textContent = 'Resume agents';
+        button.classList.add('agent-resume-button');
+    } else {
+        title.textContent = 'Agent runtime is live';
+        description.textContent = 'Active schedules and manual runs use the durable worker queue.';
+        button.textContent = 'Emergency stop';
+        button.classList.remove('agent-resume-button');
+    }
+}
+
+function agentOwnerName(agent) {
+    const owner = agent.owner || agentOwners.find(item => item.id === agent.definition.owner_user_id);
+    if (!owner) return agent.definition.owner_user_id;
+    return `${owner.first_name || ''} ${owner.last_name || ''}`.trim() || owner.email || owner.id;
+}
+
+function agentSkillLabel(skill) {
+    const labels = {
+        knowledge_brief: 'Knowledge brief',
+        gap_analysis: 'Gap analysis',
+        risk_watch: 'Risk watch',
+        decision_digest: 'Decision digest',
+    };
+    return labels[skill] || String(skill).replaceAll('_', ' ');
+}
+
+function agentScheduleLabel(agent) {
+    const cron = agent.definition.schedule;
+    const known = {
+        '0 * * * *': 'Every hour',
+        '0 9 * * 1-5': 'Weekdays at 09:00 UTC',
+        '0 9 * * 1': 'Mondays at 09:00 UTC',
+    };
+    return cron ? known[cron] || `${cron} UTC` : 'Manual only';
+}
+
+function agentStateBadge(state) {
+    const normalized = state || 'never_run';
+    return `<span class="agent-state-badge agent-state-${escapeHtml(normalized)}">${escapeHtml(normalized.replaceAll('_', ' '))}</span>`;
+}
+
+function renderAgents() {
+    const grid = document.getElementById('agentsGrid');
+    if (!grid) return;
+    document.getElementById('navAgentsBadge').style.display = allAgentsData.length ? '' : 'none';
+    document.getElementById('navAgentsBadge').textContent = String(allAgentsData.length);
+    if (!allAgentsData.length) {
+        grid.innerHTML = `<div class="agent-empty-state">
+            <strong>No agents configured</strong>
+            <span>Create a governed routine for recurring briefs, risk watches, gap analysis, or decision digests.</span>
+            <button type="button" class="approve-btn" onclick="openAgentEditor()">Create first agent</button>
+        </div>`;
+        return;
+    }
+
+    grid.innerHTML = allAgentsData.map(agent => {
+        const definition = agent.definition;
+        const latest = agent.latest_run;
+        const statusText = agent.active ? 'Active' : agent.paused_reason || 'Inactive';
+        const nextRun = agent.next_run_at ? timeAgo(agent.next_run_at, true) : 'Not scheduled';
+        return `<article class="agent-card ${agent.active ? 'active' : 'inactive'}">
+            <div class="agent-card-heading">
+                <div>
+                    <div class="agent-card-title-row">
+                        <h5>${escapeHtml(agent.name)}</h5>
+                        <span class="agent-activation-badge ${agent.active ? 'active' : ''}">${escapeHtml(statusText)}</span>
+                    </div>
+                    <p>${escapeHtml(definition.role)}</p>
+                </div>
+            </div>
+            <div class="agent-card-purpose">${escapeHtml(definition.instructions)}</div>
+            <dl class="agent-card-facts">
+                <div><dt>Owner</dt><dd>${escapeHtml(agentOwnerName(agent))}</dd></div>
+                <div><dt>Skill</dt><dd>${escapeHtml(agentSkillLabel(definition.skills[0]))}</dd></div>
+                <div><dt>Schedule</dt><dd>${escapeHtml(agentScheduleLabel(agent))}</dd></div>
+                <div><dt>Next run</dt><dd>${escapeHtml(nextRun)}</dd></div>
+                <div><dt>Last run</dt><dd>${latest ? agentStateBadge(latest.state) : 'Never'}</dd></div>
+                <div><dt>Daily budget</dt><dd>${definition.cost_budget_units ? definition.cost_budget_units.toLocaleString() : 'Unlimited'}</dd></div>
+            </dl>
+            ${agent.failure_count ? `<div class="agent-card-warning">${agent.failure_count} consecutive failure(s)</div>` : ''}
+            <div class="agent-card-actions">
+                <button type="button" class="agent-secondary-button" onclick="openAgentEditor('${agent.id}')">Edit</button>
+                <button type="button" class="agent-secondary-button" onclick="setAgentActive('${agent.id}', ${!agent.active})">${agent.active ? 'Pause' : 'Activate'}</button>
+                <button type="button" class="approve-btn" onclick="runAgent('${agent.id}')"
+                    ${!agent.active || agentControlState.emergency_stopped ? 'disabled' : ''}>Run now</button>
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function renderAgentRuns() {
+    const shell = document.getElementById('agentRunsTable');
+    if (!shell) return;
+    if (!allAgentRuns.length) {
+        shell.innerHTML = '<div class="agent-empty-state"><strong>No runs yet</strong><span>Run an active agent to create its first report.</span></div>';
+        return;
+    }
+    const names = Object.fromEntries(allAgentsData.map(agent => [agent.id, agent.name]));
+    const rows = allAgentRuns.map(run => {
+        const trigger = run.input?.trigger || 'manual';
+        const hasDetails = Boolean(run.output?.report || run.output?.error);
+        return `<tr>
+            <td>${escapeHtml(names[run.agent_id] || 'Unknown agent')}</td>
+            <td>${agentStateBadge(run.state)}</td>
+            <td>${escapeHtml(trigger)}</td>
+            <td>${Number(run.cost_units || 0).toLocaleString()}</td>
+            <td>${run.created_at ? escapeHtml(timeAgo(run.created_at)) : '—'}</td>
+            <td><button type="button" class="agent-link-button" onclick="openAgentReport('${run.id}')" ${hasDetails ? '' : 'disabled'}>View</button></td>
+        </tr>`;
+    }).join('');
+    shell.innerHTML = `<table class="agent-runs-table">
+        <thead><tr><th>Agent</th><th>Result</th><th>Trigger</th><th>Tokens</th><th>Started</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function populateAgentOwners(selectedId = '') {
+    const select = document.getElementById('agentOwner');
+    if (!select) return;
+    select.innerHTML = agentOwners.map(owner => {
+        const name = `${owner.first_name || ''} ${owner.last_name || ''}`.trim() || owner.email;
+        return `<option value="${escapeHtml(owner.id)}" ${owner.id === selectedId ? 'selected' : ''}>${escapeHtml(name)} · ${escapeHtml(owner.email || owner.id)}</option>`;
+    }).join('');
+}
+
+function resetAgentEditor() {
+    document.getElementById('agentEditId').value = '';
+    document.getElementById('agentName').value = '';
+    document.getElementById('agentRole').value = '';
+    document.getElementById('agentInstructions').value = '';
+    document.getElementById('agentDomains').value = 'general';
+    document.getElementById('agentSkill').value = 'knowledge_brief';
+    document.getElementById('agentSchedulePreset').value = '';
+    document.getElementById('agentCron').value = '';
+    document.getElementById('agentRuntimeBudget').value = '300';
+    document.getElementById('agentCostBudget').value = '20000';
+    document.getElementById('agentConcurrency').value = '1';
+    document.getElementById('agentEscalation').value = 'Agent owner';
+    document.getElementById('agentSuppressUnchanged').checked = true;
+    document.getElementById('agentAfterSync').checked = false;
+    document.querySelectorAll('input[name="agentClassification"]').forEach(input => {
+        input.checked = ['public', 'internal'].includes(input.value);
+    });
+    document.getElementById('agentFormError').textContent = '';
+    updateAgentScheduleInput();
+}
+
+async function openAgentEditor(agentId = '') {
+    if (!agentOwners.length) await loadAgents();
+    resetAgentEditor();
+    const agent = allAgentsData.find(item => item.id === agentId);
+    const defaultOwner = agent?.definition.owner_user_id || currentAdminUser?.id || '';
+    populateAgentOwners(defaultOwner);
+    document.getElementById('agentEditorTitle').textContent = agent ? 'Edit company-brain agent' : 'Create company-brain agent';
+    if (agent) {
+        const definition = agent.definition;
+        document.getElementById('agentEditId').value = agent.id;
+        document.getElementById('agentName').value = definition.name;
+        document.getElementById('agentRole').value = definition.role;
+        document.getElementById('agentInstructions').value = definition.instructions;
+        document.getElementById('agentDomains').value = definition.domains.join(', ');
+        document.getElementById('agentSkill').value = definition.skills[0];
+        const presets = ['', '0 * * * *', '0 9 * * 1-5', '0 9 * * 1'];
+        document.getElementById('agentSchedulePreset').value = presets.includes(definition.schedule || '') ? definition.schedule || '' : 'custom';
+        document.getElementById('agentCron').value = definition.schedule || '';
+        document.getElementById('agentRuntimeBudget').value = definition.runtime_budget_seconds;
+        document.getElementById('agentCostBudget').value = definition.cost_budget_units;
+        document.getElementById('agentConcurrency').value = definition.concurrency_limit;
+        document.getElementById('agentEscalation').value = definition.escalation_path;
+        document.getElementById('agentSuppressUnchanged').checked = definition.suppress_unchanged;
+        document.getElementById('agentAfterSync').checked = definition.event_triggers.includes('knowledge_sync');
+        document.querySelectorAll('input[name="agentClassification"]').forEach(input => {
+            input.checked = definition.allowed_classifications.includes(input.value);
+        });
+        updateAgentScheduleInput();
+    }
+    document.getElementById('agentEditorModal').classList.add('active');
+    document.getElementById('agentName').focus();
+}
+
+function closeAgentEditor() {
+    document.getElementById('agentEditorModal').classList.remove('active');
+}
+
+function updateAgentScheduleInput() {
+    const preset = document.getElementById('agentSchedulePreset').value;
+    const cronField = document.getElementById('agentCronField');
+    cronField.style.display = preset === 'custom' ? '' : 'none';
+    if (preset !== 'custom') document.getElementById('agentCron').value = preset;
+}
+
+function agentDefinitionFromForm() {
+    const classifications = Array.from(document.querySelectorAll('input[name="agentClassification"]:checked')).map(input => input.value);
+    const schedulePreset = document.getElementById('agentSchedulePreset').value;
+    const schedule = schedulePreset === 'custom' ? document.getElementById('agentCron').value.trim() : schedulePreset;
+    return {
+        name: document.getElementById('agentName').value.trim(),
+        role: document.getElementById('agentRole').value.trim(),
+        owner_user_id: document.getElementById('agentOwner').value,
+        instructions: document.getElementById('agentInstructions').value.trim(),
+        domains: document.getElementById('agentDomains').value.split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+        skills: [document.getElementById('agentSkill').value],
+        allowed_classifications: classifications,
+        allowed_actions: [],
+        approval_thresholds: {},
+        schedule: schedule || null,
+        event_triggers: [
+            'manual',
+            ...(schedule ? ['schedule'] : []),
+            ...(document.getElementById('agentAfterSync').checked ? ['knowledge_sync'] : []),
+        ],
+        runtime_budget_seconds: Number(document.getElementById('agentRuntimeBudget').value),
+        cost_budget_units: Number(document.getElementById('agentCostBudget').value),
+        concurrency_limit: Number(document.getElementById('agentConcurrency').value),
+        escalation_path: document.getElementById('agentEscalation').value.trim(),
+        suppress_unchanged: document.getElementById('agentSuppressUnchanged').checked,
+    };
+}
+
+async function saveAgent() {
+    const agentId = document.getElementById('agentEditId').value;
+    const definition = agentDefinitionFromForm();
+    const error = document.getElementById('agentFormError');
+    error.textContent = '';
+    if (!definition.name || !definition.role || definition.instructions.length < 10 || !definition.domains.length || !definition.allowed_classifications.length) {
+        error.textContent = 'Complete the name, role, instructions, domains, and at least one classification.';
+        return;
+    }
+    const button = document.getElementById('saveAgentButton');
+    button.disabled = true;
+    try {
+        const response = await fetch(agentId ? `${API_BASE}/api/agents/${agentId}` : `${API_BASE}/api/agents`, {
+            method: agentId ? 'PUT' : 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(definition),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent could not be saved.'));
+        closeAgentEditor();
+        showToast(agentId ? 'Agent updated' : 'Agent created', 'success');
+        await loadAgents();
+    } catch (requestError) {
+        error.textContent = requestError.message;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function setAgentActive(agentId, active) {
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/${agentId}/activation`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent state could not be changed.'));
+        showToast(active ? 'Agent activated' : 'Agent paused', active ? 'success' : 'info');
+        await loadAgents();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function runAgent(agentId) {
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/${agentId}/run`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: '' }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent run could not be queued.'));
+        showToast('Agent run queued', 'success');
+        window.setTimeout(loadAgents, 1200);
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function toggleAgentEmergencyStop() {
+    const stopping = !agentControlState.emergency_stopped;
+    let reason = '';
+    if (stopping) {
+        if (!window.confirm('Stop all company-brain agent execution for this organization?')) return;
+        reason = window.prompt('Reason for the emergency stop:', 'Paused by an operator') || 'Paused by an operator';
+    }
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/emergency-stop`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stopped: stopping, reason }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent controls could not be changed.'));
+        agentControlState = data;
+        renderAgentControls();
+        renderAgents();
+        showToast(stopping ? 'Emergency stop activated' : 'Agent execution resumed', stopping ? 'warning' : 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+function openAgentReport(runId) {
+    const run = allAgentRuns.find(item => item.id === runId);
+    if (!run) return;
+    const agent = allAgentsData.find(item => item.id === run.agent_id);
+    document.getElementById('agentReportTitle').textContent = agent?.name || 'Agent run';
+    document.getElementById('agentReportMeta').innerHTML = `${agentStateBadge(run.state)}<span>${run.created_at ? escapeHtml(timeAgo(run.created_at)) : ''}</span><span>${Number(run.cost_units || 0).toLocaleString()} tokens</span>`;
+    document.getElementById('agentReportContent').textContent = run.output?.report || run.output?.error || 'No report content.';
+    document.getElementById('agentReportModal').classList.add('active');
+}
+
+function closeAgentReport() {
+    document.getElementById('agentReportModal').classList.remove('active');
 }
 
 // Sidebar sections
