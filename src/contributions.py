@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from .changesets import ChangeSetService
 from .connectors.base import Document
+from .core.security import AuthContext
 from .database import contributions_table
+from .ingestion import IngestionCandidate
 from .repo.manager import RepoManager
 
 logger = logging.getLogger(__name__)
@@ -32,9 +35,16 @@ VALID_CONTENT_TYPES = ("document", "code", "plain_text")
 class ContributionManager:
     """Manages user contribution requests stored in PostgreSQL."""
 
-    def __init__(self, engine: AsyncEngine, repo_manager: RepoManager, state_dir: Path):
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        repo_manager: RepoManager,
+        change_sets: ChangeSetService,
+        state_dir: Path,
+    ):
         self.engine = engine
         self.repo_manager = repo_manager
+        self.change_sets = change_sets
         self.contributions_dir = state_dir / "contributions"
         self.contributions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -46,6 +56,8 @@ class ContributionManager:
         content: str,
         content_type: str = "document",
         submitted_by: str = "",
+        submitter_user_id: str = "",
+        organization_id: str = "default",
         original_filename: str = "",
         original_file_ext: str = "",
     ) -> dict[str, Any]:
@@ -56,11 +68,13 @@ class ContributionManager:
         contribution_id = str(uuid.uuid4())[:12]
         contribution = {
             "id": contribution_id,
+            "organization_id": organization_id,
             "title": title.strip(),
             "content": content,
             "content_type": content_type,
             "submitted_by": submitted_by.strip(),
-            "submitted_at": datetime.now(timezone.utc),
+            "submitter_user_id": submitter_user_id,
+            "submitted_at": datetime.now(UTC),
             "status": "pending",
             "admin_notes": "",
             "resolved_at": None,
@@ -80,9 +94,7 @@ class ContributionManager:
         """Load a single contribution by ID."""
         async with self.engine.begin() as conn:
             result = await conn.execute(
-                select(contributions_table).where(
-                    contributions_table.c.id == contribution_id
-                )
+                select(contributions_table).where(contributions_table.c.id == contribution_id)
             )
             row = result.mappings().first()
             return dict(row) if row else None
@@ -106,6 +118,16 @@ class ContributionManager:
     async def list_pending(self) -> list[dict[str, Any]]:
         """List all pending contributions."""
         return await self.list_all(status_filter="pending")
+
+    async def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                select(contributions_table)
+                .where(contributions_table.c.submitter_user_id == user_id)
+                .order_by(contributions_table.c.submitted_at.desc())
+            )
+            rows = result.mappings().all()
+        return [self._serialize(dict(row)) for row in rows]
 
     async def count_pending(self) -> int:
         """Count pending contributions."""
@@ -149,6 +171,7 @@ class ContributionManager:
     async def approve(
         self,
         contribution_id: str,
+        reviewer: AuthContext,
         admin_notes: str = "",
     ) -> dict[str, Any]:
         """Approve a contribution — classify and write to the repo."""
@@ -160,19 +183,52 @@ class ContributionManager:
             return {"error": f"Contribution is already {contribution['status']}"}
 
         try:
+            if contribution["organization_id"] != reviewer.organization_id:
+                return {"error": "Cross-organization review is not allowed"}
+
             doc = Document(
                 id=f"contribution-{contribution['id']}",
                 source="user_contribution",
                 title=contribution["title"],
                 content=contribution["content"],
                 url="",
+                metadata={
+                    "organization_id": contribution["organization_id"],
+                    "acl_principals": [f"organization:{contribution['organization_id']}"],
+                    "domain": "general",
+                    "sensitivity": "internal",
+                },
+            )
+            change_set = None
+            info_type = contribution.get("classified_as")
+            if contribution.get("change_set_id"):
+                change_set = await self.change_sets.get(contribution["change_set_id"])
+            if not change_set:
+                change_set = await self.change_sets.create(
+                    "contribution",
+                    organization_id=contribution["organization_id"],
+                    creator_user_id=contribution["submitter_user_id"],
+                    provenance={"contribution_id": contribution_id},
+                )
+                candidate = IngestionCandidate.from_document(
+                    doc, organization_id=contribution["organization_id"]
+                )
+                info_type = await self.change_sets.stage_candidate(change_set["id"], candidate)
+                await self.change_sets.submit(change_set["id"])
+                async with self.engine.begin() as conn:
+                    await conn.execute(
+                        update(contributions_table)
+                        .where(contributions_table.c.id == contribution_id)
+                        .values(change_set_id=change_set["id"], classified_as=info_type)
+                    )
+            await self.change_sets.approve_and_activate(
+                change_set["id"],
+                reviewer,
+                explanation=admin_notes,
+                commit_message=f"contribution: {contribution['title']}",
             )
 
-            info_type = await self.repo_manager.classify_and_write(doc)
-
-            self.repo_manager.stage_pending()
-
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             async with self.engine.begin() as conn:
                 await conn.execute(
                     update(contributions_table)
@@ -180,21 +236,19 @@ class ContributionManager:
                     .values(
                         status="approved",
                         admin_notes=admin_notes,
+                        reviewer_user_id=reviewer.user_id,
                         resolved_at=now,
                         classified_as=info_type,
+                        change_set_id=change_set["id"],
                     )
                 )
 
-            logger.info(
-                f"Contribution {contribution_id} approved → "
-                f"classified as '{info_type}'"
-            )
+            logger.info(f"Contribution {contribution_id} approved → classified as '{info_type}'")
 
             return {
                 "status": "approved",
-                "message": f"Contribution approved and classified as '{info_type}'. "
-                           f"It is now staged as a pending change.",
-                "info_type": info_type,
+                "message": f"Contribution approved, committed, indexed, and activated as '{info_type}'.",
+                "info_type": info_type or "topics",
             }
         except Exception as e:
             logger.error(f"Failed to approve contribution {contribution_id}: {e}")
@@ -213,7 +267,7 @@ class ContributionManager:
         if contribution["status"] != "pending":
             return {"error": f"Contribution is already {contribution['status']}"}
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         async with self.engine.begin() as conn:
             await conn.execute(
                 update(contributions_table)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -26,10 +27,14 @@ class SyncScheduler:
         orchestrator: SyncOrchestrator,
         hours: list[int] | None = None,
         minute: int = 0,
+        job_queue=None,
+        metrics=None,
     ):
         self.orchestrator = orchestrator
         self.hours = hours or [8, 11, 14, 17, 20]
         self.minute = minute
+        self.job_queue = job_queue
+        self.metrics = metrics
         self.scheduler = BackgroundScheduler()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -59,19 +64,31 @@ class SyncScheduler:
 
     def _trigger_sync(self):
         """Internal: run the sync in the event loop."""
+        if self.metrics:
+            self.metrics.observe("scheduler.trigger", 1.0)
         if self.orchestrator.is_running:
+            if self.metrics:
+                self.metrics.observe("scheduler.skipped_running", 1.0)
             logger.warning("Sync already in progress, skipping scheduled trigger")
             return
 
-        if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                self.orchestrator.run_sync(), self._loop
+        if self.job_queue:
+            scheduled = datetime.now(UTC).strftime("%Y%m%d%H%M")
+            coroutine = self.job_queue.enqueue(
+                "sync",
+                {"trigger": "schedule"},
+                idempotency_key=f"scheduled-sync:{scheduled}",
             )
+        else:
+            coroutine = self.orchestrator.run_sync()
+
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         else:
             loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.orchestrator.run_sync())
+                loop.run_until_complete(coroutine)
             finally:
                 loop.close()
 

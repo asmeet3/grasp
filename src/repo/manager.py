@@ -13,26 +13,28 @@ Supports human-approved commits with remote push.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
-from git import Repo, InvalidGitRepositoryError
+from git import InvalidGitRepositoryError, Repo
 
 from ..connectors.base import Document, sanitize_filename
+from ..core.changes import require_current_base
 
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_TYPES = [
-    "decisions",   # ADRs, meeting notes, RFCs, design reviews
-    "projects",    # Feature specs, PRDs, user stories, project overviews
-    "processes",   # Runbooks, SOPs, deployment guides, test plans, QA
-    "products",    # Product areas, their history, roadmaps
-    "people",      # Expertise profiles (opt-in)
-    "topics",      # Cross-cutting themes (architecture, strategy, incidents, etc.)
+    "decisions",  # ADRs, meeting notes, RFCs, design reviews
+    "projects",  # Feature specs, PRDs, user stories, project overviews
+    "processes",  # Runbooks, SOPs, deployment guides, test plans, QA
+    "products",  # Product areas, their history, roadmaps
+    "people",  # Expertise profiles (opt-in)
+    "topics",  # Cross-cutting themes (architecture, strategy, incidents, etc.)
 ]
 
 CLASSIFICATION_PROMPT = """Classify the document into exactly one category based on its title and content:
@@ -154,6 +156,23 @@ class RepoManager:
         teams_dir = self.repo_path / "teams"
         teams_dir.mkdir(exist_ok=True)
 
+        # Canonical context and declarative runtime definitions. Content enters
+        # these locations only through reviewed change sets.
+        (self.repo_path / "company" / "policies").mkdir(parents=True, exist_ok=True)
+        for domain in (
+            "product",
+            "sales",
+            "marketing",
+            "customer-success",
+            "finance",
+            "hr",
+            "legal",
+            "compliance",
+        ):
+            (self.repo_path / "domains" / domain).mkdir(parents=True, exist_ok=True)
+        (self.repo_path / "skills").mkdir(exist_ok=True)
+        (self.repo_path / "agents").mkdir(exist_ok=True)
+
         # Initialize Git repo
         try:
             self._repo = Repo(self.repo_path)
@@ -162,8 +181,7 @@ class RepoManager:
             # Create initial .gitignore to protect internal state
             gitignore = self.repo_path / ".gitignore"
             gitignore.write_text(
-                "# Grasp internal state — do not commit\n"
-                ".grasp_state/\n",
+                "# Grasp internal state — do not commit\n.grasp_state/\n",
                 encoding="utf-8",
             )
             # Create initial README
@@ -253,11 +271,11 @@ class RepoManager:
 
         # Source connector configs
         connector_configs = {
-            "confluence.yaml": "# Confluence connector config\nsource: confluence\nbase_url: \"\"\n",
-            "jira.yaml": "# Jira connector config\nsource: jira\nbase_url: \"\"\n",
-            "slack.yaml": "# Slack connector config\nsource: slack\nbot_token: \"\"\n",
-            "notion.yaml": "# Notion connector config\nsource: notion\napi_key: \"\"\n",
-            "sharepoint.yaml": "# SharePoint connector config\nsource: sharepoint\ntenant_id: \"\"\n",
+            "confluence.yaml": '# Confluence connector config\nsource: confluence\nbase_url: ""\n',
+            "jira.yaml": '# Jira connector config\nsource: jira\nbase_url: ""\n',
+            "slack.yaml": '# Slack connector config\nsource: slack\nbot_token: ""\n',
+            "notion.yaml": '# Notion connector config\nsource: notion\napi_key: ""\n',
+            "sharepoint.yaml": '# SharePoint connector config\nsource: sharepoint\ntenant_id: ""\n',
         }
 
         for filename, content in connector_configs.items():
@@ -329,16 +347,67 @@ class RepoManager:
 
         rules = [
             ("decisions", ["adr", "decision", "rfc", "meeting", "minutes", "review", "retro"]),
-            ("projects", ["feature", "prd", "user story", "epic", "requirement", "spec", "project"]),
-            ("processes", ["runbook", "sop", "deployment", "deploy", "pipeline", "ci/cd",
-                           "monitoring", "test", "qa", "quality", "bug", "regression", "coverage"]),
-            ("products", ["strategy", "okr", "roadmap", "planning", "quarterly", "vision",
-                          "goal", "product", "north star"]),
+            (
+                "projects",
+                ["feature", "prd", "user story", "epic", "requirement", "spec", "project"],
+            ),
+            (
+                "processes",
+                [
+                    "runbook",
+                    "sop",
+                    "deployment",
+                    "deploy",
+                    "pipeline",
+                    "ci/cd",
+                    "monitoring",
+                    "test",
+                    "qa",
+                    "quality",
+                    "bug",
+                    "regression",
+                    "coverage",
+                ],
+            ),
+            (
+                "products",
+                [
+                    "strategy",
+                    "okr",
+                    "roadmap",
+                    "planning",
+                    "quarterly",
+                    "vision",
+                    "goal",
+                    "product",
+                    "north star",
+                ],
+            ),
             ("people", ["expertise", "profile", "team member", "skills"]),
-            ("topics", ["architecture", "system design", "api", "infrastructure", "diagram",
-                        "schema", "incident", "postmortem", "outage", "alert",
-                        "guide", "wiki", "documentation", "onboarding", "how to", "tutorial",
-                        "conversation", "thread", "discussion"]),
+            (
+                "topics",
+                [
+                    "architecture",
+                    "system design",
+                    "api",
+                    "infrastructure",
+                    "diagram",
+                    "schema",
+                    "incident",
+                    "postmortem",
+                    "outage",
+                    "alert",
+                    "guide",
+                    "wiki",
+                    "documentation",
+                    "onboarding",
+                    "how to",
+                    "tutorial",
+                    "conversation",
+                    "thread",
+                    "discussion",
+                ],
+            ),
         ]
 
         for knowledge_type, keywords in rules:
@@ -360,7 +429,8 @@ class RepoManager:
         """
         sources_dir = self.repo_path / "sources"
         date_partition = doc.updated_at.strftime("%Y-%m")
-        filename = sanitize_filename(doc.title) + ".md"
+        stable_suffix = hashlib.sha256(doc.id.encode("utf-8")).hexdigest()[:8]
+        filename = f"{sanitize_filename(doc.title)}--{stable_suffix}.md"
 
         if doc.source in ("confluence", "slack", "meetings", "emails"):
             partition_dir = sources_dir / doc.source / date_partition
@@ -406,10 +476,19 @@ class RepoManager:
         combined = title_lower + " " + content_lower
 
         subtopic_rules = [
-            ("architecture", ["architecture", "system design", "api", "infrastructure", "diagram", "schema"]),
-            ("incidents", ["incident", "postmortem", "outage", "alert", "downtime", "sev1", "sev2"]),
+            (
+                "architecture",
+                ["architecture", "system design", "api", "infrastructure", "diagram", "schema"],
+            ),
+            (
+                "incidents",
+                ["incident", "postmortem", "outage", "alert", "downtime", "sev1", "sev2"],
+            ),
             ("discussions", ["discussion", "conversation", "thread", "q&a"]),
-            ("references", ["guide", "wiki", "documentation", "onboarding", "how to", "tutorial", "reference"]),
+            (
+                "references",
+                ["guide", "wiki", "documentation", "onboarding", "how to", "tutorial", "reference"],
+            ),
             ("security", ["security", "vulnerability", "auth", "encryption"]),
             ("infrastructure", ["infra", "cloud", "aws", "gcp", "azure", "kubernetes", "docker"]),
         ]
@@ -425,6 +504,57 @@ class RepoManager:
         return "general"
 
     # Writes
+
+    @staticmethod
+    def _yaml_scalar(value: object) -> str:
+        """Encode an untrusted scalar without allowing frontmatter injection."""
+        return json.dumps("" if value is None else str(value), ensure_ascii=False)
+
+    def current_commit(self) -> str:
+        """Return the immutable Git revision used as a proposal base."""
+        if not self._repo or not self._repo.head.is_valid():
+            return ""
+        return self._repo.head.commit.hexsha
+
+    def plan_document(self, doc: Document, knowledge_type: str) -> list[dict]:
+        """Render deterministic file operations without mutating tracked files."""
+        source_path = self._get_source_path(doc)
+        knowledge_path = self._get_knowledge_path(doc, knowledge_type)
+        proposed_ref = knowledge_path.relative_to(self.repo_path).as_posix()
+        existing_metadata = self.get_committed_file_metadata(proposed_ref)
+        if existing_metadata.get("id") not in (None, "", doc.id):
+            stable_suffix = hashlib.sha256(doc.id.encode("utf-8")).hexdigest()[:8]
+            knowledge_path = knowledge_path.with_name(
+                f"{knowledge_path.stem}--{stable_suffix}{knowledge_path.suffix}"
+            )
+        source_ref = source_path.relative_to(self.repo_path).as_posix()
+        knowledge_ref = knowledge_path.relative_to(self.repo_path).as_posix()
+        doc.metadata["repo_path"] = knowledge_ref
+        return [
+            {
+                "op": "write",
+                "path": source_ref,
+                "content": self._render_source_file(doc),
+                "document_id": doc.id,
+            },
+            {
+                "op": "write",
+                "path": knowledge_ref,
+                "content": self._render_knowledge_file(doc, knowledge_type, source_ref),
+                "document_id": doc.id,
+                "document": {
+                    "id": doc.id,
+                    "source": doc.source,
+                    "title": doc.title,
+                    "content": doc.content,
+                    "url": doc.url,
+                    "updated_at": doc.updated_at.isoformat(),
+                    "metadata": dict(doc.metadata),
+                    "info_type": knowledge_type,
+                    "content_hash": hashlib.sha256(doc.content.encode("utf-8")).hexdigest(),
+                },
+            },
+        ]
 
     async def classify_and_write(self, doc: Document) -> str:
         """Classify a document and write it to both sources/ and knowledge/."""
@@ -449,36 +579,75 @@ class RepoManager:
 
     def _write_source_file(self, doc: Document, filepath: Path):
         """Write a raw source file with minimal frontmatter."""
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(self._render_source_file(doc), encoding="utf-8")
+
+    def _render_source_file(self, doc: Document) -> str:
+        """Render raw source Markdown for staging or direct legacy writes."""
         fm_lines = ["---"]
-        fm_lines.append(f"id: {doc.id}")
-        fm_lines.append(f"source: {doc.source}")
-        fm_lines.append(f"title: {doc.title}")
+        fm_lines.append(f"id: {self._yaml_scalar(doc.id)}")
+        fm_lines.append(f"source: {self._yaml_scalar(doc.source)}")
+        fm_lines.append(f"title: {self._yaml_scalar(doc.title)}")
         if doc.url:
-            fm_lines.append(f"url: {doc.url}")
-        fm_lines.append(f"ingested_at: {datetime.now(timezone.utc).isoformat()}")
-        fm_lines.append(f"updated_at: {doc.updated_at.isoformat()}")
+            fm_lines.append(f"url: {self._yaml_scalar(doc.url)}")
+        fm_lines.append(f"ingested_at: {self._yaml_scalar(datetime.now(UTC).isoformat())}")
+        fm_lines.append(f"updated_at: {self._yaml_scalar(doc.updated_at.isoformat())}")
+        fm_lines.append(f"domain: {self._yaml_scalar(doc.metadata.get('domain', 'general'))}")
+        fm_lines.append(
+            f"sensitivity: {self._yaml_scalar(doc.metadata.get('sensitivity', 'internal'))}"
+        )
+        fm_lines.append(f"acl_principals: {json.dumps(doc.metadata.get('acl_principals', []))}")
+        content_hash = (
+            doc.metadata.get("content_hash")
+            or hashlib.sha256(doc.content.encode("utf-8")).hexdigest()
+        )
+        fm_lines.append(f"content_hash: {self._yaml_scalar(content_hash)}")
+        fm_lines.append(
+            f"source_revision: {self._yaml_scalar(doc.metadata.get('source_revision', ''))}"
+        )
         if doc.metadata:
             fm_lines.append("metadata:")
             for k, v in doc.metadata.items():
-                fm_lines.append(f"  {k}: {json.dumps(v) if isinstance(v, (list, dict)) else v}")
+                safe_key = re.sub(r"[^A-Za-z0-9_-]", "_", str(k))
+                fm_lines.append(f"  {safe_key}: {json.dumps(v, default=str)}")
         fm_lines.append("---")
         fm_lines.append("")
 
-        full_content = "\n".join(fm_lines) + f"# {doc.title}\n\n{doc.content}\n"
-        filepath.write_text(full_content, encoding="utf-8")
+        return "\n".join(fm_lines) + f"# {doc.title}\n\n{doc.content}\n"
 
     def _write_knowledge_file(
         self, doc: Document, knowledge_type: str, filepath: Path, source_ref: str
     ):
         """Write a curated knowledge file with enriched frontmatter."""
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(
+            self._render_knowledge_file(doc, knowledge_type, source_ref),
+            encoding="utf-8",
+        )
+
+    def _render_knowledge_file(self, doc: Document, knowledge_type: str, source_ref: str) -> str:
+        """Render curated Markdown for an isolated proposal."""
         date_str = doc.updated_at.strftime("%Y-%m-%d")
 
         # Build the enriched YAML frontmatter
         fm_lines = ["---"]
-        fm_lines.append(f"id: {doc.id}")
-        fm_lines.append(f"type: {knowledge_type}")
-        fm_lines.append(f"title: {doc.title}")
-        fm_lines.append(f"date: {date_str}")
+        fm_lines.append(f"id: {self._yaml_scalar(doc.id)}")
+        fm_lines.append(f"type: {self._yaml_scalar(knowledge_type)}")
+        fm_lines.append(f"title: {self._yaml_scalar(doc.title)}")
+        fm_lines.append(f"date: {self._yaml_scalar(date_str)}")
+        fm_lines.append(f"domain: {self._yaml_scalar(doc.metadata.get('domain', 'general'))}")
+        fm_lines.append(
+            f"sensitivity: {self._yaml_scalar(doc.metadata.get('sensitivity', 'internal'))}"
+        )
+        fm_lines.append(f"acl_principals: {json.dumps(doc.metadata.get('acl_principals', []))}")
+        content_hash = (
+            doc.metadata.get("content_hash")
+            or hashlib.sha256(doc.content.encode("utf-8")).hexdigest()
+        )
+        fm_lines.append(f"content_hash: {self._yaml_scalar(content_hash)}")
+        fm_lines.append(
+            f"source_revision: {self._yaml_scalar(doc.metadata.get('source_revision', ''))}"
+        )
         fm_lines.append("status: active")
         fm_lines.append("supersedes: null")
         fm_lines.append("superseded_by: null")
@@ -489,23 +658,143 @@ class RepoManager:
 
         # Stakeholders / owner
         owner = self._extract_owner(doc)
-        fm_lines.append(f"owner: {owner}")
+        fm_lines.append(f"owner: {self._yaml_scalar(owner)}")
 
         # Source reference
         fm_lines.append("sources:")
-        fm_lines.append(f"  - type: {doc.source}")
-        fm_lines.append(f"    ref: {source_ref}")
+        fm_lines.append(f"  - type: {self._yaml_scalar(doc.source)}")
+        fm_lines.append(f"    ref: {self._yaml_scalar(source_ref)}")
         if doc.url:
-            fm_lines.append(f"    url: {doc.url}")
+            fm_lines.append(f"    url: {self._yaml_scalar(doc.url)}")
 
         fm_lines.append("related: []")
-        fm_lines.append(f"freshness_check: null")
+        fm_lines.append("freshness_check: null")
         fm_lines.append("confidence: medium")
         fm_lines.append("---")
         fm_lines.append("")
 
-        full_content = "\n".join(fm_lines) + f"# {doc.title}\n\n{doc.content}\n"
-        filepath.write_text(full_content, encoding="utf-8")
+        return "\n".join(fm_lines) + f"# {doc.title}\n\n{doc.content}\n"
+
+    def apply_operations_and_commit(
+        self,
+        operations: list[dict],
+        message: str,
+        expected_base_commit: str,
+    ) -> str:
+        """Replay validated operations, rebuild indexes, and create one commit.
+
+        The base revision check turns concurrent proposals into an explicit
+        review conflict instead of silently overwriting newer knowledge.
+        """
+        if not self._repo:
+            raise RuntimeError("Repository not initialized")
+        actual_base = self.current_commit()
+        require_current_base(expected_base_commit, actual_base)
+        repo_root = self.repo_path.resolve()
+        for operation in operations:
+            relative = str(operation.get("path", ""))
+            target = (repo_root / relative).resolve()
+            try:
+                target.relative_to(repo_root)
+            except ValueError as exc:
+                raise ValueError(f"Operation escapes repository: {relative}") from exc
+            op = operation.get("op")
+            if op == "write":
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(str(operation.get("content", "")), encoding="utf-8")
+            elif op == "delete":
+                if target.is_file():
+                    target.unlink()
+            else:
+                raise ValueError(f"Unsupported file operation: {op}")
+
+        self.rebuild_derived_indexes()
+        self._repo.git.add(A=True)
+        if not self._repo.is_dirty(index=True, working_tree=True, untracked_files=True):
+            return self.current_commit()
+        commit = self._repo.index.commit(message)
+        return commit.hexsha
+
+    def push_commit(self, commit_sha: str) -> str | None:
+        """Idempotently publish an approved commit when a remote is configured."""
+        if not self._repo or not self.remote_url:
+            return None
+        branch = self._repo.active_branch.name
+        self._repo.git.push("origin", f"{commit_sha}:refs/heads/{branch}")
+        return branch
+
+    def rebuild_derived_indexes(self) -> dict:
+        """Regenerate JSON indexes solely from curated committed-source Markdown."""
+        nodes: list[dict] = []
+        taxonomy: dict[str, list[str]] = {}
+        registry: dict[str, dict] = {}
+        experts: dict[str, dict[str, list[str]]] = {}
+        knowledge_dir = self.repo_path / "knowledge"
+        for path in sorted(knowledge_dir.rglob("*.md")) if knowledge_dir.exists() else []:
+            if path.name == "README.md":
+                continue
+            content = path.read_text(encoding="utf-8")
+            metadata = self._parse_frontmatter(content)
+            doc_id = str(metadata.get("id") or path.as_posix())
+            title = str(metadata.get("title") or path.stem)
+            relative = path.relative_to(self.repo_path).as_posix()
+            tags = metadata.get("tags") if isinstance(metadata.get("tags"), list) else []
+            node = {
+                "id": doc_id,
+                "title": title,
+                "path": relative,
+                "source": metadata.get("source", ""),
+                "domain": metadata.get("domain", "general"),
+                "updated_at": metadata.get("date", ""),
+            }
+            nodes.append(node)
+            for tag in tags:
+                taxonomy.setdefault(str(tag), []).append(relative)
+            owner = str(metadata.get("owner") or "")
+            registry[doc_id] = {
+                "path": relative,
+                "updated_at": metadata.get("date", ""),
+                "owner": owner,
+            }
+            if owner:
+                expert = experts.setdefault(owner, {"topics": [], "files": []})
+                expert["files"].append(relative)
+                expert["topics"] = sorted(set(expert["topics"]).union(map(str, tags)))
+
+        generated_at = datetime.now(UTC).isoformat()
+        index_dir = self.repo_path / "_index"
+        index_dir.mkdir(exist_ok=True)
+        payloads = {
+            "graph.json": {"nodes": nodes, "edges": [], "metadata": {"last_rebuilt": generated_at}},
+            "tags.json": {"taxonomy": taxonomy, "metadata": {"last_rebuilt": generated_at}},
+            "freshness.json": {"registry": registry, "metadata": {"last_rebuilt": generated_at}},
+            "people.json": {"experts": experts, "metadata": {"last_rebuilt": generated_at}},
+        }
+        for filename, payload in payloads.items():
+            (index_dir / filename).write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        return {"documents": len(nodes), "generated_at": generated_at}
+
+    @staticmethod
+    def _parse_frontmatter(content: str) -> dict:
+        """Parse the small JSON-compatible YAML subset emitted by Grasp."""
+        if not content.startswith("---\n"):
+            return {}
+        end = content.find("\n---", 4)
+        if end < 0:
+            return {}
+        result: dict = {}
+        for line in content[4:end].splitlines():
+            if not line or line.startswith(" ") or ":" not in line:
+                continue
+            key, raw = line.split(":", 1)
+            raw = raw.strip()
+            try:
+                result[key] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                result[key] = raw
+        return result
 
     def _extract_tags(self, doc: Document) -> list[str]:
         """Extract basic tags from document title and metadata."""
@@ -513,9 +802,31 @@ class RepoManager:
         if doc.source:
             tags.append(doc.source)
         # Extract simple tags from title words
-        title_words = re.findall(r'\b[a-zA-Z]{3,}\b', doc.title.lower())
-        stop_words = {"the", "and", "for", "with", "from", "this", "that", "are", "was", "has", "have",
-                      "will", "can", "not", "but", "all", "any", "each", "how", "its", "may", "use"}
+        title_words = re.findall(r"\b[a-zA-Z]{3,}\b", doc.title.lower())
+        stop_words = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "this",
+            "that",
+            "are",
+            "was",
+            "has",
+            "have",
+            "will",
+            "can",
+            "not",
+            "but",
+            "all",
+            "any",
+            "each",
+            "how",
+            "its",
+            "may",
+            "use",
+        }
         meaningful = [w for w in title_words if w not in stop_words][:5]
         tags.extend(meaningful)
         return list(dict.fromkeys(tags))  # dedupe preserving order
@@ -571,7 +882,7 @@ class RepoManager:
             nodes.append(node_data)
 
         graph["nodes"] = nodes
-        graph["metadata"]["last_rebuilt"] = datetime.now(timezone.utc).isoformat()
+        graph["metadata"]["last_rebuilt"] = datetime.now(UTC).isoformat()
         graph_path.write_text(json.dumps(graph, indent=2, default=str), encoding="utf-8")
 
     def _update_tags(self, index_dir: Path, doc: Document, knowledge_path: str):
@@ -592,7 +903,7 @@ class RepoManager:
                 taxonomy[tag].append(knowledge_path)
 
         tags_data["taxonomy"] = taxonomy
-        tags_data["metadata"]["last_rebuilt"] = datetime.now(timezone.utc).isoformat()
+        tags_data["metadata"]["last_rebuilt"] = datetime.now(UTC).isoformat()
         tags_path.write_text(json.dumps(tags_data, indent=2, default=str), encoding="utf-8")
 
     def _update_freshness(self, index_dir: Path, doc: Document, knowledge_path: str):
@@ -606,13 +917,13 @@ class RepoManager:
         registry = freshness.get("registry", {})
         registry[doc.id] = {
             "path": knowledge_path,
-            "last_verified": datetime.now(timezone.utc).isoformat(),
+            "last_verified": datetime.now(UTC).isoformat(),
             "updated_at": doc.updated_at.isoformat(),
             "owner": self._extract_owner(doc),
         }
 
         freshness["registry"] = registry
-        freshness["metadata"]["last_rebuilt"] = datetime.now(timezone.utc).isoformat()
+        freshness["metadata"]["last_rebuilt"] = datetime.now(UTC).isoformat()
         freshness_path.write_text(json.dumps(freshness, indent=2, default=str), encoding="utf-8")
 
     def _update_people(self, index_dir: Path, doc: Document, knowledge_path: str):
@@ -636,7 +947,7 @@ class RepoManager:
                     experts[owner]["topics"].append(tag)
 
             people["experts"] = experts
-            people["metadata"]["last_rebuilt"] = datetime.now(timezone.utc).isoformat()
+            people["metadata"]["last_rebuilt"] = datetime.now(UTC).isoformat()
             people_path.write_text(json.dumps(people, indent=2, default=str), encoding="utf-8")
 
     # Pending changes
@@ -647,7 +958,7 @@ class RepoManager:
             return
 
         # Get all changes
-        changed = self._repo.index.diff(None)     # Working tree vs index
+        changed = self._repo.index.diff(None)  # Working tree vs index
         untracked = self._repo.untracked_files
 
         added = list(untracked)
@@ -689,7 +1000,7 @@ class RepoManager:
             source_counts[source]["deleted"] += 1
 
         changeset = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "summary": {
                 "total_added": len(added),
                 "total_modified": len(modified),
@@ -699,7 +1010,7 @@ class RepoManager:
             "by_layer": layer_counts,
             "by_source": source_counts,
             "files": {
-                "added": added[:500],       # Cap for very large syncs
+                "added": added[:500],  # Cap for very large syncs
                 "modified": modified[:500],
                 "deleted": deleted[:500],
             },
@@ -737,8 +1048,7 @@ class RepoManager:
                 return (
                     f"--- /dev/null\n"
                     f"+++ b/{relative_path}\n"
-                    f"@@ -0,0 +1,{len(lines)} @@\n"
-                    + "\n".join(f"+{line}" for line in lines)
+                    f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join(f"+{line}" for line in lines)
                 )
             return ""
         except Exception:
@@ -749,8 +1059,7 @@ class RepoManager:
                     return (
                         f"--- /dev/null\n"
                         f"+++ b/{relative_path}\n"
-                        f"@@ -0,0 +1,{len(lines)} @@\n"
-                        + "\n".join(f"+{line}" for line in lines)
+                        f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join(f"+{line}" for line in lines)
                     )
             except Exception:
                 pass
@@ -806,7 +1115,7 @@ class RepoManager:
                     )
                     # Fallback: create a timestamped branch from the commit
                     # and push that instead
-                    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
                     fallback_branch = f"grasp/sync-{timestamp}"
 
                     self._repo.git.branch(fallback_branch)
@@ -881,6 +1190,21 @@ class RepoManager:
             return full_path.read_text(encoding="utf-8")
         return ""
 
+    def read_committed_file(self, file_path: str, commit_sha: str | None = None) -> str:
+        """Read a path from a Git revision, never from an unreviewed worktree."""
+        if not self._repo or self._resolve_repo_path(file_path) is None:
+            return ""
+        revision = commit_sha or self.current_commit()
+        if not revision:
+            return ""
+        try:
+            return self._repo.git.show(f"{revision}:{Path(file_path).as_posix()}")
+        except Exception:
+            return ""
+
+    def get_committed_file_metadata(self, file_path: str) -> dict:
+        return self._parse_frontmatter(self.read_committed_file(file_path))
+
     def get_source_stats(self) -> dict:
         """Get document counts per source and per knowledge type."""
         stats = {"by_type": {}, "by_source": {}, "total": 0}
@@ -894,10 +1218,7 @@ class RepoManager:
                     continue
 
                 # Count .md files (excluding README.md)
-                md_files = [
-                    f for f in type_dir.rglob("*.md")
-                    if f.name != "README.md"
-                ]
+                md_files = [f for f in type_dir.rglob("*.md") if f.name != "README.md"]
                 type_count = len(md_files)
 
                 if type_count > 0:

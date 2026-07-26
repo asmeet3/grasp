@@ -7,45 +7,52 @@ reviewing pending changes, and monitoring system health.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import time
+import uuid
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
+from ..connectors.base import sanitize_filename
+from ..core.security import AuthContext, Permission, PolicyEngine, SystemRole
 from .models import (
-    QueryRequest,
-    SyncTriggerResponse,
-    SyncStatusResponse,
-    PendingChangesResponse,
     ApproveRequest,
     ApproveResponse,
-    RejectResponse,
-    SystemStatusResponse,
-    SourcesResponse,
-    ContributionSubmitRequest,
-    ContributionResponse,
-    ContributionListResponse,
-    ContributionUpdateRequest,
+    ApproveUserRequest,
+    AuthResponse,
+    ChangePasswordRequest,
+    ChatThreadListResponse,
     ContributionActionRequest,
     ContributionActionResponse,
-    RegisterRequest,
+    ContributionListResponse,
+    ContributionResponse,
+    ContributionSubmitRequest,
+    ContributionUpdateRequest,
+    DeleteAccountRequest,
     GoogleAuthRequest,
     LoginRequest,
-    AuthResponse,
-    ApproveUserRequest,
-    UpdateRoleRequest,
-    UpdateProfileRequest,
-    ChangePasswordRequest,
-    DeleteAccountRequest,
-    ChatThreadListResponse,
+    PendingChangesResponse,
+    QueryRequest,
+    RegisterRequest,
+    RejectRequest,
+    RejectResponse,
     SaveChatThreadRequest,
+    SourcesResponse,
+    SyncStatusResponse,
+    SyncTriggerResponse,
+    SystemStatusResponse,
+    UpdateProfileRequest,
+    UpdateRoleRequest,
 )
+from .security import SlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,17 @@ def create_app(
     user_manager=None,
     chat_manager=None,
     google_client_id: str = "",
+    change_set_service=None,
+    policy_engine: PolicyEngine | None = None,
+    trusted_origins: list[str] | None = None,
+    upload_max_bytes: int = 10 * 1024 * 1024,
+    upload_max_pages: int = 200,
+    upload_max_text_chars: int = 2_000_000,
+    auth_rate_limit: int = 20,
+    query_rate_limit: int = 60,
+    upload_rate_limit: int = 10,
+    job_queue=None,
+    metrics=None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -73,7 +91,7 @@ def create_app(
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=trusted_origins or ["http://localhost:8000", "http://127.0.0.1:8000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -94,10 +112,13 @@ def create_app(
     # Authentication dependencies
 
     _admin_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
+    policy = policy_engine or PolicyEngine()
+    rate_limiter = SlidingWindowRateLimiter()
 
-    async def require_admin(key: str = Depends(_admin_key_header)):
-        if not admin_key or not key or key != admin_key:
-            raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+    async def enforce_rate(request: Request, bucket: str, limit: int) -> None:
+        client = request.client.host if request.client else "unknown"
+        if not await rate_limiter.allow(f"{bucket}:{client}", limit):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     async def get_current_user(request: Request):
         """Extract and verify session token from Authorization header."""
@@ -109,13 +130,59 @@ def create_app(
             return await user_manager.verify_token(token)
         return None
 
+    async def require_context(request: Request, permission: Permission) -> AuthContext:
+        user = await get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        context = AuthContext.from_user(user)
+        try:
+            policy.require(context, permission)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return context
+
+    def valid_bootstrap_key(key: str | None) -> bool:
+        return bool(admin_key and key and hmac.compare_digest(key, admin_key))
+
+    async def require_administrator(request: Request) -> AuthContext:
+        """Require an authenticated administrator; bootstrap keys never satisfy this."""
+        return await require_context(request, Permission.MANAGE_USERS)
+
+    async def bootstrap_available(key: str | None) -> bool:
+        """Allow the bootstrap secret only until the first administrator exists."""
+        if not valid_bootstrap_key(key) or not user_manager:
+            return False
+        return await user_manager.count_administrators() == 0
+
+    async def require_administrator_or_bootstrap(
+        request: Request,
+        key: str | None,
+    ) -> AuthContext | None:
+        user = await get_current_user(request)
+        if user:
+            context = AuthContext.from_user(user)
+            if policy.allows(context, Permission.MANAGE_USERS):
+                return context
+        if await bootstrap_available(key):
+            return None
+        raise HTTPException(status_code=403, detail="Administrator permission required")
+
+    async def managed_user(user_id: str, context: AuthContext) -> dict:
+        """Resolve a target without exposing or mutating users in another organization."""
+        users = await user_manager.list_users(context.organization_id)
+        target = next((user for user in users if user.get("id") == user_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return target
+
     # Authentication
 
     @app.post("/api/auth/register", response_model=AuthResponse)
-    async def register_email(request: RegisterRequest):
+    async def register_email(request: RegisterRequest, req: Request):
         """Register a new user via email."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
+        await enforce_rate(req, "auth", auth_rate_limit)
         if request.password != request.confirm_password:
             return AuthResponse(error="Passwords do not match")
         result = await user_manager.register_email(
@@ -130,10 +197,11 @@ def create_app(
         return AuthResponse(user=result["user"], pending=True)
 
     @app.post("/api/auth/register/google", response_model=AuthResponse)
-    async def register_google(request: GoogleAuthRequest):
+    async def register_google(request: GoogleAuthRequest, req: Request):
         """Register or login a user via Google."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
+        await enforce_rate(req, "auth", auth_rate_limit)
         result = await user_manager.register_google(request.id_token)
         if "error" in result:
             return AuthResponse(error=result["error"], conflict=result.get("conflict"))
@@ -144,10 +212,11 @@ def create_app(
         )
 
     @app.post("/api/auth/login", response_model=AuthResponse)
-    async def login_email(request: LoginRequest):
+    async def login_email(request: LoginRequest, req: Request):
         """Login via email + password."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
+        await enforce_rate(req, "auth", auth_rate_limit)
         result = await user_manager.login_email(request.email, request.password)
         if "error" in result:
             return AuthResponse(error=result["error"], conflict=result.get("conflict"))
@@ -158,10 +227,11 @@ def create_app(
         )
 
     @app.post("/api/auth/login/google", response_model=AuthResponse)
-    async def login_google(request: GoogleAuthRequest):
+    async def login_google(request: GoogleAuthRequest, req: Request):
         """Login via Google ID token."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
+        await enforce_rate(req, "auth", auth_rate_limit)
         result = await user_manager.login_google(request.id_token)
         if "error" in result:
             return AuthResponse(error=result["error"], conflict=result.get("conflict"))
@@ -290,40 +360,129 @@ def create_app(
 
     # User administration
 
-    @app.get("/api/admin/users", dependencies=[Depends(require_admin)])
-    async def list_users():
-        """List all registered users."""
+    @app.get("/api/admin/bootstrap/status")
+    async def admin_bootstrap_status():
+        """Report whether first-run administrator bootstrap is still required."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        users = await user_manager.list_users()
+        return {
+            "bootstrap_required": await user_manager.count_administrators() == 0,
+            "bootstrap_configured": bool(admin_key),
+        }
+
+    @app.get("/api/admin/access")
+    async def admin_access(req: Request, key: str = Depends(_admin_key_header)):
+        """Validate an administrator session or one-time bootstrap access."""
+        user = await get_current_user(req)
+        if user and policy.allows(AuthContext.from_user(user), Permission.MANAGE_USERS):
+            return {"authenticated": True, "bootstrap": False}
+        if await bootstrap_available(key):
+            return {"authenticated": True, "bootstrap": True}
+        raise HTTPException(status_code=403, detail="Administrator permission required")
+
+    @app.post("/api/admin/bootstrap/claim")
+    async def claim_bootstrap_administrator(
+        req: Request,
+        key: str = Depends(_admin_key_header),
+    ):
+        """Promote a signed-in user while the one-time bootstrap window is open."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        if not await bootstrap_available(key):
+            raise HTTPException(status_code=403, detail="Administrator bootstrap is unavailable")
+        user = await get_current_user(req)
+        if not user:
+            raise HTTPException(
+                status_code=401, detail="Sign in before claiming administrator access"
+            )
+        job_title = user.get("job_title") or user.get("role") or "Associate"
+        result = await user_manager.update_role(
+            user["id"],
+            job_title,
+            SystemRole.ADMINISTRATOR.value,
+            actor_user_id=user["id"],
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.get("/api/admin/users")
+    async def list_users(req: Request, key: str = Depends(_admin_key_header)):
+        """List users in the administrator's organization or during bootstrap."""
+        if not user_manager:
+            raise HTTPException(status_code=503, detail="Authentication not available")
+        context = await require_administrator_or_bootstrap(req, key)
+        users = await user_manager.list_users(context.organization_id if context else None)
         return {"users": users, "count": len(users)}
 
-    @app.post("/api/admin/users/{user_id}/approve", dependencies=[Depends(require_admin)])
-    async def approve_user(user_id: str, request: ApproveUserRequest):
+    @app.post("/api/admin/users/{user_id}/approve")
+    async def approve_user(
+        user_id: str,
+        request: ApproveUserRequest,
+        req: Request,
+        key: str = Depends(_admin_key_header),
+    ):
         """Approve a pending user and assign a role."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = await user_manager.approve_user(user_id, request.role)
+        context = await require_administrator_or_bootstrap(req, key)
+        if context:
+            await managed_user(user_id, context)
+            system_role = request.system_role
+            actor_user_id = context.user_id
+        else:
+            if request.system_role != SystemRole.ADMINISTRATOR.value:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The first approved account must be an administrator",
+                )
+            system_role = SystemRole.ADMINISTRATOR.value
+            actor_user_id = None
+        result = await user_manager.approve_user(
+            user_id,
+            request.role,
+            system_role,
+            actor_user_id=actor_user_id,
+        )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
 
-    @app.post("/api/admin/users/{user_id}/reject", dependencies=[Depends(require_admin)])
-    async def reject_user(user_id: str):
+    @app.post("/api/admin/users/{user_id}/reject")
+    async def reject_user(user_id: str, req: Request):
         """Reject a pending user."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = await user_manager.reject_user(user_id)
+        context = await require_administrator(req)
+        await managed_user(user_id, context)
+        if user_id == context.user_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Administrators cannot revoke their own access",
+            )
+        result = await user_manager.reject_user(user_id, actor_user_id=context.user_id)
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
 
-    @app.put("/api/admin/users/{user_id}/role", dependencies=[Depends(require_admin)])
-    async def change_user_role(user_id: str, request: UpdateRoleRequest):
+    @app.put("/api/admin/users/{user_id}/role")
+    async def change_user_role(user_id: str, request: UpdateRoleRequest, req: Request):
         """Change an approved user's role."""
         if not user_manager:
             raise HTTPException(status_code=503, detail="Authentication not available")
-        result = await user_manager.update_role(user_id, request.role)
+        context = await require_administrator(req)
+        await managed_user(user_id, context)
+        if user_id == context.user_id and request.system_role is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Administrators cannot change their own access level",
+            )
+        result = await user_manager.update_role(
+            user_id,
+            request.role,
+            request.system_role,
+            actor_user_id=context.user_id,
+        )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         return result
@@ -331,20 +490,24 @@ def create_app(
     # Query streaming
 
     @app.post("/api/query")
-    async def query(request: QueryRequest):
+    async def query(request: QueryRequest, req: Request):
         """Submit a question and get a streamed answer via SSE."""
+        context = await require_context(req, Permission.QUERY)
+        await enforce_rate(req, f"query:{context.user_id}", query_rate_limit)
         history = None
         if request.history:
             history = [{"role": m.role, "content": m.content} for m in request.history]
 
         async def event_generator():
             try:
-                async for chunk in query_engine.query_stream(request.question, history=history):
+                async for chunk in query_engine.query_stream(
+                    request.question, history=history, auth_context=context
+                ):
                     yield {"event": "chunk", "data": chunk}
                 yield {"event": "done", "data": ""}
-            except Exception as e:
-                logger.error(f"Query error: {e}")
-                yield {"event": "error", "data": str(e)}
+            except Exception:
+                logger.exception("Query execution failed")
+                yield {"event": "error", "data": "The query could not be completed."}
 
         return EventSourceResponse(event_generator())
 
@@ -353,13 +516,20 @@ def create_app(
     _health_cache_ts: float = 0.0
     _HEALTH_TTL: float = 300.0  # 5 minutes
 
+    @app.get("/api/health/live")
+    async def liveness():
+        """Unauthenticated process liveness for orchestrators."""
+        return {"status": "ok"}
+
     @app.get("/api/status", response_model=SystemStatusResponse)
-    async def get_status():
+    async def get_status(req: Request):
         """Get system status overview (health checks cached for 5 min)."""
+        await require_context(req, Permission.QUERY)
         nonlocal _health_cache, _health_cache_ts
 
         now = time.time()
         if now - _health_cache_ts > _HEALTH_TTL or not _health_cache:
+
             async def check_health(name, connector):
                 try:
                     result = await asyncio.wait_for(connector.health_check(), timeout=5.0)
@@ -373,27 +543,40 @@ def create_app(
             _health_cache = dict(results)
             _health_cache_ts = now
 
+        document_stats, vector_stats = await asyncio.gather(
+            asyncio.to_thread(repo_manager.get_source_stats),
+            asyncio.to_thread(vector_store.get_stats),
+        )
         return SystemStatusResponse(
             status="syncing" if sync_orchestrator.is_running else "online",
             last_sync=await sync_orchestrator.get_last_sync(),
             next_scheduled=sync_scheduler.next_run_time,
             connector_health=_health_cache,
-            document_stats=repo_manager.get_source_stats(),
-            vector_index=vector_store.get_stats(),
+            document_stats=document_stats,
+            vector_index=vector_stats,
         )
 
-    @app.post("/api/sync/trigger", response_model=SyncTriggerResponse, dependencies=[Depends(require_admin)])
-    async def trigger_sync():
+    @app.post("/api/sync/trigger", response_model=SyncTriggerResponse)
+    async def trigger_sync(req: Request):
         """Manually trigger a sync."""
+        await require_context(req, Permission.REVIEW)
         if sync_orchestrator.is_running:
             return SyncTriggerResponse(status="already_running", message="Sync already in progress")
 
+        if job_queue:
+            job_id = await job_queue.enqueue(
+                "sync",
+                {"trigger": "manual", "actor_user_id": (await get_current_user(req))["id"]},
+                idempotency_key=f"manual-sync:{uuid.uuid4()}",
+            )
+            return SyncTriggerResponse(status="queued", message=f"Sync job queued: {job_id}")
         asyncio.create_task(sync_orchestrator.run_sync())
         return SyncTriggerResponse(status="started", message="Sync triggered")
 
-    @app.get("/api/sync/status", response_model=SyncStatusResponse, dependencies=[Depends(require_admin)])
-    async def sync_status():
+    @app.get("/api/sync/status", response_model=SyncStatusResponse)
+    async def sync_status(req: Request):
         """Get current sync status including worker progress."""
+        await require_context(req, Permission.REVIEW)
         return SyncStatusResponse(
             is_running=sync_orchestrator.is_running,
             last_sync=await sync_orchestrator.get_last_sync(),
@@ -401,97 +584,173 @@ def create_app(
             workers=sync_orchestrator.worker_statuses if sync_orchestrator.is_running else None,
         )
 
-    @app.get("/api/sync/history", dependencies=[Depends(require_admin)])
-    async def sync_history():
+    @app.get("/api/sync/history")
+    async def sync_history(req: Request):
         """Get sync history log."""
+        await require_context(req, Permission.REVIEW)
         return await sync_orchestrator.get_sync_history()
 
     # Pending changes
 
-    @app.get("/api/changes/pending", response_model=PendingChangesResponse, dependencies=[Depends(require_admin)])
-    async def get_pending_changes():
+    @app.get("/api/changes/pending", response_model=PendingChangesResponse)
+    async def get_pending_changes(req: Request):
         """Get current pending changeset for review."""
-        changes = repo_manager.get_pending_changes()
+        context = await require_context(req, Permission.REVIEW)
+        changes_list = (
+            await change_set_service.list_pending(context.organization_id)
+            if change_set_service
+            else []
+        )
+        changes = changes_list[0] if changes_list else None
+        if changes is not None:
+            changes = dict(changes)
+            changes["pending_count"] = len(changes_list)
+            files = {"added": [], "modified": [], "deleted": []}
+            by_type: dict[str, dict[str, int]] = {}
+            for operation in changes.get("operations") or []:
+                path = str(operation.get("path") or "")
+                if operation.get("op") == "delete":
+                    category = "deleted"
+                elif repo_manager.read_committed_file(path, changes.get("base_commit_sha")):
+                    category = "modified"
+                else:
+                    category = "added"
+                files[category].append(path)
+                layer = Path(path).parts[0] if path else "unknown"
+                counts = by_type.setdefault(layer, {"added": 0, "modified": 0, "deleted": 0})
+                counts[category] += 1
+            changes["files"] = files
+            changes["by_type"] = by_type
+            changes["summary"] = {
+                "total_added": len(files["added"]),
+                "total_modified": len(files["modified"]),
+                "total_deleted": len(files["deleted"]),
+                "total_changes": sum(len(items) for items in files.values()),
+            }
         return PendingChangesResponse(
             has_pending=changes is not None,
             changeset=changes,
         )
 
-    @app.get("/api/changes/diff/{file_path:path}", dependencies=[Depends(require_admin)])
-    async def get_file_diff(file_path: str):
+    @app.get("/api/changes/diff/{file_path:path}")
+    async def get_file_diff(file_path: str, req: Request, change_set_id: str = ""):
         """Get the diff for a specific pending file."""
-        diff = repo_manager.get_file_diff(file_path)
+        context = await require_context(req, Permission.REVIEW)
+        if not change_set_service:
+            raise HTTPException(status_code=503, detail="Revision service unavailable")
+        if not change_set_id:
+            pending = await change_set_service.list_pending(context.organization_id)
+            if not pending:
+                return {"file_path": file_path, "diff": ""}
+            change_set_id = pending[0]["id"]
+        change_set = await change_set_service.get(change_set_id)
+        if not change_set or change_set["organization_id"] != context.organization_id:
+            raise HTTPException(status_code=404, detail="Change set not found")
+        diff = await change_set_service.diff(change_set_id, file_path)
         return {"file_path": file_path, "diff": diff}
 
-    @app.post("/api/changes/approve", response_model=ApproveResponse, dependencies=[Depends(require_admin)])
-    async def approve_changes(request: ApproveRequest):
-        """Approve and commit all pending changes."""
-        result = repo_manager.approve_commit(request.message)
-        if "error" in result:
-            return ApproveResponse(status="error", error=result["error"])
-        return ApproveResponse(**result)
+    @app.post("/api/changes/approve", response_model=ApproveResponse)
+    async def approve_changes(request: ApproveRequest, req: Request):
+        """Approve, commit, index, verify, and atomically activate a proposal."""
+        context = await require_context(req, Permission.REVIEW)
+        if not change_set_service:
+            raise HTTPException(status_code=503, detail="Revision service unavailable")
+        change_set_id = request.change_set_id
+        if not change_set_id:
+            pending = await change_set_service.list_pending(context.organization_id)
+            pending = [item for item in pending if item["state"] in ("awaiting_review", "failed")]
+            if not pending:
+                return ApproveResponse(status="error", error="No pending change set")
+            change_set_id = pending[0]["id"]
+        try:
+            result = await change_set_service.approve_and_activate(
+                change_set_id,
+                context,
+                explanation=request.explanation,
+                commit_message=request.message,
+            )
+            return ApproveResponse(
+                status=result["state"],
+                message="Committed, indexed, verified, and activated",
+                changes={
+                    "change_set_id": result["id"],
+                    "commit_sha": result.get("final_commit_sha"),
+                },
+            )
+        except Exception as exc:
+            logger.exception("Change-set approval failed")
+            return ApproveResponse(status="error", error=str(exc))
 
-    @app.post("/api/changes/reject", response_model=RejectResponse, dependencies=[Depends(require_admin)])
-    async def reject_changes():
-        """Reject and revert all pending changes."""
-        result = repo_manager.reject_changes()
-        if "error" in result:
-            return RejectResponse(status="error", error=result["error"])
-        return RejectResponse(status="rejected")
+    @app.post("/api/changes/reject", response_model=RejectResponse)
+    async def reject_changes(request: RejectRequest, req: Request):
+        """Reject an isolated proposal without touching active knowledge."""
+        context = await require_context(req, Permission.REVIEW)
+        if not change_set_service:
+            raise HTTPException(status_code=503, detail="Revision service unavailable")
+        change_set_id = request.change_set_id
+        if not change_set_id:
+            pending = await change_set_service.list_pending(context.organization_id)
+            if not pending:
+                return RejectResponse(status="error", error="No pending change set")
+            change_set_id = pending[0]["id"]
+        try:
+            await change_set_service.reject(change_set_id, context, explanation=request.explanation)
+            return RejectResponse(status="rejected")
+        except Exception as exc:
+            return RejectResponse(status="error", error=str(exc))
 
     @app.get("/api/sources", response_model=SourcesResponse)
-    async def get_sources():
+    async def get_sources(req: Request):
         """Get document counts per source and type."""
-        return SourcesResponse(sources=repo_manager.get_source_stats())
+        await require_context(req, Permission.QUERY)
+        return SourcesResponse(sources=await asyncio.to_thread(repo_manager.get_source_stats))
+
+    @app.get("/api/admin/metrics")
+    async def get_metrics(req: Request):
+        await require_context(req, Permission.VIEW_AUDIT)
+        return {"metrics": metrics.snapshot() if metrics else {}}
 
     # Contributions
 
     @app.post("/api/contributions/submit")
     async def submit_contribution(request: ContributionSubmitRequest, req: Request):
-        """User submits a contribution request (public endpoint)."""
+        """Authenticated user submits a contribution request."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.CONTRIBUTE)
+        await enforce_rate(req, f"upload:{context.user_id}", upload_rate_limit)
         current_user = await get_current_user(req)
-        submitted_by = request.submitted_by
-        if current_user:
-            submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
-        if not submitted_by or not submitted_by.strip():
-            raise HTTPException(status_code=422, detail="Name is required")
+        submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
         result = await contribution_manager.submit(
             title=request.title,
             content=request.content,
             content_type=request.content_type,
             submitted_by=submitted_by,
+            submitter_user_id=context.user_id,
+            organization_id=context.organization_id,
         )
-        response = JSONResponse(content={
-            "id": result["id"],
-            "status": "pending",
-            "message": "Contribution submitted for review",
-        })
-        response.set_cookie(
-            key="grasp_user",
-            value=submitted_by,
-            max_age=60 * 60 * 24 * 365,  # 1 year
-            httponly=False,
-            samesite="lax",
+        return JSONResponse(
+            content={
+                "id": result["id"],
+                "status": "pending",
+                "message": "Contribution submitted for review",
+            }
         )
-        return response
 
     @app.post("/api/contributions/upload")
     async def upload_contribution(
         req: Request,
-        file: UploadFile = File(...),
-        title: str = Form(...),
-        submitted_by: str = Form(""),
+        file: Annotated[UploadFile, File()],
+        title: Annotated[str, Form()],
+        submitted_by: Annotated[str, Form()] = "",
     ):
         """User uploads a document file (.txt, .md, .pdf, .docx) as a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.CONTRIBUTE)
+        await enforce_rate(req, f"upload:{context.user_id}", upload_rate_limit)
         current_user = await get_current_user(req)
-        if current_user:
-            submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
-        if not submitted_by or not submitted_by.strip():
-            raise HTTPException(status_code=422, detail="Name is required")
+        submitted_by = f"{current_user['first_name']} {current_user['last_name']}".strip()
 
         filename = file.filename or ""
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -501,34 +760,54 @@ def create_app(
                 detail=f"Unsupported file type '.{ext}'. Allowed: .txt, .md, .pdf, .docx",
             )
 
-        file_bytes = await file.read()
+        file_bytes = await file.read(upload_max_bytes + 1)
+        if len(file_bytes) > upload_max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail="Uploaded file exceeds the configured size limit",
+            )
 
-        try:
+        def extract_text() -> str:
             if ext in ("txt", "md"):
-                content = file_bytes.decode("utf-8", errors="replace")
-            elif ext == "pdf":
+                return file_bytes.decode("utf-8", errors="replace")
+            if ext == "pdf":
                 import io
+
                 from PyPDF2 import PdfReader
+
                 reader = PdfReader(io.BytesIO(file_bytes))
+                if len(reader.pages) > upload_max_pages:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="PDF exceeds the configured page limit",
+                    )
                 pages = []
                 for page in reader.pages:
                     text = page.extract_text()
                     if text:
                         pages.append(text)
-                content = "\n\n".join(pages)
-            elif ext == "docx":
+                return "\n\n".join(pages)
+            if ext == "docx":
                 import io
+
                 from docx import Document as DocxDocument
+
                 doc = DocxDocument(io.BytesIO(file_bytes))
                 paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                content = "\n\n".join(paragraphs)
-            else:
-                content = ""
+                return "\n\n".join(paragraphs)
+            return ""
 
+        try:
+            content = await asyncio.to_thread(extract_text)
             if not content.strip():
                 raise HTTPException(
                     status_code=422,
                     detail="Could not extract any text from the uploaded file",
+                )
+            if len(content) > upload_max_text_chars:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Extracted text exceeds the configured limit",
                 )
         except HTTPException:
             raise
@@ -537,7 +816,7 @@ def create_app(
             raise HTTPException(
                 status_code=422,
                 detail=f"Failed to parse file: {e}",
-            )
+            ) from e
 
         final_title = title.strip() or filename.rsplit(".", 1)[0]
 
@@ -546,49 +825,55 @@ def create_app(
             content=content,
             content_type="document",
             submitted_by=submitted_by,
+            submitter_user_id=context.user_id,
+            organization_id=context.organization_id,
             original_filename=filename,
             original_file_ext=ext,
         )
 
         try:
-            original_path = contribution_manager.contributions_dir / f"{result['id']}_original.{ext}"
-            original_path.write_bytes(file_bytes)
+            original_path = (
+                contribution_manager.contributions_dir / f"{result['id']}_original.{ext}"
+            )
+            await asyncio.to_thread(original_path.write_bytes, file_bytes)
             logger.info(f"Saved original file: {original_path.name}")
         except Exception as e:
             logger.warning(f"Could not save original file: {e}")
 
-        response = JSONResponse(content={
-            "id": result["id"],
-            "status": "pending",
-            "message": f"Document uploaded ({len(content)} chars extracted)",
-        })
-        response.set_cookie(
-            key="grasp_user",
-            value=submitted_by.strip(),
-            max_age=60 * 60 * 24 * 365,  # 1 year
-            httponly=False,
-            samesite="lax",
+        return JSONResponse(
+            content={
+                "id": result["id"],
+                "status": "pending",
+                "message": f"Document uploaded ({len(content)} chars extracted)",
+            }
         )
-        return response
 
     @app.get(
         "/api/contributions/pending",
         response_model=ContributionListResponse,
-        dependencies=[Depends(require_admin)],
     )
-    async def get_pending_contributions():
+    async def get_pending_contributions(req: Request):
         """List all pending contributions (admin only)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        pending = await contribution_manager.list_pending()
+        context = await require_context(req, Permission.REVIEW)
+        pending = [
+            item
+            for item in await contribution_manager.list_pending()
+            if item.get("organization_id") == context.organization_id
+        ]
         return ContributionListResponse(contributions=pending, count=len(pending))
 
-    @app.get("/api/contributions/count", dependencies=[Depends(require_admin)])
-    async def get_contribution_count():
+    @app.get("/api/contributions/count")
+    async def get_contribution_count(req: Request):
         """Get count of pending contributions (for badge polling)."""
         if not contribution_manager:
             return {"count": 0}
-        return {"count": await contribution_manager.count_pending()}
+        context = await require_context(req, Permission.REVIEW)
+        pending = await contribution_manager.list_pending()
+        return {
+            "count": sum(item.get("organization_id") == context.organization_id for item in pending)
+        }
 
     @app.get("/api/contributions/my")
     async def get_my_contributions(request: Request, submitted_by: str = ""):
@@ -598,30 +883,31 @@ def create_app(
         """
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
-        name = submitted_by.strip()
-        if not name:
-            name = (request.cookies.get("grasp_user") or "").strip()
-        if not name:
-            raise HTTPException(status_code=422, detail="submitted_by is required")
-        all_contributions = await contribution_manager.list_all()
-        mine = [c for c in all_contributions if c.get("submitted_by", "").strip().lower() == name.lower()]
+        context = await require_context(request, Permission.CONTRIBUTE)
+        mine = await contribution_manager.list_for_user(context.user_id)
         return {"contributions": mine, "count": len(mine)}
 
     @app.get("/api/contributions/{contribution_id}/download")
-    async def download_contribution_file(contribution_id: str):
+    async def download_contribution_file(contribution_id: str, req: Request):
         """Download the original uploaded file for a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
         contribution = await contribution_manager.get(contribution_id)
         if not contribution:
             raise HTTPException(status_code=404, detail="Contribution not found")
+        context = await require_context(req, Permission.CONTRIBUTE)
+        if not policy.can_access_contribution(context, contribution.get("submitter_user_id")):
+            raise HTTPException(status_code=403, detail="Access denied")
         ext = contribution.get("original_file_ext", "")
         if not ext:
             raise HTTPException(status_code=404, detail="No original file attached")
         original_path = contribution_manager.contributions_dir / f"{contribution_id}_original.{ext}"
         if not original_path.exists():
             raise HTTPException(status_code=404, detail="Original file not found on disk")
-        original_filename = contribution.get("original_filename", f"{contribution_id}.{ext}")
+        original_filename = sanitize_filename(
+            contribution.get("original_filename") or f"{contribution_id}.{ext}",
+            max_length=150,
+        )
         return FileResponse(
             path=str(original_path),
             filename=original_filename,
@@ -631,26 +917,31 @@ def create_app(
     @app.get(
         "/api/contributions/{contribution_id}",
         response_model=ContributionResponse,
-        dependencies=[Depends(require_admin)],
     )
-    async def get_contribution(contribution_id: str):
+    async def get_contribution(contribution_id: str, req: Request):
         """Get a single contribution by ID (admin only)."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.REVIEW)
         contribution = await contribution_manager.get(contribution_id)
-        if not contribution:
+        if not contribution or contribution.get("organization_id") != context.organization_id:
             raise HTTPException(status_code=404, detail="Contribution not found")
         return ContributionResponse(**contribution)
 
     @app.put(
         "/api/contributions/{contribution_id}",
         response_model=ContributionResponse,
-        dependencies=[Depends(require_admin)],
     )
-    async def update_contribution(contribution_id: str, request: ContributionUpdateRequest):
+    async def update_contribution(
+        contribution_id: str, request: ContributionUpdateRequest, req: Request
+    ):
         """Admin edits the contribution content before approval."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.REVIEW)
+        existing = await contribution_manager.get(contribution_id)
+        if not existing or existing.get("organization_id") != context.organization_id:
+            raise HTTPException(status_code=404, detail="Contribution not found")
         result = await contribution_manager.update_content(
             contribution_id,
             title=request.title,
@@ -663,14 +954,17 @@ def create_app(
     @app.post(
         "/api/contributions/{contribution_id}/approve",
         response_model=ContributionActionResponse,
-        dependencies=[Depends(require_admin)],
     )
-    async def approve_contribution(contribution_id: str, request: ContributionActionRequest):
+    async def approve_contribution(
+        contribution_id: str, request: ContributionActionRequest, req: Request
+    ):
         """Approve a contribution — classify and write to the repo."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.REVIEW)
         result = await contribution_manager.approve(
             contribution_id,
+            reviewer=context,
             admin_notes=request.admin_notes,
         )
         if "error" in result:
@@ -680,12 +974,17 @@ def create_app(
     @app.post(
         "/api/contributions/{contribution_id}/reject",
         response_model=ContributionActionResponse,
-        dependencies=[Depends(require_admin)],
     )
-    async def reject_contribution(contribution_id: str, request: ContributionActionRequest):
+    async def reject_contribution(
+        contribution_id: str, request: ContributionActionRequest, req: Request
+    ):
         """Reject a contribution."""
         if not contribution_manager:
             raise HTTPException(status_code=503, detail="Contributions not available")
+        context = await require_context(req, Permission.REVIEW)
+        existing = await contribution_manager.get(contribution_id)
+        if not existing or existing.get("organization_id") != context.organization_id:
+            raise HTTPException(status_code=404, detail="Contribution not found")
         result = await contribution_manager.reject(
             contribution_id,
             admin_notes=request.admin_notes,
