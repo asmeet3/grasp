@@ -186,8 +186,8 @@ class VectorStore:
         name = f"grasp_{commit_sha[:16]}_{uuid.uuid4().hex[:8]}"
         try:
             self._client.delete_collection(name)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("No pre-existing revision collection %s to delete: %s", name, exc)
         target = self._client.create_collection(
             name=name,
             metadata={"hnsw:space": "cosine"},

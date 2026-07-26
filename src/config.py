@@ -85,7 +85,10 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     sync_batch_size: int = Field(100, description="Documents per batch during sync")
 
     # Server
-    host: str = Field("0.0.0.0", description="Server bind host")
+    host: str = Field(
+        "0.0.0.0",  # nosec B104 - deployed servers must accept external connections.
+        description="Server bind host",
+    )
     port: int = Field(8000, description="Server bind port")
     admin_key: str = Field(
         ..., description="Secret key for admin endpoints (sync, approve, reject)"

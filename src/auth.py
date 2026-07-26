@@ -193,7 +193,7 @@ class UserManager:
             "last_name": family_name,
             "dob": "",
             "email": email,
-            "password_hash": "",
+            "password_hash": "",  # nosec B105 - Google-only accounts cannot use password login.
             "auth_method": "google",
             "status": "pending_approval",
             "role": None,

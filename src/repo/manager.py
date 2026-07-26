@@ -1061,8 +1061,12 @@ class RepoManager:
                         f"+++ b/{relative_path}\n"
                         f"@@ -0,0 +1,{len(lines)} @@\n" + "\n".join(f"+{line}" for line in lines)
                     )
-            except Exception:
-                pass
+            except Exception as fallback_error:
+                logger.debug(
+                    "Could not build fallback diff for %s: %s",
+                    relative_path,
+                    fallback_error,
+                )
             return ""
 
     def approve_commit(self, message: str | None = None) -> dict:
