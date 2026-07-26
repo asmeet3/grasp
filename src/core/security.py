@@ -113,9 +113,11 @@ class PolicyEngine:
         if not self.can_access_principals(context, acl):
             return False
         domain = str(metadata.get("domain") or "general").strip().lower()
-        classification = str(
-            metadata.get("sensitivity") or metadata.get("classification") or "internal"
-        ).strip().lower()
+        classification = (
+            str(metadata.get("sensitivity") or metadata.get("classification") or "internal")
+            .strip()
+            .lower()
+        )
         if context.allowed_domains and domain not in context.allowed_domains:
             return False
         return not (

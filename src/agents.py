@@ -267,10 +267,7 @@ class AgentService:
                 (
                     await conn.execute(
                         select(agent_definitions_table)
-                        .where(
-                            agent_definitions_table.c.organization_id
-                            == context.organization_id
-                        )
+                        .where(agent_definitions_table.c.organization_id == context.organization_id)
                         .order_by(agent_definitions_table.c.name.asc())
                     )
                 )
@@ -532,8 +529,7 @@ class AgentService:
                         )
                         .where(
                             agent_runs_table.c.id == run_id,
-                            agent_definitions_table.c.organization_id
-                            == context.organization_id,
+                            agent_definitions_table.c.organization_id == context.organization_id,
                         )
                     )
                 )
@@ -910,10 +906,10 @@ class AgentService:
 
     @staticmethod
     def _build_prompt(definition: AgentDefinition, run_prompt: str) -> str:
-        skills = "\n".join(
-            f"- {name}: {SUPPORTED_SKILLS[name]}" for name in definition.skills
+        skills = "\n".join(f"- {name}: {SUPPORTED_SKILLS[name]}" for name in definition.skills)
+        request = (
+            run_prompt or "Run the configured routine using the most relevant current evidence."
         )
-        request = run_prompt or "Run the configured routine using the most relevant current evidence."
         return (
             f"Run a governed company-brain routine named '{definition.name}'.\n"
             f"Role: {definition.role}\n"

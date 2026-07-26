@@ -447,9 +447,7 @@ class VectorStore:
                         acl = []
                     policy_metadata = dict(metadata)
                     policy_metadata["acl_principals"] = acl
-                    if not self.policy_engine.can_access_document(
-                        auth_context, policy_metadata
-                    ):
+                    if not self.policy_engine.can_access_document(auth_context, policy_metadata):
                         continue
 
                     score = max(0.0, 1.0 - distance)

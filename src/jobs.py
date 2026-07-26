@@ -185,8 +185,7 @@ class PostgresJobQueue:
         """Run a bounded set of workers against the shared durable queue."""
         self._stopping.clear()
         workers = [
-            asyncio.create_task(self._worker_loop(index))
-            for index in range(self.concurrency)
+            asyncio.create_task(self._worker_loop(index)) for index in range(self.concurrency)
         ]
         await asyncio.gather(*workers)
 

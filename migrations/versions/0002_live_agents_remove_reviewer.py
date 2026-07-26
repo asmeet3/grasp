@@ -16,10 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "UPDATE users SET system_role = 'knowledge_editor' "
-        "WHERE system_role = 'reviewer'"
-    )
+    op.execute("UPDATE users SET system_role = 'knowledge_editor' WHERE system_role = 'reviewer'")
     inspector = sa.inspect(op.get_bind())
     if "agent_controls" not in set(inspector.get_table_names()):
         op.create_table(
