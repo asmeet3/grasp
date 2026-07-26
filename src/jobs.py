@@ -27,11 +27,13 @@ class PostgresJobQueue:
         *,
         poll_seconds: float = 1.0,
         lease_seconds: int = 300,
+        concurrency: int = 4,
         worker_id: str | None = None,
     ):
         self.engine = engine
         self.poll_seconds = poll_seconds
         self.lease_seconds = lease_seconds
+        self.concurrency = max(1, min(concurrency, 32))
         self.worker_id = worker_id or f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
         self.handlers: dict[str, JobHandler] = {}
         self._stopping = asyncio.Event()
@@ -115,7 +117,9 @@ class PostgresJobQueue:
             await self._fail(job, f"No handler registered for {job['job_type']}")
             return True
         try:
-            await handler(job["payload"])
+            handler_payload = dict(job["payload"])
+            handler_payload.setdefault("_job_id", job["id"])
+            await handler(handler_payload)
             async with self.engine.begin() as conn:
                 await conn.execute(
                     update(jobs_table)
@@ -178,7 +182,15 @@ class PostgresJobQueue:
                 )
 
     async def run_forever(self) -> None:
+        """Run a bounded set of workers against the shared durable queue."""
         self._stopping.clear()
+        workers = [
+            asyncio.create_task(self._worker_loop(index))
+            for index in range(self.concurrency)
+        ]
+        await asyncio.gather(*workers)
+
+    async def _worker_loop(self, _index: int) -> None:
         while not self._stopping.is_set():
             worked = await self.run_once()
             if not worked:

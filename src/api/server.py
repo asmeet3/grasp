@@ -21,12 +21,16 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
+from ..agents import AgentDefinition, SUPPORTED_SKILLS
 from ..connectors.base import sanitize_filename
 from ..core.security import AuthContext, Permission, PolicyEngine, SystemRole
 from .models import (
     ApproveRequest,
     ApproveResponse,
     ApproveUserRequest,
+    AgentActivationRequest,
+    AgentEmergencyStopRequest,
+    AgentRunRequest,
     AuthResponse,
     ChangePasswordRequest,
     ChatThreadListResponse,
@@ -80,6 +84,8 @@ def create_app(
     upload_rate_limit: int = 10,
     job_queue=None,
     metrics=None,
+    agent_service=None,
+    agent_scheduler=None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -372,13 +378,17 @@ def create_app(
 
     @app.get("/api/admin/access")
     async def admin_access(req: Request, key: str = Depends(_admin_key_header)):
-        """Validate an administrator session or one-time bootstrap access."""
+        """Validate an operations session or one-time administrator bootstrap."""
         user = await get_current_user(req)
-        if user and policy.allows(AuthContext.from_user(user), Permission.MANAGE_USERS):
-            return {"authenticated": True, "bootstrap": False}
+        if user:
+            context = AuthContext.from_user(user)
+            if policy.allows(context, Permission.MANAGE_USERS) or policy.allows(
+                context, Permission.MANAGE_AGENTS
+            ):
+                return {"authenticated": True, "bootstrap": False}
         if await bootstrap_available(key):
             return {"authenticated": True, "bootstrap": True}
-        raise HTTPException(status_code=403, detail="Administrator permission required")
+        raise HTTPException(status_code=403, detail="Operator or Administrator permission required")
 
     @app.post("/api/admin/bootstrap/claim")
     async def claim_bootstrap_administrator(
@@ -709,6 +719,147 @@ def create_app(
     async def get_metrics(req: Request):
         await require_context(req, Permission.VIEW_AUDIT)
         return {"metrics": metrics.snapshot() if metrics else {}}
+
+    # Governed company-brain agents
+
+    def require_agent_service():
+        if not agent_service:
+            raise HTTPException(status_code=503, detail="Agent service is unavailable")
+        return agent_service
+
+    async def refresh_agent_schedule() -> None:
+        if agent_scheduler:
+            await agent_scheduler.refresh()
+
+    @app.get("/api/agents/status")
+    async def agent_status(req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        return await require_agent_service().control_status(context)
+
+    @app.put("/api/agents/emergency-stop")
+    async def set_agent_emergency_stop(request: AgentEmergencyStopRequest, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        service = require_agent_service()
+        await service.set_emergency_stop(context, request.stopped, reason=request.reason)
+        return await service.control_status(context)
+
+    @app.get("/api/agents/templates")
+    async def agent_templates(req: Request):
+        await require_context(req, Permission.MANAGE_AGENTS)
+        return {
+            "skills": [
+                {"name": name, "description": description}
+                for name, description in SUPPORTED_SKILLS.items()
+            ],
+            "schedules": [
+                {"name": "Manual only", "cron": None},
+                {"name": "Every hour", "cron": "0 * * * *"},
+                {"name": "Weekdays at 09:00 UTC", "cron": "0 9 * * 1-5"},
+                {"name": "Every Monday at 09:00 UTC", "cron": "0 9 * * 1"},
+            ],
+        }
+
+    @app.get("/api/agents/owners")
+    async def agent_owners(req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        owners = await require_agent_service().list_owners(context)
+        return {"owners": owners}
+
+    @app.get("/api/agents/runs")
+    async def agent_runs(req: Request, agent_id: str = "", limit: int = 50):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            runs = await require_agent_service().list_runs(
+                context,
+                agent_id=agent_id or None,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"runs": runs, "count": len(runs)}
+
+    @app.get("/api/agents/runs/{run_id}")
+    async def agent_run(run_id: str, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            return await require_agent_service().get_run(context, run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/agents")
+    async def list_agents(req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        agents = await require_agent_service().list_agents(context)
+        if agent_scheduler:
+            for agent in agents:
+                agent["next_run_at"] = agent_scheduler.next_run_time(agent["id"])
+        return {"agents": agents, "count": len(agents)}
+
+    @app.post("/api/agents", status_code=201)
+    async def create_agent(definition: AgentDefinition, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            agent_id = await require_agent_service().register(context, definition)
+            await refresh_agent_schedule()
+            return {"id": agent_id, "status": "created"}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/agents/{agent_id}")
+    async def get_agent(agent_id: str, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            agent = await require_agent_service().get_agent(context, agent_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if agent_scheduler:
+            agent["next_run_at"] = agent_scheduler.next_run_time(agent_id)
+        return agent
+
+    @app.put("/api/agents/{agent_id}")
+    async def update_agent(agent_id: str, definition: AgentDefinition, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            await require_agent_service().update_definition(context, agent_id, definition)
+            await refresh_agent_schedule()
+            return {"id": agent_id, "status": "updated"}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.put("/api/agents/{agent_id}/activation")
+    async def activate_agent(
+        agent_id: str,
+        request: AgentActivationRequest,
+        req: Request,
+    ):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            await require_agent_service().set_active(context, agent_id, request.active)
+            await refresh_agent_schedule()
+            return {"id": agent_id, "active": request.active}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/agents/{agent_id}/run", status_code=202)
+    async def run_agent(agent_id: str, request: AgentRunRequest, req: Request):
+        context = await require_context(req, Permission.MANAGE_AGENTS)
+        try:
+            job_id = await require_agent_service().request_run(
+                context,
+                agent_id,
+                prompt=request.prompt,
+            )
+            return {"status": "queued", "job_id": job_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Contributions
 

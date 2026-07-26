@@ -106,7 +106,8 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     query_rate_limit_per_minute: int = Field(60, ge=1)
     upload_rate_limit_per_minute: int = Field(10, ge=1)
 
-    # Independent rollout flags. Safety-sensitive capabilities default off.
+    # Independent rollout flags. Write capabilities default off; governed,
+    # read-only company-brain agents are live by default.
     auth_required: bool = True
     revisioned_knowledge: bool = True
     context_routing: bool = False
@@ -114,12 +115,13 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     provider_routing: bool = False
     skills_enabled: bool = False
     actions_enabled: bool = False
-    agents_enabled: bool = False
+    agents_enabled: bool = True
     self_improvement_enabled: bool = False
     context_token_budget: int = Field(8000, ge=1000)
     max_live_providers: int = Field(2, ge=0, le=10)
     sync_overlap_seconds: int = Field(300, ge=0)
     worker_poll_seconds: float = Field(1.0, ge=0.1, le=60.0)
+    worker_concurrency: int = Field(4, ge=1, le=32)
 
     # Database
     database_url: str = Field(
@@ -135,8 +137,6 @@ Return only a JSON array of strings, with no markdown or explanation.""",
                     "Actions, agents, and self-improvement require authentication and "
                     "revisioned knowledge"
                 )
-        if self.agents_enabled and (not self.skills_enabled or not self.actions_enabled):
-            raise ValueError("AGENTS_ENABLED requires SKILLS_ENABLED and ACTIONS_ENABLED")
         if self.self_improvement_enabled and not self.skills_enabled:
             raise ValueError("SELF_IMPROVEMENT_ENABLED requires SKILLS_ENABLED")
         return self

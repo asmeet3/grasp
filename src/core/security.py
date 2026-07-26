@@ -21,7 +21,6 @@ class Permission(str, enum.Enum):
 class SystemRole(str, enum.Enum):
     MEMBER = "member"
     KNOWLEDGE_EDITOR = "knowledge_editor"
-    REVIEWER = "reviewer"
     OPERATOR = "operator"
     ADMINISTRATOR = "administrator"
 
@@ -30,9 +29,6 @@ ROLE_PERMISSIONS: dict[SystemRole, frozenset[Permission]] = {
     SystemRole.MEMBER: frozenset({Permission.QUERY, Permission.CONTRIBUTE}),
     SystemRole.KNOWLEDGE_EDITOR: frozenset(
         {Permission.QUERY, Permission.CONTRIBUTE, Permission.REVIEW}
-    ),
-    SystemRole.REVIEWER: frozenset(
-        {Permission.QUERY, Permission.CONTRIBUTE, Permission.REVIEW, Permission.VIEW_AUDIT}
     ),
     SystemRole.OPERATOR: frozenset(
         {
@@ -57,6 +53,8 @@ class AuthContext:
     system_role: SystemRole
     permissions: frozenset[Permission]
     principals: frozenset[str]
+    allowed_domains: frozenset[str] = frozenset()
+    allowed_classifications: frozenset[str] = frozenset()
 
     @classmethod
     def from_user(cls, user: Mapping[str, Any]) -> AuthContext:
@@ -112,7 +110,18 @@ class PolicyEngine:
         acl = metadata.get("acl_principals")
         if isinstance(acl, str):
             acl = [part.strip() for part in acl.split(",") if part.strip()]
-        return self.can_access_principals(context, acl)
+        if not self.can_access_principals(context, acl):
+            return False
+        domain = str(metadata.get("domain") or "general").strip().lower()
+        classification = str(
+            metadata.get("sensitivity") or metadata.get("classification") or "internal"
+        ).strip().lower()
+        if context.allowed_domains and domain not in context.allowed_domains:
+            return False
+        return not (
+            context.allowed_classifications
+            and classification not in context.allowed_classifications
+        )
 
     def can_access_contribution(
         self,

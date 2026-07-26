@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
     <title>Grasp - Admin Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260724-7">
+    <link rel="stylesheet" href="/static/styles.css?v=20260725-8">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -165,6 +165,10 @@
                                 onclick="showAdminScreen('Contributions')" id="navContributions">Contributions
                                 <span class="admin-nav-badge" id="navContributionsBadge" style="display:none">0</span>
                             </button>
+                            <button type="button" class="admin-sidebar-button"
+                                onclick="showAdminScreen('Agents')" id="navAgents">Agents
+                                <span class="admin-nav-badge" id="navAgentsBadge" style="display:none">0</span>
+                            </button>
                         </nav>
                     </div>
 
@@ -265,6 +269,53 @@
                             <p style="color:var(--text-secondary)">Loading contributions...</p>
                         </div>
                     </div>
+
+                    <div id="screenAgents" class="admin-screen agent-management-page" style="display:none">
+                        <header class="agent-page-header">
+                            <div>
+                                <span class="admin-dashboard-kicker">Governed routines</span>
+                                <h3>Company-brain agents</h3>
+                                <p>Run recurring analysis over company knowledge with owner ACLs, budgets, and a full run history.</p>
+                            </div>
+                            <button type="button" class="admin-dashboard-primary-action" onclick="openAgentEditor()">
+                                <span aria-hidden="true">+</span> New agent
+                            </button>
+                        </header>
+
+                        <div id="agentControlBanner" class="agent-control-banner" aria-live="polite">
+                            <div>
+                                <strong id="agentControlTitle">Loading agent controls...</strong>
+                                <span id="agentControlDescription">Checking runtime availability.</span>
+                            </div>
+                            <button type="button" class="reject-btn" id="agentEmergencyButton"
+                                onclick="toggleAgentEmergencyStop()" disabled>Emergency stop</button>
+                        </div>
+
+                        <section class="admin-dashboard-section" aria-labelledby="agentDefinitionsTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="agentDefinitionsTitle">Agent definitions</h4>
+                                    <p>Agents are read-only and always execute as their approved owner.</p>
+                                </div>
+                                <button type="button" class="agent-secondary-button" onclick="loadAgents()">Refresh</button>
+                            </div>
+                            <div id="agentsGrid" class="agent-card-grid">
+                                <div class="agent-empty-state">Loading agents...</div>
+                            </div>
+                        </section>
+
+                        <section class="admin-dashboard-section" aria-labelledby="agentRunsTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="agentRunsTitle">Recent runs</h4>
+                                    <p>Completed, suppressed, skipped, and failed executions are retained.</p>
+                                </div>
+                            </div>
+                            <div id="agentRunsTable" class="agent-runs-shell">
+                                <div class="agent-empty-state">No runs loaded.</div>
+                            </div>
+                        </section>
+                    </div>
                 </div>
             </div>
         </main>
@@ -349,6 +400,120 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="agentEditorModal" role="dialog" aria-modal="true"
+        aria-labelledby="agentEditorTitle">
+        <div class="modal agent-editor-modal">
+            <div class="modal-header">
+                <h2 id="agentEditorTitle">Create company-brain agent</h2>
+                <button type="button" class="modal-close" onclick="closeAgentEditor()"
+                    aria-label="Close agent editor">&times;</button>
+            </div>
+            <div class="modal-body agent-editor-body">
+                <input type="hidden" id="agentEditId">
+                <div class="agent-form-grid">
+                    <label class="agent-form-field">
+                        <span>Name</span>
+                        <input id="agentName" maxlength="80" placeholder="Weekly delivery risk brief">
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Operating role</span>
+                        <input id="agentRole" maxlength="120" placeholder="Delivery intelligence analyst">
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Owner</span>
+                        <select id="agentOwner"></select>
+                        <small>The agent inherits this person's document access.</small>
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Skill</span>
+                        <select id="agentSkill">
+                            <option value="knowledge_brief">Knowledge brief</option>
+                            <option value="gap_analysis">Gap analysis</option>
+                            <option value="risk_watch">Risk watch</option>
+                            <option value="decision_digest">Decision digest</option>
+                        </select>
+                    </label>
+                    <label class="agent-form-field agent-form-wide">
+                        <span>Purpose and instructions</span>
+                        <textarea id="agentInstructions" rows="5" maxlength="8000"
+                            placeholder="Review delivery plans and project updates. Highlight newly blocked work, cross-team dependencies, and decisions needed from leadership."></textarea>
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Domains</span>
+                        <input id="agentDomains" value="general" placeholder="general, engineering, product">
+                        <small>Comma-separated metadata domains.</small>
+                    </label>
+                    <fieldset class="agent-form-field agent-classification-field">
+                        <legend>Allowed classifications</legend>
+                        <label><input type="checkbox" name="agentClassification" value="public" checked> Public</label>
+                        <label><input type="checkbox" name="agentClassification" value="internal" checked> Internal</label>
+                        <label><input type="checkbox" name="agentClassification" value="confidential"> Confidential</label>
+                        <label><input type="checkbox" name="agentClassification" value="restricted"> Restricted</label>
+                    </fieldset>
+                    <label class="agent-form-field">
+                        <span>Schedule</span>
+                        <select id="agentSchedulePreset" onchange="updateAgentScheduleInput()">
+                            <option value="">Manual only</option>
+                            <option value="0 * * * *">Every hour</option>
+                            <option value="0 9 * * 1-5">Weekdays at 09:00 UTC</option>
+                            <option value="0 9 * * 1">Mondays at 09:00 UTC</option>
+                            <option value="custom">Custom cron</option>
+                        </select>
+                    </label>
+                    <label class="agent-form-field" id="agentCronField" style="display:none">
+                        <span>Five-field cron (UTC)</span>
+                        <input id="agentCron" placeholder="0 9 * * 1-5">
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Runtime limit (seconds)</span>
+                        <input id="agentRuntimeBudget" type="number" min="30" max="3600" value="300">
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Daily token budget</span>
+                        <input id="agentCostBudget" type="number" min="0" max="2000000" value="20000">
+                        <small>Use 0 for no daily limit.</small>
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Concurrency</span>
+                        <input id="agentConcurrency" type="number" min="1" max="5" value="1">
+                    </label>
+                    <label class="agent-form-field">
+                        <span>Escalation path</span>
+                        <input id="agentEscalation" maxlength="500" value="Agent owner">
+                    </label>
+                    <label class="agent-form-checkbox agent-form-wide">
+                        <input id="agentSuppressUnchanged" type="checkbox" checked>
+                        <span>Suppress reports that are unchanged from the previous run</span>
+                    </label>
+                    <label class="agent-form-checkbox agent-form-wide">
+                        <input id="agentAfterSync" type="checkbox">
+                        <span>Run after a successful company knowledge sync</span>
+                    </label>
+                </div>
+                <p class="agent-form-error" id="agentFormError" role="alert"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="reject-btn agent-cancel-button" onclick="closeAgentEditor()">Cancel</button>
+                <button type="button" class="approve-btn" id="saveAgentButton" onclick="saveAgent()">Save agent</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="agentReportModal" role="dialog" aria-modal="true"
+        aria-labelledby="agentReportTitle">
+        <div class="modal agent-report-modal">
+            <div class="modal-header">
+                <h2 id="agentReportTitle">Agent run</h2>
+                <button type="button" class="modal-close" onclick="closeAgentReport()"
+                    aria-label="Close agent report">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="agentReportMeta" class="agent-report-meta"></div>
+                <pre id="agentReportContent" class="agent-report-content"></pre>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="revokeUserModal" role="dialog" aria-modal="true"
         aria-labelledby="revokeUserModalTitle" aria-describedby="revokeUserConfirmText">
         <div class="modal revoke-user-modal">
@@ -381,8 +546,8 @@
     </div>
 
     <div id="toastContainer"></div>
-    <script src="/static/toast.js?v=20260724-7"></script>
-    <script src="/static/admin.js?v=20260724-7"></script>
+    <script src="/static/toast.js?v=20260725-8"></script>
+    <script src="/static/admin.js?v=20260725-8"></script>
 </body>
 
 </html>

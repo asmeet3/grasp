@@ -83,7 +83,11 @@ class UserManagerStub:
             )
 
     async def verify_token(self, token: str):
-        user_id = {"member-token": "member-user", "admin-token": "admin-user"}.get(token)
+        user_id = {
+            "member-token": "member-user",
+            "target-token": "target-user",
+            "admin-token": "admin-user",
+        }.get(token)
         return next((dict(user) for user in self.users if user["id"] == user_id), None)
 
     async def list_users(self, organization_id: str | None = None):
@@ -140,6 +144,7 @@ class UserManagerStub:
 def client(
     admin_key: str = "",
     user_manager: UserManagerStub | None = None,
+    agent_service=None,
 ) -> TestClient:
     app = create_app(
         query_engine=object(),
@@ -151,6 +156,7 @@ def client(
         contribution_manager=object(),
         user_manager=user_manager or UserManagerStub(),
         admin_key=admin_key,
+        agent_service=agent_service,
     )
     return TestClient(app)
 
@@ -297,7 +303,7 @@ def test_member_cannot_manage_users_even_with_bootstrap_key() -> None:
             "Authorization": "Bearer member-token",
             "X-Admin-Key": "bootstrap-secret",
         },
-        json={"role": "Manager", "system_role": "reviewer"},
+        json={"role": "Manager", "system_role": "operator"},
     )
 
     assert list_response.status_code == 403
@@ -312,12 +318,12 @@ def test_administrator_can_change_another_users_access() -> None:
     response = api.put(
         "/api/admin/users/target-user/role",
         headers={"Authorization": "Bearer admin-token"},
-        json={"role": "Manager", "system_role": "reviewer"},
+        json={"role": "Manager", "system_role": "operator"},
     )
 
     assert response.status_code == 200
-    assert response.json()["user"]["system_role"] == "reviewer"
-    assert manager.updated_role == ("target-user", "Manager", "reviewer")
+    assert response.json()["user"]["system_role"] == "operator"
+    assert manager.updated_role == ("target-user", "Manager", "operator")
 
 
 def test_administrator_cannot_change_own_access_or_cross_organization_boundary() -> None:
@@ -332,9 +338,32 @@ def test_administrator_cannot_change_own_access_or_cross_organization_boundary()
     cross_org_change = api.put(
         "/api/admin/users/other-org-user/role",
         headers={"Authorization": "Bearer admin-token"},
-        json={"role": "Associate", "system_role": "reviewer"},
+        json={"role": "Associate", "system_role": "operator"},
     )
 
     assert self_change.status_code == 409
     assert cross_org_change.status_code == 404
     assert manager.updated_role is None
+
+
+def test_operator_can_enter_agent_operations_but_cannot_manage_users() -> None:
+    class AgentServiceStub:
+        async def control_status(self, _context):
+            return {"enabled": True, "emergency_stopped": False, "reason": ""}
+
+    manager = UserManagerStub(include_administrator=True)
+    target = next(user for user in manager.users if user["id"] == "target-user")
+    target["system_role"] = "operator"
+    api = client(user_manager=manager, agent_service=AgentServiceStub())
+    headers = {"Authorization": "Bearer target-token"}
+
+    assert api.get("/api/admin/access", headers=headers).status_code == 200
+    assert api.get("/api/agents/status", headers=headers).status_code == 200
+    assert api.get("/api/admin/users", headers=headers).status_code == 403
+    assert (
+        api.get(
+            "/api/agents/status",
+            headers={"Authorization": "Bearer member-token"},
+        ).status_code
+        == 403
+    )

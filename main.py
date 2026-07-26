@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import uuid
 
 import uvicorn
 
@@ -15,6 +16,7 @@ from src.agent.engine import QueryEngine
 from src.agent.query_shortener import QueryShortener
 from src.agent.sub_agents import SubAgent, SubAgentDispatcher
 from src.agent.tools import ToolExecutor
+from src.agents import AgentScheduler, AgentService
 from src.api.server import create_app
 from src.audit import PostgresAuditStore
 from src.auth import UserManager
@@ -229,12 +231,24 @@ def main():
     )
     logger.info("Sync orchestrator initialized")
 
-    job_queue = PostgresJobQueue(db_engine, poll_seconds=settings.worker_poll_seconds)
+    job_queue = PostgresJobQueue(
+        db_engine,
+        poll_seconds=settings.worker_poll_seconds,
+        concurrency=settings.worker_concurrency,
+    )
 
     async def run_sync_job(_payload):
         result = await orchestrator.run_sync()
         if "error" in result:
             raise RuntimeError(result["error"])
+        try:
+            await agent_service.enqueue_event(
+                "knowledge_sync",
+                "default",
+                event_id=str(_payload.get("_job_id") or uuid.uuid4()),
+            )
+        except Exception:
+            logger.exception("Knowledge sync completed, but agent event fan-out failed")
 
     job_queue.register("sync", run_sync_job)
 
@@ -288,6 +302,25 @@ def main():
     )
     logger.info(f"Query engine initialized (model: {settings.agent_model})")
 
+    agent_service = AgentService(
+        db_engine,
+        query_engine=query_engine,
+        job_queue=job_queue,
+        enabled=settings.agents_enabled,
+        audit=audit_store,
+        metrics=metrics,
+    )
+
+    async def run_agent_job(payload):
+        await agent_service.execute_job(dict(payload))
+
+    job_queue.register("agent-run", run_agent_job)
+    agent_scheduler = AgentScheduler(agent_service)
+    logger.info(
+        "Company-brain agent service initialized (%s)",
+        "enabled" if settings.agents_enabled else "disabled",
+    )
+
     contribution_manager = ContributionManager(
         engine=db_engine,
         repo_manager=repo_manager,
@@ -330,6 +363,8 @@ def main():
         upload_rate_limit=settings.upload_rate_limit_per_minute,
         job_queue=job_queue,
         metrics=metrics,
+        agent_service=agent_service,
+        agent_scheduler=agent_scheduler,
     )
 
     worker_task = None
@@ -352,12 +387,14 @@ def main():
             )
         loop = asyncio.get_running_loop()
         scheduler.start(loop=loop)
+        await agent_scheduler.start(loop)
         worker_task = asyncio.create_task(job_queue.run_forever())
-        logger.info("Scheduler started")
+        logger.info("Schedulers and durable worker started")
 
     @app.on_event("shutdown")
     async def on_shutdown():
         scheduler.stop()
+        agent_scheduler.stop()
         job_queue.stop()
         if worker_task:
             await worker_task

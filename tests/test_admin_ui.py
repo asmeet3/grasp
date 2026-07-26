@@ -85,10 +85,23 @@ def test_admin_sidebar_buttons_match_user_actions_without_sharing_classes() -> N
     javascript = (ROOT / "src" / "static" / "admin.js").read_text(encoding="utf-8")
     stylesheet = (ROOT / "src" / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert html.count('class="admin-sidebar-button') == 3
+    assert html.count('class="admin-sidebar-button') == 4
     assert "admin-nav-item" not in html
     assert "document.querySelectorAll('.admin-sidebar-button')" in javascript
     assert ".admin-nav-item" not in stylesheet
+
+
+def test_agent_management_is_available_to_operator_and_administrator() -> None:
+    html = (ROOT / "src" / "static" / "admin.html").read_text(encoding="utf-8")
+    javascript = (ROOT / "src" / "static" / "admin.js").read_text(encoding="utf-8")
+
+    assert 'id="navAgents"' in html
+    assert 'id="screenAgents"' in html
+    assert 'id="agentEditorModal"' in html
+    assert "role === 'operator' || role === 'administrator'" in javascript
+    assert "/api/agents/emergency-stop" in javascript
+    assert "/api/agents/${agentId}/run" in javascript
+    assert "['reviewer', 'Reviewer']" not in javascript
 
     user_button = stylesheet.split(".contribute-btn {", 1)[1].split("}", 1)[0]
     admin_button = stylesheet.split(".admin-sidebar-button {", 1)[1].split("}", 1)[0]

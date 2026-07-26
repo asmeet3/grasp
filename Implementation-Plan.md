@@ -116,7 +116,7 @@ Update the browser client to attach authentication to queries. Replace identity-
 Current organization titles are not security roles. Separate:
 
 - `job_title`: Associate, Manager, Partner, etc.
-- `system_role`: member, knowledge_editor, reviewer, operator, administrator.
+- `system_role`: member, knowledge_editor, operator, administrator.
 - `permissions`: query, contribute, review, manage users, manage agents, execute actions.
 - Source and document access rules.
 

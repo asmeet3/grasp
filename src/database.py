@@ -396,6 +396,27 @@ agent_runs_table = Table(
 )
 
 
+agent_controls_table = Table(
+    "agent_controls",
+    metadata,
+    Column(
+        "organization_id",
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("emergency_stopped", Boolean, nullable=False, server_default="false"),
+    Column("reason", Text, nullable=False, server_default=""),
+    Column(
+        "updated_by",
+        String(12),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+
 evaluation_runs_table = Table(
     "evaluation_runs",
     metadata,
@@ -429,5 +450,12 @@ async def init_db(engine: AsyncEngine) -> None:
             pg_insert(organizations_table)
             .values(id="default", name="Default Organization")
             .on_conflict_do_nothing(index_elements=["id"])
+        )
+        # Reviewer used to be a standalone access level. Knowledge editors
+        # retain its useful review capability without audit/operations access.
+        await conn.execute(
+            users_table.update()
+            .where(users_table.c.system_role == "reviewer")
+            .values(system_role="knowledge_editor")
         )
     logger.info("Database tables verified or created")

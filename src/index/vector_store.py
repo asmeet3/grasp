@@ -445,7 +445,11 @@ class VectorStore:
                         acl = json.loads(raw_acl) if isinstance(raw_acl, str) else raw_acl
                     except json.JSONDecodeError:
                         acl = []
-                    if not self.policy_engine.can_access_principals(auth_context, acl):
+                    policy_metadata = dict(metadata)
+                    policy_metadata["acl_principals"] = acl
+                    if not self.policy_engine.can_access_document(
+                        auth_context, policy_metadata
+                    ):
                         continue
 
                     score = max(0.0, 1.0 - distance)

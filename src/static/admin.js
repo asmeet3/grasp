@@ -3,6 +3,10 @@ let adminKey = sessionStorage.getItem('grasp_admin_key') || '';
 let bootstrapMode = false;
 let adminIntervalsStarted = false;
 let currentAdminUser = null;
+let allAgentsData = [];
+let allAgentRuns = [];
+let agentOwners = [];
+let agentControlState = { enabled: false, emergency_stopped: false, reason: '' };
 
 // Theme
 
@@ -130,9 +134,9 @@ function showBootstrapGate(configured) {
 function showAdminAccessDenied() {
     document.getElementById('adminApp').style.display = 'none';
     document.getElementById('authGate').style.display = 'flex';
-    document.getElementById('adminGateTitle').textContent = 'Administrator access required';
+    document.getElementById('adminGateTitle').textContent = 'Operations access required';
     document.getElementById('adminGateMessage').textContent =
-        'Your account is signed in, but it does not have Administrator access.';
+        'Your account is signed in, but it does not have Operator or Administrator access.';
     document.getElementById('adminBootstrapForm').style.display = 'none';
     document.getElementById('adminDeniedActions').style.display = 'flex';
     const error = document.getElementById('authError');
@@ -211,6 +215,7 @@ async function loadAdminProfile() {
     }
     if (!user) return;
     currentAdminUser = user;
+    configureAdminNavigation(user);
 
     const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Admin';
     const initials = (user.first_name || 'A')[0].toUpperCase();
@@ -241,6 +246,7 @@ function showAdminDashboard(isBootstrap = false) {
     document.getElementById('connectorsSectionBody').style.display = isBootstrap ? 'none' : '';
     document.getElementById('navHome').style.display = isBootstrap ? 'none' : '';
     document.getElementById('navContributions').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navAgents').style.display = isBootstrap ? 'none' : '';
     document.getElementById('syncBtn').style.display = isBootstrap ? 'none' : '';
 
     if (isBootstrap) {
@@ -251,7 +257,6 @@ function showAdminDashboard(isBootstrap = false) {
     refreshStatus();
     checkPendingChanges();
     checkContributionCount();
-    checkUserPendingCount();
 
     // Default to Home screen
     showAdminScreen('Home');
@@ -261,8 +266,28 @@ function showAdminDashboard(isBootstrap = false) {
         setInterval(refreshStatus, 15000);
         setInterval(checkPendingChanges, 15000);
         setInterval(checkContributionCount, 15000);
-        setInterval(checkUserPendingCount, 15000);
+        setInterval(() => {
+            if (currentAdminUser?.system_role === 'administrator') checkUserPendingCount();
+        }, 15000);
+        setInterval(() => {
+            if (['operator', 'administrator'].includes(currentAdminUser?.system_role)) loadAgents();
+        }, 15000);
     }
+}
+
+function configureAdminNavigation(user) {
+    if (bootstrapMode) return;
+    const role = user?.system_role || 'member';
+    const canManageUsers = role === 'administrator';
+    const canManageAgents = role === 'operator' || role === 'administrator';
+    document.getElementById('navUsers').style.display = canManageUsers ? '' : 'none';
+    document.getElementById('navAgents').style.display = canManageAgents ? '' : 'none';
+    if (canManageUsers) checkUserPendingCount();
+
+    const usersScreen = document.getElementById('screenUsers');
+    const agentsScreen = document.getElementById('screenAgents');
+    if (!canManageUsers && usersScreen?.style.display !== 'none') showAdminScreen('Home');
+    if (!canManageAgents && agentsScreen?.style.display !== 'none') showAdminScreen('Home');
 }
 
 // Screen routing
@@ -290,6 +315,11 @@ function showAdminScreen(screenName) {
         document.getElementById('navContributions').classList.add('active');
         titleEl.textContent = 'Contribution Requests';
         loadContributions();
+    } else if (screenName === 'Agents') {
+        document.getElementById('screenAgents').style.display = 'block';
+        document.getElementById('navAgents').classList.add('active');
+        titleEl.textContent = 'Company-brain Agents';
+        loadAgents();
     }
 }
 
@@ -989,7 +1019,6 @@ let revokeDialogTrigger = null;
 const SYSTEM_ROLES = [
     ['member', 'Member'],
     ['knowledge_editor', 'Knowledge Editor'],
-    ['reviewer', 'Reviewer'],
     ['operator', 'Operator'],
     ['administrator', 'Administrator'],
 ];
@@ -2226,6 +2255,377 @@ async function rejectContribution() {
             error: error => `Could not reject contribution: ${error.message}`,
         });
     } catch (_) { /* The promise toast presents the error. */ }
+}
+
+// Company-brain agents
+
+function agentApiError(data, fallback) {
+    if (typeof data?.detail === 'string') return data.detail;
+    if (Array.isArray(data?.detail) && data.detail.length) {
+        return data.detail.map(item => item.msg || String(item)).join('; ');
+    }
+    return data?.error || fallback;
+}
+
+async function loadAgents() {
+    const grid = document.getElementById('agentsGrid');
+    if (!grid || !['operator', 'administrator'].includes(currentAdminUser?.system_role)) return;
+    try {
+        const [statusResponse, agentsResponse, runsResponse, ownersResponse] = await Promise.all([
+            fetch(`${API_BASE}/api/agents/status`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents/runs?limit=50`, { headers: adminHeaders() }),
+            fetch(`${API_BASE}/api/agents/owners`, { headers: adminHeaders() }),
+        ]);
+        if (![statusResponse, agentsResponse, runsResponse, ownersResponse].every(response => response.ok)) {
+            throw new Error('Agent operations could not be loaded.');
+        }
+        agentControlState = await statusResponse.json();
+        allAgentsData = (await agentsResponse.json()).agents || [];
+        allAgentRuns = (await runsResponse.json()).runs || [];
+        agentOwners = (await ownersResponse.json()).owners || [];
+        renderAgentControls();
+        renderAgents();
+        renderAgentRuns();
+    } catch (error) {
+        grid.innerHTML = `<div class="agent-empty-state agent-error-state">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function renderAgentControls() {
+    const banner = document.getElementById('agentControlBanner');
+    const title = document.getElementById('agentControlTitle');
+    const description = document.getElementById('agentControlDescription');
+    const button = document.getElementById('agentEmergencyButton');
+    if (!banner || !title || !description || !button) return;
+
+    banner.classList.toggle('stopped', Boolean(agentControlState.emergency_stopped));
+    if (!agentControlState.enabled) {
+        title.textContent = 'Agent execution is disabled';
+        description.textContent = 'Set AGENTS_ENABLED=true and restart Grasp.';
+        button.disabled = true;
+        return;
+    }
+    button.disabled = false;
+    if (agentControlState.emergency_stopped) {
+        title.textContent = 'Emergency stop is active';
+        description.textContent = agentControlState.reason || 'No agent runs will be started.';
+        button.textContent = 'Resume agents';
+        button.classList.add('agent-resume-button');
+    } else {
+        title.textContent = 'Agent runtime is live';
+        description.textContent = 'Active schedules and manual runs use the durable worker queue.';
+        button.textContent = 'Emergency stop';
+        button.classList.remove('agent-resume-button');
+    }
+}
+
+function agentOwnerName(agent) {
+    const owner = agent.owner || agentOwners.find(item => item.id === agent.definition.owner_user_id);
+    if (!owner) return agent.definition.owner_user_id;
+    return `${owner.first_name || ''} ${owner.last_name || ''}`.trim() || owner.email || owner.id;
+}
+
+function agentSkillLabel(skill) {
+    const labels = {
+        knowledge_brief: 'Knowledge brief',
+        gap_analysis: 'Gap analysis',
+        risk_watch: 'Risk watch',
+        decision_digest: 'Decision digest',
+    };
+    return labels[skill] || String(skill).replaceAll('_', ' ');
+}
+
+function agentScheduleLabel(agent) {
+    const cron = agent.definition.schedule;
+    const known = {
+        '0 * * * *': 'Every hour',
+        '0 9 * * 1-5': 'Weekdays at 09:00 UTC',
+        '0 9 * * 1': 'Mondays at 09:00 UTC',
+    };
+    return cron ? known[cron] || `${cron} UTC` : 'Manual only';
+}
+
+function agentStateBadge(state) {
+    const normalized = state || 'never_run';
+    return `<span class="agent-state-badge agent-state-${escapeHtml(normalized)}">${escapeHtml(normalized.replaceAll('_', ' '))}</span>`;
+}
+
+function renderAgents() {
+    const grid = document.getElementById('agentsGrid');
+    if (!grid) return;
+    document.getElementById('navAgentsBadge').style.display = allAgentsData.length ? '' : 'none';
+    document.getElementById('navAgentsBadge').textContent = String(allAgentsData.length);
+    if (!allAgentsData.length) {
+        grid.innerHTML = `<div class="agent-empty-state">
+            <strong>No agents configured</strong>
+            <span>Create a governed routine for recurring briefs, risk watches, gap analysis, or decision digests.</span>
+            <button type="button" class="approve-btn" onclick="openAgentEditor()">Create first agent</button>
+        </div>`;
+        return;
+    }
+
+    grid.innerHTML = allAgentsData.map(agent => {
+        const definition = agent.definition;
+        const latest = agent.latest_run;
+        const statusText = agent.active ? 'Active' : agent.paused_reason || 'Inactive';
+        const nextRun = agent.next_run_at ? timeAgo(agent.next_run_at, true) : 'Not scheduled';
+        return `<article class="agent-card ${agent.active ? 'active' : 'inactive'}">
+            <div class="agent-card-heading">
+                <div>
+                    <div class="agent-card-title-row">
+                        <h5>${escapeHtml(agent.name)}</h5>
+                        <span class="agent-activation-badge ${agent.active ? 'active' : ''}">${escapeHtml(statusText)}</span>
+                    </div>
+                    <p>${escapeHtml(definition.role)}</p>
+                </div>
+            </div>
+            <div class="agent-card-purpose">${escapeHtml(definition.instructions)}</div>
+            <dl class="agent-card-facts">
+                <div><dt>Owner</dt><dd>${escapeHtml(agentOwnerName(agent))}</dd></div>
+                <div><dt>Skill</dt><dd>${escapeHtml(agentSkillLabel(definition.skills[0]))}</dd></div>
+                <div><dt>Schedule</dt><dd>${escapeHtml(agentScheduleLabel(agent))}</dd></div>
+                <div><dt>Next run</dt><dd>${escapeHtml(nextRun)}</dd></div>
+                <div><dt>Last run</dt><dd>${latest ? agentStateBadge(latest.state) : 'Never'}</dd></div>
+                <div><dt>Daily budget</dt><dd>${definition.cost_budget_units ? definition.cost_budget_units.toLocaleString() : 'Unlimited'}</dd></div>
+            </dl>
+            ${agent.failure_count ? `<div class="agent-card-warning">${agent.failure_count} consecutive failure(s)</div>` : ''}
+            <div class="agent-card-actions">
+                <button type="button" class="agent-secondary-button" onclick="openAgentEditor('${agent.id}')">Edit</button>
+                <button type="button" class="agent-secondary-button" onclick="setAgentActive('${agent.id}', ${!agent.active})">${agent.active ? 'Pause' : 'Activate'}</button>
+                <button type="button" class="approve-btn" onclick="runAgent('${agent.id}')"
+                    ${!agent.active || agentControlState.emergency_stopped ? 'disabled' : ''}>Run now</button>
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function renderAgentRuns() {
+    const shell = document.getElementById('agentRunsTable');
+    if (!shell) return;
+    if (!allAgentRuns.length) {
+        shell.innerHTML = '<div class="agent-empty-state"><strong>No runs yet</strong><span>Run an active agent to create its first report.</span></div>';
+        return;
+    }
+    const names = Object.fromEntries(allAgentsData.map(agent => [agent.id, agent.name]));
+    const rows = allAgentRuns.map(run => {
+        const trigger = run.input?.trigger || 'manual';
+        const hasDetails = Boolean(run.output?.report || run.output?.error);
+        return `<tr>
+            <td>${escapeHtml(names[run.agent_id] || 'Unknown agent')}</td>
+            <td>${agentStateBadge(run.state)}</td>
+            <td>${escapeHtml(trigger)}</td>
+            <td>${Number(run.cost_units || 0).toLocaleString()}</td>
+            <td>${run.created_at ? escapeHtml(timeAgo(run.created_at)) : '—'}</td>
+            <td><button type="button" class="agent-link-button" onclick="openAgentReport('${run.id}')" ${hasDetails ? '' : 'disabled'}>View</button></td>
+        </tr>`;
+    }).join('');
+    shell.innerHTML = `<table class="agent-runs-table">
+        <thead><tr><th>Agent</th><th>Result</th><th>Trigger</th><th>Tokens</th><th>Started</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function populateAgentOwners(selectedId = '') {
+    const select = document.getElementById('agentOwner');
+    if (!select) return;
+    select.innerHTML = agentOwners.map(owner => {
+        const name = `${owner.first_name || ''} ${owner.last_name || ''}`.trim() || owner.email;
+        return `<option value="${escapeHtml(owner.id)}" ${owner.id === selectedId ? 'selected' : ''}>${escapeHtml(name)} · ${escapeHtml(owner.email || owner.id)}</option>`;
+    }).join('');
+}
+
+function resetAgentEditor() {
+    document.getElementById('agentEditId').value = '';
+    document.getElementById('agentName').value = '';
+    document.getElementById('agentRole').value = '';
+    document.getElementById('agentInstructions').value = '';
+    document.getElementById('agentDomains').value = 'general';
+    document.getElementById('agentSkill').value = 'knowledge_brief';
+    document.getElementById('agentSchedulePreset').value = '';
+    document.getElementById('agentCron').value = '';
+    document.getElementById('agentRuntimeBudget').value = '300';
+    document.getElementById('agentCostBudget').value = '20000';
+    document.getElementById('agentConcurrency').value = '1';
+    document.getElementById('agentEscalation').value = 'Agent owner';
+    document.getElementById('agentSuppressUnchanged').checked = true;
+    document.getElementById('agentAfterSync').checked = false;
+    document.querySelectorAll('input[name="agentClassification"]').forEach(input => {
+        input.checked = ['public', 'internal'].includes(input.value);
+    });
+    document.getElementById('agentFormError').textContent = '';
+    updateAgentScheduleInput();
+}
+
+async function openAgentEditor(agentId = '') {
+    if (!agentOwners.length) await loadAgents();
+    resetAgentEditor();
+    const agent = allAgentsData.find(item => item.id === agentId);
+    const defaultOwner = agent?.definition.owner_user_id || currentAdminUser?.id || '';
+    populateAgentOwners(defaultOwner);
+    document.getElementById('agentEditorTitle').textContent = agent ? 'Edit company-brain agent' : 'Create company-brain agent';
+    if (agent) {
+        const definition = agent.definition;
+        document.getElementById('agentEditId').value = agent.id;
+        document.getElementById('agentName').value = definition.name;
+        document.getElementById('agentRole').value = definition.role;
+        document.getElementById('agentInstructions').value = definition.instructions;
+        document.getElementById('agentDomains').value = definition.domains.join(', ');
+        document.getElementById('agentSkill').value = definition.skills[0];
+        const presets = ['', '0 * * * *', '0 9 * * 1-5', '0 9 * * 1'];
+        document.getElementById('agentSchedulePreset').value = presets.includes(definition.schedule || '') ? definition.schedule || '' : 'custom';
+        document.getElementById('agentCron').value = definition.schedule || '';
+        document.getElementById('agentRuntimeBudget').value = definition.runtime_budget_seconds;
+        document.getElementById('agentCostBudget').value = definition.cost_budget_units;
+        document.getElementById('agentConcurrency').value = definition.concurrency_limit;
+        document.getElementById('agentEscalation').value = definition.escalation_path;
+        document.getElementById('agentSuppressUnchanged').checked = definition.suppress_unchanged;
+        document.getElementById('agentAfterSync').checked = definition.event_triggers.includes('knowledge_sync');
+        document.querySelectorAll('input[name="agentClassification"]').forEach(input => {
+            input.checked = definition.allowed_classifications.includes(input.value);
+        });
+        updateAgentScheduleInput();
+    }
+    document.getElementById('agentEditorModal').classList.add('active');
+    document.getElementById('agentName').focus();
+}
+
+function closeAgentEditor() {
+    document.getElementById('agentEditorModal').classList.remove('active');
+}
+
+function updateAgentScheduleInput() {
+    const preset = document.getElementById('agentSchedulePreset').value;
+    const cronField = document.getElementById('agentCronField');
+    cronField.style.display = preset === 'custom' ? '' : 'none';
+    if (preset !== 'custom') document.getElementById('agentCron').value = preset;
+}
+
+function agentDefinitionFromForm() {
+    const classifications = Array.from(document.querySelectorAll('input[name="agentClassification"]:checked')).map(input => input.value);
+    const schedulePreset = document.getElementById('agentSchedulePreset').value;
+    const schedule = schedulePreset === 'custom' ? document.getElementById('agentCron').value.trim() : schedulePreset;
+    return {
+        name: document.getElementById('agentName').value.trim(),
+        role: document.getElementById('agentRole').value.trim(),
+        owner_user_id: document.getElementById('agentOwner').value,
+        instructions: document.getElementById('agentInstructions').value.trim(),
+        domains: document.getElementById('agentDomains').value.split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+        skills: [document.getElementById('agentSkill').value],
+        allowed_classifications: classifications,
+        allowed_actions: [],
+        approval_thresholds: {},
+        schedule: schedule || null,
+        event_triggers: [
+            'manual',
+            ...(schedule ? ['schedule'] : []),
+            ...(document.getElementById('agentAfterSync').checked ? ['knowledge_sync'] : []),
+        ],
+        runtime_budget_seconds: Number(document.getElementById('agentRuntimeBudget').value),
+        cost_budget_units: Number(document.getElementById('agentCostBudget').value),
+        concurrency_limit: Number(document.getElementById('agentConcurrency').value),
+        escalation_path: document.getElementById('agentEscalation').value.trim(),
+        suppress_unchanged: document.getElementById('agentSuppressUnchanged').checked,
+    };
+}
+
+async function saveAgent() {
+    const agentId = document.getElementById('agentEditId').value;
+    const definition = agentDefinitionFromForm();
+    const error = document.getElementById('agentFormError');
+    error.textContent = '';
+    if (!definition.name || !definition.role || definition.instructions.length < 10 || !definition.domains.length || !definition.allowed_classifications.length) {
+        error.textContent = 'Complete the name, role, instructions, domains, and at least one classification.';
+        return;
+    }
+    const button = document.getElementById('saveAgentButton');
+    button.disabled = true;
+    try {
+        const response = await fetch(agentId ? `${API_BASE}/api/agents/${agentId}` : `${API_BASE}/api/agents`, {
+            method: agentId ? 'PUT' : 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(definition),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent could not be saved.'));
+        closeAgentEditor();
+        showToast(agentId ? 'Agent updated' : 'Agent created', 'success');
+        await loadAgents();
+    } catch (requestError) {
+        error.textContent = requestError.message;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function setAgentActive(agentId, active) {
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/${agentId}/activation`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent state could not be changed.'));
+        showToast(active ? 'Agent activated' : 'Agent paused', active ? 'success' : 'info');
+        await loadAgents();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function runAgent(agentId) {
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/${agentId}/run`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: '' }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent run could not be queued.'));
+        showToast('Agent run queued', 'success');
+        window.setTimeout(loadAgents, 1200);
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function toggleAgentEmergencyStop() {
+    const stopping = !agentControlState.emergency_stopped;
+    let reason = '';
+    if (stopping) {
+        if (!window.confirm('Stop all company-brain agent execution for this organization?')) return;
+        reason = window.prompt('Reason for the emergency stop:', 'Paused by an operator') || 'Paused by an operator';
+    }
+    try {
+        const response = await fetch(`${API_BASE}/api/agents/emergency-stop`, {
+            method: 'PUT',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stopped: stopping, reason }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(agentApiError(data, 'Agent controls could not be changed.'));
+        agentControlState = data;
+        renderAgentControls();
+        renderAgents();
+        showToast(stopping ? 'Emergency stop activated' : 'Agent execution resumed', stopping ? 'warning' : 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+function openAgentReport(runId) {
+    const run = allAgentRuns.find(item => item.id === runId);
+    if (!run) return;
+    const agent = allAgentsData.find(item => item.id === run.agent_id);
+    document.getElementById('agentReportTitle').textContent = agent?.name || 'Agent run';
+    document.getElementById('agentReportMeta').innerHTML = `${agentStateBadge(run.state)}<span>${run.created_at ? escapeHtml(timeAgo(run.created_at)) : ''}</span><span>${Number(run.cost_units || 0).toLocaleString()} tokens</span>`;
+    document.getElementById('agentReportContent').textContent = run.output?.report || run.output?.error || 'No report content.';
+    document.getElementById('agentReportModal').classList.add('active');
+}
+
+function closeAgentReport() {
+    document.getElementById('agentReportModal').classList.remove('active');
 }
 
 // Sidebar sections

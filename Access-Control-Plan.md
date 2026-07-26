@@ -10,8 +10,7 @@ Make authorization server-enforced, default-deny, organization-scoped, recoverab
 | --- | --- |
 | `member` | Query and contribute |
 | `knowledge_editor` | Member permissions plus knowledge review |
-| `reviewer` | Editor permissions plus audit visibility |
-| `operator` | Reviewer permissions plus agents and approved actions |
+| `operator` | Editor permissions plus audit visibility, agents, and approved actions |
 | `administrator` | All permissions, including `manage_users` |
 
 Organization job titles such as Associate, Manager, and Partner remain separate from system roles and do not grant security permissions.
@@ -28,6 +27,7 @@ Organization job titles such as Associate, Manager, and Partner remain separate 
 7. Access changes are validated again on the server, regardless of the browser request.
 8. Approval, revocation, job-title changes, and system-role changes create append-only audit events with actor, target, organization, and before/after values.
 9. Invalid roles, unapproved targets, cross-organization targets, and forbidden transitions fail closed.
+10. Operators may enter the administration shell for agent and knowledge operations, but user-management APIs and UI remain Administrator-only.
 
 ## Request flows
 

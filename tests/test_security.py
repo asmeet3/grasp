@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from src.core.security import AuthContext, Permission, PolicyEngine, SystemRole
@@ -32,12 +34,12 @@ def test_document_acl_is_default_deny() -> None:
     assert not policy.can_access_document(member, {"acl_principals": ["organization:other"]})
 
 
-def test_reviewer_can_review_but_member_cannot() -> None:
+def test_knowledge_editor_can_review_but_member_cannot() -> None:
     policy = PolicyEngine()
     with pytest.raises(PermissionError):
         policy.require(context(), Permission.REVIEW)
-    reviewer = context(SystemRole.REVIEWER.value)
-    assert policy.require(reviewer, Permission.REVIEW) is reviewer
+    editor = context(SystemRole.KNOWLEDGE_EDITOR.value)
+    assert policy.require(editor, Permission.REVIEW) is editor
 
 
 def test_contributions_use_stable_user_identity() -> None:
@@ -45,5 +47,27 @@ def test_contributions_use_stable_user_identity() -> None:
     member = context()
     assert policy.can_access_contribution(member, "user-1")
     assert not policy.can_access_contribution(member, "same display name")
-    reviewer = context(SystemRole.REVIEWER.value)
-    assert policy.can_access_contribution(reviewer, "someone-else")
+    editor = context(SystemRole.KNOWLEDGE_EDITOR.value)
+    assert policy.can_access_contribution(editor, "someone-else")
+
+
+def test_agent_scope_narrows_acl_authorized_documents() -> None:
+    policy = PolicyEngine()
+    scoped = replace(
+        context(SystemRole.OPERATOR.value),
+        allowed_domains=frozenset({"engineering"}),
+        allowed_classifications=frozenset({"internal"}),
+    )
+    acl = ["organization:acme"]
+    assert policy.can_access_document(
+        scoped,
+        {"acl_principals": acl, "domain": "engineering", "sensitivity": "internal"},
+    )
+    assert not policy.can_access_document(
+        scoped,
+        {"acl_principals": acl, "domain": "finance", "sensitivity": "internal"},
+    )
+    assert not policy.can_access_document(
+        scoped,
+        {"acl_principals": acl, "domain": "engineering", "sensitivity": "restricted"},
+    )

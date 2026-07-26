@@ -8,15 +8,15 @@ The application includes a browser chat experience, account approval and role ma
 
 ## Features
 
-- **Hybrid retrieval:** every question searches the historical ChromaDB index and recent content from all configured platform APIs in parallel.
+- **Permission-aware hybrid retrieval:** every query carries an authenticated organization, role, permissions, and ACL principals. Optional provider routing avoids live calls when committed evidence is sufficient.
 - **Agentic follow-up:** Claude can fetch full repository documents, run filtered semantic searches, or issue targeted live searches when the initial snippets are insufficient.
 - **Five connectors:** Confluence Cloud, Jira Cloud, SharePoint Online, Slack, and Notion.
 - **Resumable synchronization:** the first sync is checkpointed; later runs are incremental. A failed connector receives a full retry on the next mixed sync.
 - **Git-backed knowledge store:** documents are normalized to Markdown, classified into six knowledge types, and recorded with YAML frontmatter and generated indexes.
-- **Human review:** sync output remains as pending Git working-tree changes until an administrator approves and commits it or rejects it.
+- **Revisioned review:** syncs and contributions create immutable, isolated change sets. Rejected proposals never enter Git or Chroma.
 - **Streaming chat:** answers are sent to the browser as Server-Sent Events (SSE), rendered as Markdown, and can be stopped by the user.
 - **Conversation context:** up to the latest 10 user/assistant pairs from the current thread are supplied to Claude. Authenticated users' chat threads are stored in PostgreSQL.
-- **Authentication:** email/password registration, optional Google sign-in, seven-day signed sessions, admin approval, profile settings, and ten assignable organization roles.
+- **Authentication and authorization:** short-lived signed sessions, separate job titles and security roles, default-deny document ACLs, rate limits, and an admin key restricted to bootstrap user administration.
 - **User contributions:** users can submit text, code, Markdown, TXT, PDF, or DOCX content for admin review.
 - **Operations dashboard:** connector health, sync state/history, pending Git changes, contributions, and user approvals are available at `/admin`.
 
@@ -35,19 +35,15 @@ Normalized Document (Markdown + metadata)
         |       decisions | projects | processes
         |       products  | people   | topics
         |
-        +--> knowledge_repo/sources/...       source-oriented copy
-        +--> knowledge_repo/knowledge/...     classified copy
-        +--> knowledge_repo/_index/...        graph, tags, people, freshness
-        +--> chroma_data/                      chunked semantic index
-        |
         v
-Pending Git working-tree changes
+Isolated immutable change set (base commit + file operations + provenance)
         |
-        +--> approve: git add + commit + optional push
-        `--> reject: restore tracked files and clean untracked files
+        +--> reject: mark rejected; active Git/index remain unchanged
+        `--> approve: validate base --> commit --> optional push --> green index
+                                      --> verify manifest --> atomic activation
 ```
 
-Connectors run concurrently. The first successful run is a full sync, using PostgreSQL checkpoints after each connector batch. Later runs request only documents changed since the previous sync timestamp. Sync history and checkpoint state are also stored in PostgreSQL.
+Connectors run concurrently. The first successful run is a full sync, using PostgreSQL checkpoints after each connector batch. Later runs resume from the prior run's start watermark with an overlap window and content-hash deduplication, so changes made during a long sync are not skipped. Jobs use PostgreSQL leases and idempotency keys.
 
 Documents are split with a Markdown-aware separator hierarchy (headings, code fences, horizontal rules, paragraphs, lines, sentences, then words). Chunks target 1,500 characters with up to 200 characters of overlap. Search results are deduplicated by document ID so only the best matching chunk from each document is returned.
 
@@ -122,7 +118,7 @@ Grasp can start with no platform connectors, but syncing and live search will ha
    - Admin dashboard: <http://localhost:8000/admin>
    - Interactive API documentation: <http://localhost:8000/docs>
 
-5. Register a user, enter `ADMIN_KEY` in the admin dashboard, approve the account with a role, and trigger the first sync. When it finishes, review the pending repository changes before approving the Git commit/push.
+5. Register the first user, open `/admin`, and enter `ADMIN_KEY` (no prior sign-in is required). Approving the first account through this bootstrap view grants it the administrator system role. Sign in with that account, then trigger the first sync. When it finishes, review the pending repository changes before approving the Git commit/push.
 
 The Compose setup persists PostgreSQL, the knowledge repository, ChromaDB, and Grasp's internal state in named volumes.
 
@@ -156,7 +152,11 @@ The Compose setup persists PostgreSQL, the knowledge repository, ChromaDB, and G
    python main.py
    ```
 
-Database tables are created automatically during application startup. There is no separate migration command in the current project.
+Fresh databases are bootstrapped at startup. Upgrade existing deployments before launching a new version:
+
+```powershell
+alembic upgrade head
+```
 
 ## Configuration
 
@@ -167,9 +167,11 @@ Settings are loaded from environment variables and `.env` by `src/config.py`.
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `ANTHROPIC_API_KEY` | Yes | - | Claude queries, query shortening, and document classification |
-| `ADMIN_KEY` | Yes | - | Value expected in `X-Admin-Key` for administrative API calls |
+| `ADMIN_KEY` | Yes | - | Constant-time checked bootstrap key for initial user administration |
 | `DATABASE_URL` | No | `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp` | Async PostgreSQL connection URL; a reachable PostgreSQL server is still required |
-| `SESSION_SECRET` | Recommended | Falls back to `ADMIN_KEY` | Signs seven-day user session tokens |
+| `SESSION_SECRET` | Recommended | Falls back to `ADMIN_KEY` | Signs short-lived user access tokens |
+| `ACCESS_TOKEN_MAX_AGE_SECONDS` | No | `3600` | Access-token lifetime |
+| `TRUSTED_ORIGINS` | No | Local app origins | Exact CORS origin allowlist |
 | `OPENAI_API_KEY` | No | Empty | Enables OpenAI embeddings instead of Chroma's default embedding model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-large` | OpenAI embedding model used when an OpenAI key is present |
 
@@ -192,7 +194,7 @@ Keep the same embedding backend for an existing `chroma_data` directory. Changin
 | `GITHUB_REMOTE_URL` | Empty | Optional remote to configure as `origin` |
 | `GITHUB_PAT` | Empty | Optional token inserted into an HTTPS remote URL |
 
-Approval always creates a local commit. If a remote is configured, Grasp first pushes the current branch. If that push fails, it creates and pushes a `grasp/sync-<timestamp>` fallback branch. No pull request is created automatically.
+Approval always creates a local commit. If a remote is configured, the exact approved commit is pushed idempotently before indexing. Push or indexing failures leave the previous searchable revision active and the change set retryable.
 
 ### Sync and server
 
@@ -204,6 +206,19 @@ Approval always creates a local commit. If a remote is configured, Grasp first p
 | `HOST` | `0.0.0.0` | Uvicorn bind address |
 | `PORT` | `8000` | Uvicorn port |
 | `GOOGLE_CLIENT_ID` | Empty | Enables Google registration/sign-in when set |
+| `SYNC_OVERLAP_SECONDS` | `300` | Incremental-sync overlap window |
+| `UPLOAD_MAX_BYTES` | `10485760` | Server-enforced upload limit |
+| `UPLOAD_MAX_PAGES` | `200` | PDF page limit |
+| `UPLOAD_MAX_TEXT_CHARS` | `2000000` | Extracted-text limit |
+| `WORKER_CONCURRENCY` | `4` | Concurrent durable queue workers for sync, indexing, and agent runs |
+
+### Rollout flags
+
+`AUTH_REQUIRED` and `REVISIONED_KNOWLEDGE` default to true. `CONTEXT_ROUTING`,
+`STRUCTURED_MEMORY`, `PROVIDER_ROUTING`, `SKILLS_ENABLED`, `ACTIONS_ENABLED`,
+`AGENTS_ENABLED`, and `SELF_IMPROVEMENT_ENABLED` are independent flags. Governed,
+read-only company-brain agents default to true; write actions and self-improvement
+remain disabled. Set `AGENTS_ENABLED=false` and restart to disable all agent execution.
 
 The Docker container normally runs in UTC, making the default schedule 02:30, 05:30, 08:30, 11:30, and 14:30 UTC (08:00, 11:00, 14:00, 17:00, and 20:00 IST). The scheduler does not explicitly set a timezone, so a local installation interprets these hours in the host timezone even though the application log labels them as UTC.
 
@@ -227,24 +242,40 @@ Live searches are constrained to content updated in the last four hours. Connect
 
 New email or Google accounts start in `pending_approval`. An administrator must approve the account and assign one of these roles before login succeeds: Intern, Junior Associate, Associate, Senior Associate, Team Lead, Manager, Director, Principal, Vice President, or Partner.
 
-The role is organization metadata; admin API access is controlled separately by `ADMIN_KEY`. User sessions expire after seven days. Password changes increment a password version and invalidate all previous sessions.
+`job_title` is organization metadata. `system_role` is one of `member`, `knowledge_editor`, `operator`, or `administrator` and determines permissions. Existing `reviewer` assignments are migrated to `knowledge_editor`. Password changes increment a password version and invalidate all prior sessions.
 
 The browser stores a local cache of up to 30 chat threads and synchronizes authenticated threads to PostgreSQL. Chat context is isolated per thread. Profile settings support name and date-of-birth updates, email-account password changes, profile images, and account deletion.
 
 ### Sync review
 
-Scheduled or manually triggered syncs write repository files and update ChromaDB immediately. Grasp then records a pending change summary for review in the admin dashboard.
+Scheduled or manually triggered syncs normalize and validate content into an isolated change set. Active repository files and Chroma remain untouched until review.
 
-- **Approve:** stage every repository change, create a commit, and attempt the configured remote push.
-- **Reject:** restore tracked repository files and remove untracked repository files, except `.grasp_state/`.
+- **Approve:** validate the proposal base, replay operations, regenerate derived JSON indexes, commit/push, build a green Chroma collection, verify hashes and chunk counts, and activate it.
+- **Reject:** mark only the isolated proposal rejected.
 
-The Git decision and the vector index are not transactional: rejecting repository changes does not remove chunks that were already written to ChromaDB during the sync.
+Git, PostgreSQL, and Chroma are coordinated as an idempotent saga. Startup reconciliation makes interrupted states retryable, and full indexes can be rebuilt from committed Markdown.
 
 ### Contributions
 
 Authenticated users can submit text/code or upload `.txt`, `.md`, `.pdf`, and `.docx` files. PDF and DOCX text is extracted on the server; the original upload is stored under `knowledge_repo/.grasp_state/contributions/`.
 
-Admins can edit, approve, or reject a pending submission. Approval classifies the content and writes it to the source and knowledge layers, where it becomes another pending Git change. In the current implementation, contribution approval does not directly index the new document in ChromaDB.
+Knowledge editors, operators, and administrators can edit, approve, or reject a pending submission. Approval runs the same commit-index-activate pipeline as connector synchronization.
+
+### Company-brain agents
+
+Operators and administrators can manage agents from the **Agents** screen in `/admin`.
+An agent is a declarative, read-only routine with an owner, role, purpose, domain and
+classification scope, analysis skill, runtime limit, daily token budget, concurrency
+limit, escalation path, and optional UTC cron schedule. It can also run after a
+successful knowledge sync.
+
+Every run uses the same query engine and policy enforcement as interactive chat. The
+agent inherits the approved owner's document ACLs and may narrow—but never broaden—
+that access. Runs are queued durably, leased, audited, retained in PostgreSQL, and
+automatically paused after three consecutive failures. Identical consecutive reports
+can be suppressed. An organization-wide persistent emergency stop prevents new runs.
+Agents cannot execute external actions; those remain in the separately approved action
+workflow.
 
 ## API overview
 
@@ -273,15 +304,16 @@ Bearer tokens are sent as `Authorization: Bearer <token>`.
 
 | Method | Path | Protection | Purpose |
 |---|---|---|---|
-| `POST` | `/api/query` | Public route | Stream an answer as SSE; accepts `question` and optional `history` |
-| `GET` | `/api/status` | Public | System state, connector health, sync timing, repository counts, and vector statistics |
-| `GET` | `/api/sources` | Public | Counts grouped by source and knowledge type |
+| `POST` | `/api/query` | `query` permission | Stream an answer as SSE; accepts `question` and optional `history` |
+| `GET` | `/api/status` | `query` permission | System state, connector health, sync timing, repository counts, and vector statistics |
+| `GET` | `/api/sources` | `query` permission | Counts grouped by source and knowledge type |
+| `GET` | `/api/health/live` | Public | Minimal process liveness only |
 
-The browser application redirects unauthenticated visitors to `/login`, but the `/api/query` route itself currently has no bearer-token dependency.
+The browser attaches the bearer token to query, status, contribution, chat, and review requests.
 
 ### Administration
 
-All endpoints below require `X-Admin-Key: <ADMIN_KEY>`.
+Sync/change/contribution review endpoints require the `review` permission. User bootstrap endpoints accept an administrator session or `X-Admin-Key`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -303,22 +335,43 @@ All endpoints below require `X-Admin-Key: <ADMIN_KEY>`.
 | `POST` | `/api/contributions/{id}/approve` | Approve and write a contribution |
 | `POST` | `/api/contributions/{id}/reject` | Reject a contribution |
 
+Agent endpoints require the `manage_agents` permission (Operator or Administrator).
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/agents` | List definitions and latest-run state |
+| `POST` | `/api/agents` | Create an inactive agent definition |
+| `GET` | `/api/agents/{id}` | Read one agent definition |
+| `PUT` | `/api/agents/{id}` | Update an agent definition |
+| `PUT` | `/api/agents/{id}/activation` | Activate or pause an agent |
+| `POST` | `/api/agents/{id}/run` | Queue a manual run |
+| `GET` | `/api/agents/runs` | List retained run history |
+| `GET` | `/api/agents/runs/{id}` | Read a run and its report |
+| `GET` | `/api/agents/status` | Read feature and emergency-stop state |
+| `PUT` | `/api/agents/emergency-stop` | Stop or resume organization agent execution |
+| `GET` | `/api/agents/owners` | List approved users eligible to own agents |
+| `GET` | `/api/agents/templates` | List built-in analysis skills and schedules |
+
 ### Contribution submission
 
 | Method | Path | Protection | Purpose |
 |---|---|---|---|
-| `POST` | `/api/contributions/submit` | Public; bearer optional | Submit text, code, or a document body |
-| `POST` | `/api/contributions/upload` | Public; bearer optional | Upload TXT, Markdown, PDF, or DOCX |
-| `GET` | `/api/contributions/my` | Public | Find submissions by query-string name or the `grasp_user` cookie |
-| `GET` | `/api/contributions/{id}/download` | Public | Download an original uploaded file |
+| `POST` | `/api/contributions/submit` | `contribute` permission | Submit text, code, or a document body |
+| `POST` | `/api/contributions/upload` | `contribute` permission | Upload TXT, Markdown, PDF, or DOCX |
+| `GET` | `/api/contributions/my` | `contribute` permission | List submissions by authenticated user ID |
+| `GET` | `/api/contributions/{id}/download` | Owner or knowledge editor | Download an original uploaded file |
 
-When a valid bearer token is supplied, the server uses the account's name instead of the submitted name.
+Submitter identity always comes from the authenticated user ID; display names are not authorization identities.
 
 ## Knowledge repository layout
 
 ```text
 knowledge_repo/
-  .grasp_state/              Internal pending state and uploaded originals (Git-ignored)
+  .grasp_state/              Isolated proposals and uploaded originals (Git-ignored)
+  company/                   Canonical company context and policies
+  domains/<domain>/          Canonical domain context
+  skills/                    Versioned declarative skill manifests
+  agents/                    Versioned declarative agent definitions
   sources/                   Source-oriented Markdown copies
     confluence/YYYY-MM/
     jira/<project>/
@@ -345,7 +398,7 @@ knowledge_repo/
   teams/                     Reserved team-scoped spaces
 ```
 
-Source and knowledge paths are derived from source-specific metadata, document titles, dates, project keys, and classification. A later sync can therefore rewrite an existing path; the Git history is the audit trail after changes are approved.
+Raw source paths include a stable external-ID hash, and same-title knowledge documents are collision-safe. Domain is orthogonal to the existing six knowledge types.
 
 ## Project structure
 
@@ -393,11 +446,14 @@ pyproject.toml                 Package metadata and dependencies
 
 ## Development checks
 
-The repository currently has no committed automated test suite. Useful local checks are:
+Run the deterministic unit/security suite and quality gates with:
 
 ```powershell
-python -m compileall main.py src
+alembic upgrade head
 ruff check .
+ruff format --check .
+mypy
+pytest --cov --cov-report=term-missing
 ```
 
 Install the optional development dependencies with `python -m pip install -e ".[dev]"` before running Ruff or adding pytest coverage.

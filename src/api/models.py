@@ -202,6 +202,22 @@ class UpdateRoleRequest(BaseModel):
     system_role: str | None = Field(None, description="Optional new security role")
 
 
+# Company-brain agents
+
+
+class AgentRunRequest(BaseModel):
+    prompt: str = Field("", max_length=4_000, description="Optional focus for this run")
+
+
+class AgentActivationRequest(BaseModel):
+    active: bool
+
+
+class AgentEmergencyStopRequest(BaseModel):
+    stopped: bool
+    reason: str = Field("", max_length=500)
+
+
 # User self-service
 
 
