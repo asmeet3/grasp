@@ -27,7 +27,6 @@ dependencies = [
     "itsdangerous>=2.1.0",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29.0",
-    "alembic>=1.13.0",
     "bleach>=6.1.0",
 ]
 

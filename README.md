@@ -4,7 +4,7 @@
 
 Grasp is a self-hosted institutional knowledge assistant. It syncs content from Confluence, Jira, SharePoint, Slack, and Notion into a local Git-backed Markdown repository and a persistent ChromaDB index, then uses Anthropic Claude to answer questions with links to the source material.
 
-The application includes a browser chat experience, account approval and role management, persistent per-user chat history, a contribution workflow, scheduled connector syncs, and an admin dashboard for reviewing knowledge-repository changes before they are committed or pushed.
+The application includes a browser chat experience, account approval and role management, persistent per-user chat history, a contribution workflow, scheduled connector syncs, governed company-brain agents, rate limiting, append-only audit logging, observability metrics, and an admin dashboard for reviewing knowledge-repository changes before they are committed or pushed.
 
 ## Features
 
@@ -16,9 +16,15 @@ The application includes a browser chat experience, account approval and role ma
 - **Revisioned review:** syncs and contributions create immutable, isolated change sets. Rejected proposals never enter Git or Chroma.
 - **Streaming chat:** answers are sent to the browser as Server-Sent Events (SSE), rendered as Markdown, and can be stopped by the user.
 - **Conversation context:** up to the latest 10 user/assistant pairs from the current thread are supplied to Claude. Authenticated users' chat threads are stored in PostgreSQL.
-- **Authentication and authorization:** short-lived signed sessions, separate job titles and security roles, default-deny document ACLs, rate limits, and an admin key restricted to bootstrap user administration.
+- **Authentication and authorization:** short-lived signed sessions, separate job titles and security roles, default-deny document ACLs, per-endpoint rate limits, and an admin key restricted to bootstrap user administration.
 - **User contributions:** users can submit text, code, Markdown, TXT, PDF, or DOCX content for admin review.
-- **Operations dashboard:** connector health, sync state/history, pending Git changes, contributions, and user approvals are available at `/admin`.
+- **Company-brain agents:** declarative, governed, read-only agents with scheduling, event triggers, daily token budgets, concurrency limits, and organization-wide emergency stop.
+- **Durable job queue:** PostgreSQL-backed workers with leases, idempotency keys, exponential backoff, and dead-letter capture for failed jobs.
+- **Append-only audit trail:** all agent runs, change-set actions, and administrative mutations are recorded in a structured audit log.
+- **Observability metrics:** in-process thread-safe metric recorder tracks latencies, costs, and rates. An authenticated `/api/admin/metrics` endpoint exposes distribution snapshots.
+- **Secret redaction:** log output is filtered to redact API keys, tokens, and secrets before they reach handlers.
+- **Rate limiting:** per-IP sliding-window rate limits on authentication, queries, and file uploads protect the service from abuse.
+- **Operations dashboard:** connector health, sync state/history, pending Git changes, contributions, agents, and user approvals are available at `/admin`.
 
 ## How it works
 
@@ -152,11 +158,7 @@ The Compose setup persists PostgreSQL, the knowledge repository, ChromaDB, and G
    python main.py
    ```
 
-Fresh databases are bootstrapped at startup. Upgrade existing deployments before launching a new version:
-
-```powershell
-alembic upgrade head
-```
+The database schema is bootstrapped automatically at startup via `metadata.create_all()`.
 
 ## Configuration
 
@@ -170,7 +172,7 @@ Settings are loaded from environment variables and `.env` by `src/config.py`.
 | `ADMIN_KEY` | Yes | - | Constant-time checked bootstrap key for initial user administration |
 | `DATABASE_URL` | No | `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp` | Async PostgreSQL connection URL; a reachable PostgreSQL server is still required |
 | `SESSION_SECRET` | Recommended | Falls back to `ADMIN_KEY` | Signs short-lived user access tokens |
-| `ACCESS_TOKEN_MAX_AGE_SECONDS` | No | `3600` | Access-token lifetime |
+| `ACCESS_TOKEN_MAX_AGE_SECONDS` | No | `3600` | Access-token lifetime (300–86400) |
 | `TRUSTED_ORIGINS` | No | Local app origins | Exact CORS origin allowlist |
 | `OPENAI_API_KEY` | No | Empty | Enables OpenAI embeddings instead of Chroma's default embedding model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-large` | OpenAI embedding model used when an OpenAI key is present |
@@ -196,7 +198,7 @@ Keep the same embedding backend for an existing `chroma_data` directory. Changin
 
 Approval always creates a local commit. If a remote is configured, the exact approved commit is pushed idempotently before indexing. Push or indexing failures leave the previous searchable revision active and the change set retryable.
 
-### Sync and server
+### Sync, server, and rate limits
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -211,14 +213,28 @@ Approval always creates a local commit. If a remote is configured, the exact app
 | `UPLOAD_MAX_PAGES` | `200` | PDF page limit |
 | `UPLOAD_MAX_TEXT_CHARS` | `2000000` | Extracted-text limit |
 | `WORKER_CONCURRENCY` | `4` | Concurrent durable queue workers for sync, indexing, and agent runs |
+| `WORKER_POLL_SECONDS` | `1.0` | Durable queue polling interval (0.1–60.0) |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `20` | Per-IP rate limit on authentication endpoints |
+| `QUERY_RATE_LIMIT_PER_MINUTE` | `60` | Per-user rate limit on the query endpoint |
+| `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Per-user rate limit on contribution/upload endpoints |
 
 ### Rollout flags
 
-`AUTH_REQUIRED` and `REVISIONED_KNOWLEDGE` default to true. `CONTEXT_ROUTING`,
-`STRUCTURED_MEMORY`, `PROVIDER_ROUTING`, `SKILLS_ENABLED`, `ACTIONS_ENABLED`,
-`AGENTS_ENABLED`, and `SELF_IMPROVEMENT_ENABLED` are independent flags. Governed,
-read-only company-brain agents default to true; write actions and self-improvement
-remain disabled. Set `AGENTS_ENABLED=false` and restart to disable all agent execution.
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_REQUIRED` | `true` | Require authentication for all non-public endpoints |
+| `REVISIONED_KNOWLEDGE` | `true` | Require change-set review before knowledge enters Git or Chroma |
+| `CONTEXT_ROUTING` | `false` | Inject canonical company and domain context into queries |
+| `STRUCTURED_MEMORY` | `false` | Enable the typed, ACL-governed entity/relationship store |
+| `PROVIDER_ROUTING` | `false` | Select live providers based on query relevance instead of calling all |
+| `SKILLS_ENABLED` | `false` | Enable versioned, validated skill manifests with allowlisted tools |
+| `ACTIONS_ENABLED` | `false` | Enable the two-phase, human-approved external action protocol |
+| `AGENTS_ENABLED` | `true` | Enable governed, read-only company-brain agents |
+| `SELF_IMPROVEMENT_ENABLED` | `false` | Enable evaluation-gated self-improvement proposals (requires `SKILLS_ENABLED`) |
+| `CONTEXT_TOKEN_BUDGET` | `8000` | Token budget for canonical context injection |
+| `MAX_LIVE_PROVIDERS` | `2` | Maximum live providers selected per query when routing is enabled |
+
+Governed, read-only company-brain agents default to true; write actions and self-improvement remain disabled. Set `AGENTS_ENABLED=false` and restart to disable all agent execution. Validation enforces safe rollout ordering: actions, agents, and self-improvement require both authentication and revisioned knowledge.
 
 The Docker container normally runs in UTC, making the default schedule 02:30, 05:30, 08:30, 11:30, and 14:30 UTC (08:00, 11:00, 14:00, 17:00, and 20:00 IST). The scheduler does not explicitly set a timezone, so a local installation interprets these hours in the host timezone even though the application log labels them as UTC.
 
@@ -246,6 +262,19 @@ New email or Google accounts start in `pending_approval`. An administrator must 
 
 The browser stores a local cache of up to 30 chat threads and synchronizes authenticated threads to PostgreSQL. Chat context is isolated per thread. Profile settings support name and date-of-birth updates, email-account password changes, profile images, and account deletion.
 
+### Security roles and permissions
+
+Permissions are checked by a central default-deny `PolicyEngine`. Each system role grants a fixed permission set:
+
+| System role | Permissions |
+|---|---|
+| `member` | `query`, `contribute` |
+| `knowledge_editor` | `query`, `contribute`, `review` |
+| `operator` | `query`, `contribute`, `review`, `manage_agents`, `execute_actions`, `view_audit` |
+| `administrator` | All permissions including `manage_users` |
+
+Document-level access is enforced through ACL principals that must intersect with the authenticated user's principals. Documents with no explicit principals are inaccessible by design. Agent runs inherit the owner's ACL scope and may further narrow — but never broaden — access through allowed domains and classification levels.
+
 ### Sync review
 
 Scheduled or manually triggered syncs normalize and validate content into an isolated change set. Active repository files and Chroma remain untouched until review.
@@ -269,6 +298,15 @@ classification scope, analysis skill, runtime limit, daily token budget, concurr
 limit, escalation path, and optional UTC cron schedule. It can also run after a
 successful knowledge sync.
 
+Built-in analysis skills:
+
+| Skill | Purpose |
+|---|---|
+| `knowledge_brief` | Synthesize relevant facts into a concise brief with citations |
+| `gap_analysis` | Identify missing, contradictory, stale, or weakly supported knowledge |
+| `risk_watch` | Surface material risks, blockers, dependencies, and unowned follow-ups |
+| `decision_digest` | Summarize decisions, rationale, owners, dates, and unresolved questions |
+
 Every run uses the same query engine and policy enforcement as interactive chat. The
 agent inherits the approved owner's document ACLs and may narrow—but never broaden—
 that access. Runs are queued durably, leased, audited, retained in PostgreSQL, and
@@ -276,6 +314,24 @@ automatically paused after three consecutive failures. Identical consecutive rep
 can be suppressed. An organization-wide persistent emergency stop prevents new runs.
 Agents cannot execute external actions; those remain in the separately approved action
 workflow.
+
+### Durable job queue
+
+All background work — syncs, index rebuilds, and agent runs — is managed through a
+PostgreSQL-backed durable job queue. Workers claim jobs with time-limited leases,
+retry failures with exponential backoff, and move permanently failing jobs to a
+dead-letter table after a configurable number of attempts (default 5). Idempotency
+keys prevent duplicate work, and `SKIP LOCKED` ensures safe concurrent polling by
+multiple workers.
+
+### Audit trail
+
+Grasp maintains an append-only `audit_events` table in PostgreSQL. Events cover:
+agent creation, activation, pausing, run lifecycle (started, completed, suppressed,
+failed), change-set operations, action verification, and emergency-stop toggling.
+Each event records the actor, organization, resource type, resource ID, and
+structured details. The `VIEW_AUDIT` permission (operator or administrator) is
+required to access audit data.
 
 ## API overview
 
@@ -317,6 +373,14 @@ Sync/change/contribution review endpoints require the `review` permission. User 
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/api/admin/bootstrap/status` | Report whether first-run administrator bootstrap is still required |
+| `POST` | `/api/admin/bootstrap/claim` | Promote a signed-in user while the one-time bootstrap window is open |
+| `GET` | `/api/admin/access` | Validate an operations session or one-time administrator bootstrap |
+| `GET` | `/api/admin/users` | List registered users |
+| `POST` | `/api/admin/users/{id}/approve` | Approve a user and assign a role |
+| `POST` | `/api/admin/users/{id}/reject` | Reject or revoke a user |
+| `PUT` | `/api/admin/users/{id}/role` | Change an approved user's role |
+| `GET` | `/api/admin/metrics` | Read observability metric distributions (`view_audit` permission) |
 | `POST` | `/api/sync/trigger` | Start a background sync |
 | `GET` | `/api/sync/status` | Read current workers and sync progress |
 | `GET` | `/api/sync/history` | Return up to 100 stored sync runs |
@@ -324,10 +388,6 @@ Sync/change/contribution review endpoints require the `review` permission. User 
 | `GET` | `/api/changes/diff/{path}` | View a tracked diff or generated new-file diff |
 | `POST` | `/api/changes/approve` | Commit pending changes and optionally push |
 | `POST` | `/api/changes/reject` | Revert all pending repository changes |
-| `GET` | `/api/admin/users` | List registered users |
-| `POST` | `/api/admin/users/{id}/approve` | Approve a user and assign a role |
-| `POST` | `/api/admin/users/{id}/reject` | Reject or revoke a user |
-| `PUT` | `/api/admin/users/{id}/role` | Change an approved user's role |
 | `GET` | `/api/contributions/pending` | List pending contributions |
 | `GET` | `/api/contributions/count` | Count pending contributions |
 | `GET` | `/api/contributions/{id}` | Read one contribution |
@@ -406,26 +466,51 @@ Raw source paths include a stable external-ID hash, and same-title knowledge doc
 main.py                        Composition root and Uvicorn entry point
 src/
   config.py                    Pydantic environment settings
-  database.py                  PostgreSQL tables and initialization
+  database.py                  PostgreSQL schema (18 tables) and initialization
   auth.py                      Accounts, sessions, Google auth, and roles
   chat_manager.py              Per-user PostgreSQL chat persistence
   contributions.py             Submission and review workflow
+  changesets.py                Immutable knowledge proposals and commit-index-activate saga
+  ingestion.py                 Connector-neutral ingestion records and adapters
+  jobs.py                      PostgreSQL-backed idempotent job queue with leases
+  agents.py                    Governed company-brain agent definitions, runs, and scheduling
+  audit.py                     Append-only audit event persistence
+  observability.py             Metric recorder and secret log redaction filter
+  context_router.py            Token-budgeted canonical company/domain context selection
+  providers.py                 Capability-based live provider routing
+  skills.py                    Versioned skill manifests and allowlisted tool routing
+  actions.py                   Two-phase, authorized, idempotent external action protocol
+  improvement.py               Evaluation-gated self-improvement proposals
+  memory.py                    Typed, ACL-governed organizational memory (entities/relationships)
   api/
     server.py                  FastAPI routes, static pages, and SSE endpoint
-    models.py                  API request/response models
+    models.py                  Pydantic request/response models
+    security.py                Sliding-window rate limiter
   agent/
     engine.py                  Claude coordinator and conversation handling
     query_shortener.py         Live-search query decomposition
     sub_agents.py              Parallel repository/live search dispatcher
     tools.py                   Coordinator tool definitions and execution
   connectors/                  Confluence, Jira, SharePoint, Slack, and Notion clients
+    base.py                    Abstract connector interface and Document model
+  core/
+    security.py                AuthContext, PolicyEngine, permissions, and system roles
+    changes.py                 Change-set state machine and invariants
+    interfaces.py              Protocol-based architectural boundaries
   index/vector_store.py        ChromaDB indexing, chunking, and semantic search
   repo/manager.py              Repository layout, classification, Git review, and indexes
   sync/                        Scheduler, orchestration, and PostgreSQL checkpoints
+    orchestrator.py            Concurrent connector execution and change-set creation
+    scheduler.py               APScheduler-based cron schedule
+    checkpoints.py             Resumable sync state in PostgreSQL
   static/                      Chat, login, and admin HTML/CSS/JavaScript
+  icons/                       Application icons
+  logos/                       Application logos
 Dockerfile                     Python 3.12 application image
 docker-compose.yml             Application, PostgreSQL, health checks, and volumes
 pyproject.toml                 Package metadata and dependencies
+tests/                         Pytest test suite
+.github/workflows/ci.yml       GitHub Actions CI pipeline
 ```
 
 ## Technology stack
@@ -442,18 +527,36 @@ pyproject.toml                 Package metadata and dependencies
 | Connector HTTP | `httpx` with rate-limit retry support |
 | Document conversion | Beautiful Soup, markdownify, PyPDF2, and python-docx |
 | Authentication | bcrypt and itsdangerous; optional Google token verification |
+| Input sanitization | bleach |
 | Frontend | Static HTML, CSS, and JavaScript served by FastAPI |
+
+## CI pipeline
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push and pull request against a service PostgreSQL container:
+
+```text
+ruff check .                Lint
+ruff format --check .       Formatting
+mypy                        Type checking (strict on core modules)
+pytest --cov                Tests with branch coverage (≥70%)
+bandit -q -r src            Security analysis (excluding connectors)
+pip check                   Dependency consistency
+```
 
 ## Development checks
 
 Run the deterministic unit/security suite and quality gates with:
 
 ```powershell
-alembic upgrade head
 ruff check .
 ruff format --check .
 mypy
 pytest --cov --cov-report=term-missing
+bandit -q -r src -x src/connectors
 ```
 
 Install the optional development dependencies with `python -m pip install -e ".[dev]"` before running Ruff or adding pytest coverage.
+
+## License
+
+MIT

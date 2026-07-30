@@ -443,7 +443,7 @@ def create_engine(database_url: str) -> AsyncEngine:
 
 
 async def init_db(engine: AsyncEngine) -> None:
-    """Bootstrap a fresh database; deployed upgrades use Alembic migrations."""
+    """Bootstrap the database schema and seed required rows."""
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
         await conn.execute(
