@@ -15,6 +15,7 @@ from ..core.security import AuthContext, PolicyEngine
 if TYPE_CHECKING:
     from ..connectors.base import BaseConnector
     from ..index.vector_store import VectorStore
+    from ..memory import StructuredMemoryService
     from ..repo.manager import RepoManager
     from .sub_agents import SubAgentDispatcher
 
@@ -180,6 +181,42 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+MEMORY_TOOL_DEFINITION = {
+    "name": "search_memory",
+    "description": (
+        "Search the structured organizational memory for known entities "
+        "(people, teams, projects, products, decisions, technologies, etc.) "
+        "and their relationships. Use when the question involves "
+        "organizational structure, ownership, project status, team "
+        "composition, or decision history. Returns entity details "
+        "and connections."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Entity name or search term.",
+            },
+            "entity_type": {
+                "type": "string",
+                "description": "Optional: filter by entity type.",
+                "enum": [
+                    "person",
+                    "team",
+                    "project",
+                    "product",
+                    "process",
+                    "technology",
+                    "decision",
+                    "milestone",
+                ],
+            },
+        },
+        "required": ["query"],
+    },
+}
+
 
 class ToolExecutor:
     """Executes tools on behalf of the coordinator agent."""
@@ -190,12 +227,22 @@ class ToolExecutor:
         vector_store: VectorStore,
         repo_manager: RepoManager,
         connectors: dict[str, BaseConnector],
+        memory_service: StructuredMemoryService | None = None,
     ):
         self.dispatcher = dispatcher
         self.vector_store = vector_store
         self.repo_manager = repo_manager
         self.connectors = connectors
+        self.memory_service = memory_service
         self.policy = PolicyEngine()
+
+    @property
+    def tool_definitions(self) -> list[dict]:
+        """Return tool definitions, including memory tool when enabled."""
+        tools = list(TOOL_DEFINITIONS)
+        if self.memory_service is not None:
+            tools.append(MEMORY_TOOL_DEFINITION)
+        return tools
 
     async def execute(
         self,
@@ -232,6 +279,12 @@ class ToolExecutor:
                 return await self._search_live("slack", tool_input["query"], auth_context)
             elif tool_name == "search_notion_live":
                 return await self._search_live("notion", tool_input["query"], auth_context)
+            elif tool_name == "search_memory":
+                return await self._search_memory(
+                    tool_input["query"],
+                    tool_input.get("entity_type"),
+                    auth_context,
+                )
             else:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
@@ -348,3 +401,47 @@ class ToolExecutor:
             return "\n".join(lines)
         except Exception as e:
             return f"Error searching {platform}: {e}"
+
+    async def _search_memory(
+        self,
+        query: str,
+        entity_type: str | None,
+        auth_context: AuthContext,
+    ) -> str:
+        """Search structured organizational memory for entities."""
+        if not self.memory_service:
+            return "Structured memory is not enabled."
+
+        entities = await self.memory_service.search_entities(
+            auth_context, query, entity_type=entity_type, limit=10
+        )
+
+        if not entities:
+            return f"No entities found in organizational memory matching '{query}'."
+
+        lines = [f"Found {len(entities)} entities in organizational memory:"]
+        for i, entity in enumerate(entities, 1):
+            lines.append(f"\n{i}. **{entity['canonical_name']}** ({entity['entity_type']})")
+            lines.append(f"   Confidence: {entity['confidence']}")
+            aliases = entity.get("aliases") or []
+            if aliases:
+                lines.append(f"   Also known as: {', '.join(aliases)}")
+            attrs = entity.get("attributes") or {}
+            if attrs:
+                attr_str = ", ".join(f"{k}: {v}" for k, v in attrs.items())
+                lines.append(f"   Attributes: {attr_str}")
+
+            # Fetch relationships for this entity
+            rels = await self.memory_service.find_relationships(
+                auth_context, entity["id"]
+            )
+            if rels:
+                rel_lines = []
+                for rel in rels[:5]:  # Cap at 5 per entity
+                    direction = "→" if rel["source_entity_id"] == entity["id"] else "←"
+                    rel_lines.append(
+                        f"{direction} {rel['relationship_type']}"
+                    )
+                lines.append(f"   Relationships: {'; '.join(rel_lines)}")
+
+        return "\n".join(lines)

@@ -41,13 +41,20 @@ from .models import (
     ContributionSubmitRequest,
     ContributionUpdateRequest,
     DeleteAccountRequest,
+    EntityDetailResponse,
+    EntityListResponse,
+    EntityResponse,
+    EntityReviewRequest,
     GoogleAuthRequest,
     LoginRequest,
+    MemoryExtractRequest,
+    MemoryStatsResponse,
     PendingChangesResponse,
     QueryRequest,
     RegisterRequest,
     RejectRequest,
     RejectResponse,
+    RelationshipResponse,
     SaveChatThreadRequest,
     SourcesResponse,
     SyncStatusResponse,
@@ -55,6 +62,9 @@ from .models import (
     SystemStatusResponse,
     UpdateProfileRequest,
     UpdateRoleRequest,
+    WorkItemListResponse,
+    WorkItemResponse,
+    WorkItemStatusRequest,
 )
 from .security import SlidingWindowRateLimiter
 
@@ -86,6 +96,7 @@ def create_app(
     metrics=None,
     agent_service=None,
     agent_scheduler=None,
+    memory_service=None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -1143,6 +1154,150 @@ def create_app(
         if "error" in result:
             return ContributionActionResponse(status="error", message=result["error"])
         return ContributionActionResponse(**result)
+
+    # Structured memory
+
+    def require_memory_service():
+        if not memory_service:
+            raise HTTPException(
+                status_code=503,
+                detail="Structured memory is not enabled",
+            )
+        return memory_service
+
+    @app.get("/api/memory/status")
+    async def memory_status():
+        """Check whether structured memory is enabled."""
+        return {"enabled": memory_service is not None}
+
+    @app.get("/api/memory/entities", response_model=EntityListResponse)
+    async def list_memory_entities(
+        req: Request,
+        query: str = "",
+        entity_type: str = "",
+        limit: int = 50,
+    ):
+        """Search or list entities in the structured memory."""
+        context = await require_context(req, Permission.QUERY)
+        svc = require_memory_service()
+        if query:
+            entities = await svc.search_entities(
+                context, query, entity_type=entity_type or None, limit=limit
+            )
+        else:
+            entities = await svc.find_entities(
+                context, entity_type=entity_type or None, limit=limit
+            )
+        serialized = []
+        for e in entities:
+            e_copy = dict(e)
+            for dt_key in ("valid_from", "valid_to"):
+                val = e_copy.get(dt_key)
+                if val is not None and not isinstance(val, str):
+                    e_copy[dt_key] = val.isoformat()
+            serialized.append(EntityResponse(**e_copy))
+        return EntityListResponse(entities=serialized, count=len(serialized))
+
+    @app.get("/api/memory/entities/{entity_id}", response_model=EntityDetailResponse)
+    async def get_memory_entity(entity_id: str, req: Request):
+        """Get an entity and its relationships."""
+        context = await require_context(req, Permission.QUERY)
+        svc = require_memory_service()
+        entity = await svc.get_entity(context, entity_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        for dt_key in ("valid_from", "valid_to"):
+            val = entity.get(dt_key)
+            if val is not None and not isinstance(val, str):
+                entity[dt_key] = val.isoformat()
+        rels = await svc.find_relationships(context, entity_id)
+        rel_responses = []
+        for r in rels:
+            rel_responses.append(RelationshipResponse(
+                id=r["id"],
+                source_entity_id=r["source_entity_id"],
+                relationship_type=r["relationship_type"],
+                target_entity_id=r["target_entity_id"],
+                evidence=r.get("evidence", []),
+                confidence=r.get("confidence", "medium"),
+            ))
+        return EntityDetailResponse(
+            entity=EntityResponse(**entity),
+            relationships=rel_responses,
+        )
+
+    @app.post("/api/memory/entities/{entity_id}/review")
+    async def review_memory_entity(
+        entity_id: str, request: EntityReviewRequest, req: Request
+    ):
+        """Confirm, retire, or merge an entity."""
+        context = await require_context(req, Permission.REVIEW)
+        svc = require_memory_service()
+        try:
+            result = await svc.review_entity(
+                context,
+                entity_id,
+                request.action,
+                merge_target_id=request.merge_target_id,
+            )
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/memory/work-items", response_model=WorkItemListResponse)
+    async def list_memory_work_items(
+        req: Request, status: str = "", limit: int = 50
+    ):
+        """List work items from structured memory."""
+        context = await require_context(req, Permission.QUERY)
+        svc = require_memory_service()
+        items = await svc.list_work_items(
+            context, status=status or None, limit=limit
+        )
+        serialized = []
+        for item in items:
+            i_copy = dict(item)
+            for dt_key in ("due_at",):
+                val = i_copy.get(dt_key)
+                if val is not None and not isinstance(val, str):
+                    i_copy[dt_key] = val.isoformat()
+            serialized.append(WorkItemResponse(**i_copy))
+        return WorkItemListResponse(work_items=serialized, count=len(serialized))
+
+    @app.put("/api/memory/work-items/{item_id}/status")
+    async def update_memory_work_item(
+        item_id: str, request: WorkItemStatusRequest, req: Request
+    ):
+        """Transition a work item's status."""
+        context = await require_context(req, Permission.REVIEW)
+        svc = require_memory_service()
+        try:
+            return await svc.update_work_item_status(
+                context, item_id, request.status
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/memory/stats", response_model=MemoryStatsResponse)
+    async def get_memory_stats(req: Request):
+        """Get aggregate memory statistics."""
+        context = await require_context(req, Permission.REVIEW)
+        svc = require_memory_service()
+        stats = await svc.get_memory_stats(context)
+        return MemoryStatsResponse(**stats)
+
+    @app.post("/api/memory/extract")
+    async def extract_from_text(request: MemoryExtractRequest, req: Request):
+        """Manually trigger entity extraction from provided text."""
+        context = await require_context(req, Permission.REVIEW)
+        svc = require_memory_service()
+        evidence = {"source": "manual_extraction"}
+        if request.source_label:
+            evidence["label"] = request.source_label
+        result = await svc.extract_entities_from_text(
+            context, request.text, source_evidence=evidence
+        )
+        return result
 
     # Web pages
 

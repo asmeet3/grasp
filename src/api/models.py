@@ -238,3 +238,86 @@ class DeleteAccountRequest(BaseModel):
     password: str | None = Field(
         None, description="Current password (required for email accounts, omit for Google)"
     )
+
+
+# Structured memory
+
+
+class EntityResponse(BaseModel):
+    id: str
+    entity_type: str
+    canonical_name: str
+    aliases: list[str] = Field(default_factory=list)
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[Any] = Field(default_factory=list)
+    confidence: str = "medium"
+    sensitivity: str = "internal"
+    valid_from: str | None = None
+    valid_to: str | None = None
+
+
+class EntityListResponse(BaseModel):
+    entities: list[EntityResponse]
+    count: int
+
+
+class RelationshipResponse(BaseModel):
+    id: str
+    source_entity_id: str
+    relationship_type: str
+    target_entity_id: str
+    evidence: list[Any] = Field(default_factory=list)
+    confidence: str = "medium"
+
+
+class EntityDetailResponse(BaseModel):
+    entity: EntityResponse
+    relationships: list[RelationshipResponse] = Field(default_factory=list)
+
+
+class EntityReviewRequest(BaseModel):
+    action: str = Field(
+        ..., description="Review action: 'confirm', 'retire', or 'merge'"
+    )
+    merge_target_id: str | None = Field(
+        None, description="Entity ID to merge into (required when action is 'merge')"
+    )
+
+
+class WorkItemResponse(BaseModel):
+    id: str
+    title: str
+    evidence: list[Any] = Field(default_factory=list)
+    owner_user_id: str | None = None
+    due_at: str | None = None
+    confidence: str = "low"
+    status: str = "proposed"
+    origin: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkItemListResponse(BaseModel):
+    work_items: list[WorkItemResponse]
+    count: int
+
+
+class WorkItemStatusRequest(BaseModel):
+    status: str = Field(
+        ..., description="New status: 'accepted', 'completed', or 'dismissed'"
+    )
+
+
+class MemoryStatsResponse(BaseModel):
+    total_entities: int = 0
+    entities_by_type: dict[str, int] = Field(default_factory=dict)
+    total_relationships: int = 0
+    work_items_by_status: dict[str, int] = Field(default_factory=dict)
+    total_work_items: int = 0
+
+
+class MemoryExtractRequest(BaseModel):
+    text: str = Field(
+        ..., min_length=10, max_length=50_000, description="Text to extract entities from"
+    )
+    source_label: str = Field(
+        "", max_length=200, description="Optional label for the source of this text"
+    )

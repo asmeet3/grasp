@@ -284,8 +284,12 @@ function configureAdminNavigation(user) {
     document.getElementById('navAgents').style.display = canManageAgents ? '' : 'none';
     if (canManageUsers) checkUserPendingCount();
 
+    // Show Memory tab if feature is enabled (checked async)
+    checkMemoryEnabled();
+
     const usersScreen = document.getElementById('screenUsers');
     const agentsScreen = document.getElementById('screenAgents');
+    const memoryScreen = document.getElementById('screenMemory');
     if (!canManageUsers && usersScreen?.style.display !== 'none') showAdminScreen('Home');
     if (!canManageAgents && agentsScreen?.style.display !== 'none') showAdminScreen('Home');
 }
@@ -320,6 +324,13 @@ function showAdminScreen(screenName) {
         document.getElementById('navAgents').classList.add('active');
         titleEl.textContent = 'Company-brain Agents';
         loadAgents();
+    } else if (screenName === 'Memory') {
+        document.getElementById('screenMemory').style.display = 'block';
+        document.getElementById('navMemory').classList.add('active');
+        titleEl.textContent = 'Structured Memory';
+        loadMemoryStats();
+        loadEntities();
+        loadWorkItems();
     }
 }
 
@@ -2649,3 +2660,399 @@ function toggleSidebarSection(section) {
         toggle.setAttribute('aria-expanded', String(!isOpen));
     }
 }
+
+// ── Structured Memory ────────────────────────────────────────
+
+let memoryEnabled = false;
+let currentEntityId = null;
+
+async function checkMemoryEnabled() {
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/status`);
+        if (!response.ok) return;
+        const data = await response.json();
+        memoryEnabled = data.enabled === true;
+        document.getElementById('navMemory').style.display = memoryEnabled ? '' : 'none';
+    } catch (_) {
+        memoryEnabled = false;
+    }
+}
+
+async function loadMemoryStats() {
+    if (!memoryEnabled) return;
+    const token = localStorage.getItem('grasp_session_token');
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/stats`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const stats = await response.json();
+        const container = document.getElementById('memoryStatsCards');
+        const typeIcons = {
+            person: '👤', team: '👥', project: '📁', product: '📦',
+            process: '⚙️', technology: '💻', decision: '📋', milestone: '🎯'
+        };
+
+        let html = '';
+        html += `<div style="padding:16px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border);text-align:center">
+            <div style="font-size:24px;font-weight:700;color:var(--text-primary)">${stats.total_entities || 0}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Total entities</div>
+        </div>`;
+        html += `<div style="padding:16px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border);text-align:center">
+            <div style="font-size:24px;font-weight:700;color:var(--text-primary)">${stats.total_relationships || 0}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Relationships</div>
+        </div>`;
+        html += `<div style="padding:16px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border);text-align:center">
+            <div style="font-size:24px;font-weight:700;color:var(--text-primary)">${stats.total_work_items || 0}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">Work items</div>
+        </div>`;
+
+        const byType = stats.entities_by_type || {};
+        for (const [type, count] of Object.entries(byType)) {
+            const icon = typeIcons[type] || '📄';
+            html += `<div style="padding:16px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border);text-align:center">
+                <div style="font-size:24px;font-weight:700;color:var(--text-primary)">${count}</div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${icon} ${type}</div>
+            </div>`;
+        }
+
+        // Badge: pending work items
+        const pending = (stats.work_items_by_status || {}).proposed || 0;
+        const badge = document.getElementById('navMemoryBadge');
+        if (pending > 0) {
+            badge.textContent = pending;
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+
+        container.innerHTML = html;
+    } catch (err) {
+        console.error('Failed to load memory stats', err);
+    }
+}
+
+async function loadEntities() {
+    if (!memoryEnabled) return;
+    const token = localStorage.getItem('grasp_session_token');
+    const query = document.getElementById('memoryEntitySearch')?.value || '';
+    const entityType = document.getElementById('memoryEntityTypeFilter')?.value || '';
+    const container = document.getElementById('entitiesTableContainer');
+
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (entityType) params.set('entity_type', entityType);
+    params.set('limit', '100');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/entities?${params}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) { container.innerHTML = '<p style="color:var(--text-secondary)">Failed to load entities.</p>'; return; }
+        const data = await response.json();
+        const entities = data.entities || [];
+
+        if (entities.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary)">No entities found.</p>';
+            return;
+        }
+
+        const typeIcons = {
+            person: '👤', team: '👥', project: '📁', product: '📦',
+            process: '⚙️', technology: '💻', decision: '📋', milestone: '🎯'
+        };
+        const confColors = { high: 'var(--accent)', medium: 'var(--warning)', low: 'var(--danger)' };
+
+        let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border)">
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Type</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Name</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Aliases</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Confidence</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500"></th>
+            </tr></thead><tbody>`;
+
+        for (const e of entities) {
+            const icon = typeIcons[e.entity_type] || '📄';
+            const confColor = confColors[e.confidence] || 'var(--text-secondary)';
+            const aliases = (e.aliases || []).join(', ') || '—';
+            html += `<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="showEntityDetail('${e.id}')">
+                <td style="padding:10px 12px">${icon} ${e.entity_type}</td>
+                <td style="padding:10px 12px;font-weight:600;color:var(--text-primary)">${escapeHtml(e.canonical_name)}</td>
+                <td style="padding:10px 12px;color:var(--text-secondary);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(aliases)}</td>
+                <td style="padding:10px 12px"><span style="color:${confColor};font-weight:600;text-transform:capitalize">${e.confidence}</span></td>
+                <td style="padding:10px 12px;text-align:right"><button class="agent-secondary-button" onclick="event.stopPropagation();showEntityDetail('${e.id}')" style="font-size:12px;padding:4px 10px">View</button></td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p style="color:var(--danger)">Error loading entities.</p>';
+        console.error(err);
+    }
+}
+
+async function showEntityDetail(entityId) {
+    currentEntityId = entityId;
+    const token = localStorage.getItem('grasp_session_token');
+    const body = document.getElementById('entityDetailBody');
+    body.innerHTML = '<p style="color:var(--text-secondary)">Loading…</p>';
+    document.getElementById('entityDetailModal').style.display = 'flex';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/entities/${entityId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) { body.innerHTML = '<p style="color:var(--danger)">Entity not found.</p>'; return; }
+        const data = await response.json();
+        const entity = data.entity;
+        const rels = data.relationships || [];
+
+        const typeIcons = {
+            person: '👤', team: '👥', project: '📁', product: '📦',
+            process: '⚙️', technology: '💻', decision: '📋', milestone: '🎯'
+        };
+
+        document.getElementById('entityDetailTitle').textContent =
+            `${typeIcons[entity.entity_type] || '📄'} ${entity.canonical_name}`;
+
+        let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+            <div><strong style="font-size:12px;color:var(--text-secondary)">Type</strong><br><span style="text-transform:capitalize">${entity.entity_type}</span></div>
+            <div><strong style="font-size:12px;color:var(--text-secondary)">Confidence</strong><br><span style="text-transform:capitalize;font-weight:600">${entity.confidence}</span></div>
+            <div><strong style="font-size:12px;color:var(--text-secondary)">Sensitivity</strong><br>${entity.sensitivity}</div>
+            <div><strong style="font-size:12px;color:var(--text-secondary)">ID</strong><br><code style="font-size:11px">${entity.id}</code></div>
+        </div>`;
+
+        const aliases = entity.aliases || [];
+        if (aliases.length > 0) {
+            html += `<div style="margin-bottom:16px"><strong style="font-size:12px;color:var(--text-secondary)">Aliases</strong><br>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+                    ${aliases.map(a => `<span style="padding:3px 10px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border);font-size:12px">${escapeHtml(a)}</span>`).join('')}
+                </div></div>`;
+        }
+
+        const attrs = entity.attributes || {};
+        const attrKeys = Object.keys(attrs);
+        if (attrKeys.length > 0) {
+            html += `<div style="margin-bottom:16px"><strong style="font-size:12px;color:var(--text-secondary)">Attributes</strong>
+                <div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
+                    ${attrKeys.map(k => `<span style="font-weight:600">${escapeHtml(k)}</span><span>${escapeHtml(String(attrs[k]))}</span>`).join('')}
+                </div></div>`;
+        }
+
+        if (rels.length > 0) {
+            html += `<div style="margin-bottom:16px"><strong style="font-size:12px;color:var(--text-secondary)">Relationships (${rels.length})</strong>
+                <div style="margin-top:6px">`;
+            for (const rel of rels) {
+                const isSource = rel.source_entity_id === entityId;
+                const arrow = isSource ? '→' : '←';
+                const otherLabel = isSource ? rel.target_entity_id : rel.source_entity_id;
+                html += `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+                    ${arrow} <strong>${escapeHtml(rel.relationship_type)}</strong>
+                    <span style="color:var(--text-secondary)">${otherLabel.substring(0,8)}…</span>
+                    <span style="float:right;font-size:11px;color:var(--text-tertiary)">${rel.confidence}</span>
+                </div>`;
+            }
+            html += '</div></div>';
+        }
+
+        const evidence = entity.evidence || [];
+        if (evidence.length > 0) {
+            html += `<div><strong style="font-size:12px;color:var(--text-secondary)">Evidence</strong>
+                <div style="margin-top:6px;font-size:12px;color:var(--text-secondary);max-height:120px;overflow-y:auto;background:var(--bg-secondary);border-radius:8px;padding:10px">
+                    <pre style="white-space:pre-wrap;margin:0">${escapeHtml(JSON.stringify(evidence, null, 2))}</pre>
+                </div></div>`;
+        }
+
+        body.innerHTML = html;
+    } catch (err) {
+        body.innerHTML = '<p style="color:var(--danger)">Failed to load entity.</p>';
+        console.error(err);
+    }
+}
+
+function closeEntityDetail() {
+    document.getElementById('entityDetailModal').style.display = 'none';
+    currentEntityId = null;
+}
+
+async function reviewCurrentEntity(action) {
+    if (!currentEntityId) return;
+    const token = localStorage.getItem('grasp_session_token');
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/entities/${currentEntityId}/review`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showToast(err.detail || `Failed to ${action} entity`, 'error');
+            return;
+        }
+        showToast(`Entity ${action === 'confirm' ? 'confirmed' : 'retired'} successfully`, 'success');
+        closeEntityDetail();
+        loadEntities();
+        loadMemoryStats();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    }
+}
+
+async function loadWorkItems() {
+    if (!memoryEnabled) return;
+    const token = localStorage.getItem('grasp_session_token');
+    const status = document.getElementById('memoryWorkItemStatusFilter')?.value || '';
+    const container = document.getElementById('workItemsContainer');
+
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    params.set('limit', '100');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/work-items?${params}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) { container.innerHTML = '<p style="color:var(--text-secondary)">Failed to load work items.</p>'; return; }
+        const data = await response.json();
+        const items = data.work_items || [];
+
+        if (items.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary)">No work items found.</p>';
+            return;
+        }
+
+        const statusColors = {
+            proposed: 'var(--warning)', accepted: 'var(--accent)',
+            completed: 'var(--success, #22c55e)', dismissed: 'var(--text-tertiary)'
+        };
+
+        let html = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border)">
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Title</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Status</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Confidence</th>
+                <th style="padding:10px 12px;color:var(--text-secondary);font-weight:500">Actions</th>
+            </tr></thead><tbody>`;
+
+        for (const item of items) {
+            const statusColor = statusColors[item.status] || 'var(--text-secondary)';
+            let actions = '';
+            if (item.status === 'proposed') {
+                actions = `<button class="approve-btn" style="font-size:11px;padding:3px 10px" onclick="event.stopPropagation();updateWorkItemStatus('${item.id}','accepted')">Accept</button>
+                    <button class="reject-btn" style="font-size:11px;padding:3px 10px;margin-left:6px" onclick="event.stopPropagation();updateWorkItemStatus('${item.id}','dismissed')">Dismiss</button>`;
+            } else if (item.status === 'accepted') {
+                actions = `<button class="approve-btn" style="font-size:11px;padding:3px 10px" onclick="event.stopPropagation();updateWorkItemStatus('${item.id}','completed')">Complete</button>
+                    <button class="reject-btn" style="font-size:11px;padding:3px 10px;margin-left:6px" onclick="event.stopPropagation();updateWorkItemStatus('${item.id}','dismissed')">Dismiss</button>`;
+            } else {
+                actions = `<span style="font-size:11px;color:var(--text-tertiary)">${item.status}</span>`;
+            }
+            html += `<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:10px 12px;font-weight:500;color:var(--text-primary)">${escapeHtml(item.title)}</td>
+                <td style="padding:10px 12px"><span style="color:${statusColor};font-weight:600;text-transform:capitalize">${item.status}</span></td>
+                <td style="padding:10px 12px;text-transform:capitalize">${item.confidence}</td>
+                <td style="padding:10px 12px">${actions}</td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p style="color:var(--danger)">Error loading work items.</p>';
+        console.error(err);
+    }
+}
+
+async function updateWorkItemStatus(itemId, newStatus) {
+    const token = localStorage.getItem('grasp_session_token');
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/work-items/${itemId}/status`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status: newStatus }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showToast(err.detail || `Failed to update work item`, 'error');
+            return;
+        }
+        showToast(`Work item ${newStatus}`, 'success');
+        loadWorkItems();
+        loadMemoryStats();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    }
+}
+
+// Manual extraction modal
+
+function openExtractionModal() {
+    document.getElementById('extractionText').value = '';
+    document.getElementById('extractionSourceLabel').value = '';
+    document.getElementById('extractionResult').style.display = 'none';
+    document.getElementById('extractionSubmitBtn').disabled = false;
+    document.getElementById('extractionModal').style.display = 'flex';
+}
+
+function closeExtractionModal() {
+    document.getElementById('extractionModal').style.display = 'none';
+}
+
+async function submitExtraction() {
+    const text = document.getElementById('extractionText').value.trim();
+    if (text.length < 10) {
+        showToast('Please enter at least 10 characters of text.', 'error');
+        return;
+    }
+    const sourceLabel = document.getElementById('extractionSourceLabel').value.trim();
+    const btn = document.getElementById('extractionSubmitBtn');
+    const resultEl = document.getElementById('extractionResult');
+    btn.disabled = true;
+    btn.textContent = 'Extracting…';
+    resultEl.style.display = 'none';
+
+    const token = localStorage.getItem('grasp_session_token');
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/extract`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text, source_label: sourceLabel }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            resultEl.textContent = `Error: ${err.detail || 'Extraction failed'}`;
+            resultEl.style.color = 'var(--danger)';
+            resultEl.style.display = 'block';
+            return;
+        }
+        const data = await response.json();
+        resultEl.textContent = `Extracted ${data.entities_created || 0} entities and ${data.relationships_created || 0} relationships.`;
+        resultEl.style.color = 'var(--accent)';
+        resultEl.style.display = 'block';
+        showToast(`Extracted ${data.entities_created || 0} entities`, 'success');
+        loadEntities();
+        loadMemoryStats();
+    } catch (err) {
+        resultEl.textContent = `Error: ${err.message}`;
+        resultEl.style.color = 'var(--danger)';
+        resultEl.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Extract Entities';
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+

@@ -31,6 +31,7 @@ from src.connectors.sharepoint import SharePointConnector
 from src.connectors.slack import SlackConnector
 from src.context_router import ContextRouter
 from src.contributions import ContributionManager
+from src.memory import StructuredMemoryService
 from src.core.security import AuthContext, PolicyEngine
 from src.database import create_engine, init_db
 from src.index.vector_store import VectorStore
@@ -249,6 +250,19 @@ def main():
             )
         except Exception:
             logger.exception("Knowledge sync completed, but agent event fan-out failed")
+        # Trigger structured memory extraction after successful sync
+        if memory_service and result.get("change_set_id"):
+            try:
+                await job_queue.enqueue(
+                    "memory-extraction",
+                    {
+                        "change_set_id": result["change_set_id"],
+                        "organization_id": "default",
+                    },
+                    idempotency_key=f"mem-extract:{result['change_set_id']}",
+                )
+            except Exception:
+                logger.exception("Failed to queue memory extraction job")
 
     job_queue.register("sync", run_sync_job)
 
@@ -256,6 +270,63 @@ def main():
         await change_set_service.rebuild_from_git("default")
 
     job_queue.register("rebuild-index", rebuild_index_job)
+
+    # ── Structured memory ─────────────────────────────────────────
+
+    memory_service: StructuredMemoryService | None = None
+    if settings.structured_memory:
+        memory_service = StructuredMemoryService(
+            engine=db_engine,
+            policy=PolicyEngine(),
+            anthropic_api_key=settings.anthropic_api_key,
+            classifier_model=settings.classifier_model,
+        )
+        logger.info("Structured memory service initialized")
+
+        async def run_memory_extraction_job(payload):
+            """Extract entities from recently synced documents."""
+            from src.core.security import AuthContext, SystemRole
+            from src.core.security import ROLE_PERMISSIONS
+
+            system_context = AuthContext(
+                user_id="system",
+                organization_id=payload.get("organization_id", "default"),
+                system_role=SystemRole.ADMINISTRATOR,
+                permissions=ROLE_PERMISSIONS[SystemRole.ADMINISTRATOR],
+                principals=frozenset(
+                    {f"organization:{payload.get('organization_id', 'default')}"}
+                ),
+            )
+            cs_id = payload.get("change_set_id")
+            if not cs_id:
+                return
+            cs = await change_set_service.get(cs_id)
+            if not cs:
+                return
+            operations = cs.get("operations") or []
+            extracted_total = 0
+            for op in operations:
+                if op.get("op") == "delete":
+                    continue
+                path = str(op.get("path") or "")
+                content = repo_manager.read_committed_file(path)
+                if not content or len(content) < 50:
+                    continue
+                result = await memory_service.extract_entities_from_text(
+                    system_context,
+                    content,
+                    source_evidence={"change_set_id": cs_id, "path": path},
+                )
+                extracted_total += result.get("entities_created", 0)
+            logger.info(
+                "Memory extraction completed for change set %s: %d entities",
+                cs_id,
+                extracted_total,
+            )
+
+        job_queue.register("memory-extraction", run_memory_extraction_job)
+    else:
+        logger.info("Structured memory disabled")
 
     metrics = MetricRecorder()
     scheduler = SyncScheduler(
@@ -287,6 +358,7 @@ def main():
         vector_store=vector_store,
         repo_manager=repo_manager,
         connectors=connectors,
+        memory_service=memory_service,
     )
     context_router = (
         ContextRouter(repo_manager, token_budget=settings.context_token_budget)
@@ -365,6 +437,7 @@ def main():
         metrics=metrics,
         agent_service=agent_service,
         agent_scheduler=agent_scheduler,
+        memory_service=memory_service,
     )
 
     worker_task = None
