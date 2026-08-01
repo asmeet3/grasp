@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +11,6 @@ import pytest
 from src.core.security import (
     ROLE_PERMISSIONS,
     AuthContext,
-    Permission,
     PolicyEngine,
     SystemRole,
 )
@@ -28,7 +26,7 @@ def _context(
         organization_id=org,
         system_role=role_enum,
         permissions=ROLE_PERMISSIONS[role_enum],
-        principals=frozenset({f"organization:{org}", f"user:user-1", f"role:{role}"}),
+        principals=frozenset({f"organization:{org}", "user:user-1", f"role:{role}"}),
     )
 
 
@@ -231,7 +229,7 @@ async def test_merge_requires_target_id():
 
 def test_tool_definitions_include_memory_when_service_present():
     """ToolExecutor.tool_definitions should include search_memory when memory_service is set."""
-    from src.agent.tools import MEMORY_TOOL_DEFINITION, TOOL_DEFINITIONS, ToolExecutor
+    from src.agent.tools import TOOL_DEFINITIONS, ToolExecutor
 
     executor = ToolExecutor(
         dispatcher=MagicMock(),

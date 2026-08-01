@@ -31,11 +31,11 @@ from src.connectors.sharepoint import SharePointConnector
 from src.connectors.slack import SlackConnector
 from src.context_router import ContextRouter
 from src.contributions import ContributionManager
-from src.memory import StructuredMemoryService
 from src.core.security import AuthContext, PolicyEngine
 from src.database import create_engine, init_db
 from src.index.vector_store import VectorStore
 from src.jobs import PostgresJobQueue
+from src.memory import StructuredMemoryService
 from src.observability import MetricRecorder, SecretRedactionFilter
 from src.providers import ConnectorProvider, ProviderRouter
 from src.repo.manager import RepoManager
@@ -285,8 +285,7 @@ def main():
 
         async def run_memory_extraction_job(payload):
             """Extract entities from recently synced documents."""
-            from src.core.security import AuthContext, SystemRole
-            from src.core.security import ROLE_PERMISSIONS
+            from src.core.security import ROLE_PERMISSIONS, AuthContext, SystemRole
 
             system_context = AuthContext(
                 user_id="system",
