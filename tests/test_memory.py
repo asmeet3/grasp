@@ -116,7 +116,7 @@ async def test_extraction_parses_claude_response():
     svc.upsert_entity = mock_upsert
     svc.add_relationship = mock_add_rel
 
-    with patch("src.memory.AsyncAnthropic", return_value=mock_client):
+    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
         result = await svc.extract_entities_from_text(
             _context(),
             "Alice Chen leads the Platform Team and is responsible for infrastructure.",
@@ -128,6 +128,192 @@ async def test_extraction_parses_claude_response():
     assert upserted_entities[0]["canonical_name"] == "Alice Chen"
     assert upserted_entities[1]["canonical_name"] == "Platform Team"
     assert added_relationships[0]["relationship_type"] == "leads"
+
+
+# ---- Extraction prompt quality ----
+
+
+def test_extraction_prompt_is_recall_oriented():
+    """The extraction prompt must favor coverage over precision filtering."""
+    from src.memory import EXTRACTION_SYSTEM_PROMPT
+
+    assert "Extract every entity" in EXTRACTION_SYSTEM_PROMPT
+    assert "ownership/RACI tables" in EXTRACTION_SYSTEM_PROMPT
+    # People/teams stay broad, but temporary work records must not become
+    # project or product nodes - without hardcoding any company's key scheme.
+    assert "do NOT treat individual work items" in EXTRACTION_SYSTEM_PROMPT
+    assert "regardless of how those items are named or keyed" in EXTRACTION_SYSTEM_PROMPT
+    assert "whatever their naming or key scheme" in EXTRACTION_SYSTEM_PROMPT
+    assert "bug reports" in EXTRACTION_SYSTEM_PROMPT
+    assert "meeting records" in EXTRACTION_SYSTEM_PROMPT
+    assert "live/persistent product" in EXTRACTION_SYSTEM_PROMPT
+    assert "when in doubt, leave it out" not in EXTRACTION_SYSTEM_PROMPT
+    assert "single passing mention" not in EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_extraction_resolves_relationships_via_alias_and_case():
+    """Relationship endpoints must resolve via aliases and different casing."""
+    mock_extraction = {
+        "entities": [
+            {
+                "entity_type": "person",
+                "canonical_name": "Hana Kim",
+                "aliases": ["Hana"],
+                "attributes": {"role": "QA Owner"},
+                "confidence": "high",
+            },
+            {
+                "entity_type": "team",
+                "canonical_name": "Route Planning",
+                "aliases": [],
+                "attributes": {},
+                "confidence": "medium",
+            },
+        ],
+        "relationships": [
+            {
+                "source": "hana",  # alias, different casing
+                "relationship_type": "owns",
+                "target": "route planning",  # canonical, different casing
+                "confidence": "high",
+            }
+        ],
+    }
+
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=json.dumps(mock_extraction))]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+    svc = StructuredMemoryService(
+        engine=MagicMock(),
+        policy=PolicyEngine(),
+        anthropic_api_key="test-key",
+    )
+
+    entity_ids = {"Hana Kim": "entity-hana", "Route Planning": "entity-route"}
+    added_relationships: list[dict] = []
+
+    async def mock_upsert(context, values):
+        return entity_ids[values["canonical_name"]]
+
+    async def mock_add_rel(context, values):
+        added_relationships.append(values)
+        return str(uuid.uuid4())
+
+    svc.upsert_entity = mock_upsert
+    svc.add_relationship = mock_add_rel
+
+    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
+        result = await svc.extract_entities_from_text(
+            _context(),
+            "Hana owns Route Planning.",
+        )
+
+    assert result["relationships_created"] == 1
+    assert added_relationships[0]["source_entity_id"] == "entity-hana"
+    assert added_relationships[0]["target_entity_id"] == "entity-route"
+
+
+@pytest.mark.asyncio
+async def test_extraction_chunks_long_documents():
+    """Entities past the first 8k characters must still be extracted."""
+
+    def build_extraction(content: str) -> dict:
+        if "Zoe Winters" in content:
+            return {
+                "entities": [
+                    {
+                        "entity_type": "person",
+                        "canonical_name": "Zoe Winters",
+                        "aliases": [],
+                        "attributes": {},
+                        "confidence": "medium",
+                    }
+                ],
+                "relationships": [],
+            }
+        return {
+            "entities": [
+                {
+                    "entity_type": "person",
+                    "canonical_name": "Alice Chen",
+                    "aliases": [],
+                    "attributes": {},
+                    "confidence": "high",
+                }
+            ],
+            "relationships": [],
+        }
+
+    async def fake_create(**kwargs):
+        content = kwargs["messages"][0]["content"]
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(text=json.dumps(build_extraction(content)))
+        ]
+        return mock_response
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(side_effect=fake_create)
+
+    svc = StructuredMemoryService(
+        engine=MagicMock(),
+        policy=PolicyEngine(),
+        anthropic_api_key="test-key",
+    )
+
+    upserted: list[dict] = []
+
+    async def mock_upsert(context, values):
+        upserted.append(values)
+        return str(uuid.uuid4())
+
+    svc.upsert_entity = mock_upsert
+    svc.add_relationship = AsyncMock(return_value=str(uuid.uuid4()))
+
+    # Alice appears at the start; Zoe only near the end, past 8k chars.
+    text = "Alice Chen joined the project.\n\n" + (
+        "filler content\n" * 600
+    ) + "Zoe Winters owns delivery."
+    assert len(text) > 8_000
+
+    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
+        result = await svc.extract_entities_from_text(_context(), text)
+
+    assert mock_client.messages.create.call_count >= 2
+    names = {u["canonical_name"] for u in upserted}
+    assert "Alice Chen" in names
+    assert "Zoe Winters" in names
+    assert result["entities_created"] == 2
+
+
+@pytest.mark.asyncio
+async def test_upsert_returns_persisted_id_on_conflict():
+    """Dedup conflicts must return the existing row id, not a phantom UUID."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value="existing-id")
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock(return_value=mock_result)
+
+    mock_engine = MagicMock()
+    mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    svc = StructuredMemoryService(engine=mock_engine, policy=PolicyEngine())
+
+    entity_id = await svc.upsert_entity(
+        _context(),
+        {
+            "entity_type": "person",
+            "canonical_name": "Alice Chen",
+            "deduplication_key": "person:alice chen",
+        },
+    )
+    assert entity_id == "existing-id"
 
 
 # ── Entity types filtering ───────────────────────────────────
@@ -162,9 +348,9 @@ async def test_work_item_status_transition_validation():
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value=mock_result)
 
-    mock_engine = AsyncMock()
+    mock_engine = MagicMock()
     mock_engine.begin.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_engine.begin.return_value.__aexit__ = AsyncMock()
+    mock_engine.begin.return_value.__aexit__ = AsyncMock(return_value=False)
 
     svc.engine = mock_engine
 

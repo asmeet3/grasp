@@ -1317,6 +1317,14 @@ def create_app(
         )
         return result
 
+    @app.post("/api/memory/rebuild")
+    async def rebuild_entities(req: Request):
+        """Delete all entities and re-extract from all knowledge documents."""
+        context = await require_context(req, Permission.REVIEW)
+        svc = require_memory_service()
+        result = await svc.rebuild_all_entities(context, repo_manager.repo_path)
+        return result
+
     @app.get("/api/memory/graph", response_model=GraphResponse)
     async def get_memory_graph(req: Request, limit: int = 200):
         """Return all entities and relationships for the graph view."""

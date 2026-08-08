@@ -51,7 +51,10 @@ function updateThemeIcon() {
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
     const menuIcon = document.getElementById('themeMenuIcon');
     const menuLabel = document.getElementById('themeMenuLabel');
-    if (menuIcon) menuIcon.textContent = isLight ? '☀️' : '🌙';
+    if (menuIcon) {
+        menuIcon.classList.toggle('theme-icon-sun', isLight);
+        menuIcon.classList.toggle('theme-icon-moon', !isLight);
+    }
     if (menuLabel) menuLabel.textContent = isLight ? 'Dark Mode' : 'Light Mode';
 }
 
@@ -3064,6 +3067,58 @@ async function submitExtraction() {
     }
 }
 
+// Rebuild entities modal
+function openRebuildEntitiesModal() {
+    document.getElementById('rebuildEntitiesResult').style.display = 'none';
+    const btn = document.getElementById('rebuildEntitiesSubmitBtn');
+    btn.disabled = false;
+    btn.textContent = 'Rebuild all entities';
+    document.getElementById('rebuildEntitiesModal').style.display = 'flex';
+}
+
+function closeRebuildEntitiesModal() {
+    document.getElementById('rebuildEntitiesModal').style.display = 'none';
+}
+
+async function confirmRebuildEntities() {
+    const btn = document.getElementById('rebuildEntitiesSubmitBtn');
+    const resultEl = document.getElementById('rebuildEntitiesResult');
+
+    btn.disabled = true;
+    btn.textContent = 'Rebuilding…';
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--text-secondary)';
+    resultEl.textContent = 'Deleting old entities and re-extracting from all documents. This may take a while…';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/memory/rebuild`, {
+            method: 'POST',
+            headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            resultEl.textContent = `Error: ${err.detail || 'Rebuild failed'}`;
+            resultEl.style.color = 'var(--danger)';
+            return;
+        }
+        const data = await response.json();
+        resultEl.style.color = 'var(--success, #27ae60)';
+        resultEl.textContent =
+            `Done! Deleted ${data.deleted_entities ?? 0} entities & ${data.deleted_relationships ?? 0} relationships. ` +
+            `Processed ${data.docs_processed ?? 0} docs → ${data.entities_created ?? 0} entities, ${data.relationships_created ?? 0} relationships created.`;
+
+        showToast(`Rebuilt entities: ${data.entities_created ?? 0} entities from ${data.docs_processed ?? 0} docs`, 'success');
+        loadEntities();
+        loadMemoryStats();
+    } catch (err) {
+        resultEl.textContent = `Error: ${err.message}`;
+        resultEl.style.color = 'var(--danger)';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Rebuild all entities';
+    }
+}
+
 function escapeHtml(text) {
     if (!text) return '';
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
@@ -3322,10 +3377,9 @@ function updateGraphSearchDropdown() {
 
     const items = matches.slice(0, 15).map(m => {
         const color = GRAPH_TYPE_COLORS[m.node.type] || '#888';
-        const icon = GRAPH_TYPE_ICONS[m.node.type] || '';
         return `<button type="button" class="graph-search-dropdown-item" data-node-index="${m.index}" onclick="navigateToNode(${m.index})">
             <span class="search-dot" style="background:${color}"></span>
-            <span class="search-name">${icon} ${escapeHtml(m.node.label)}</span>
+            <span class="search-name">${escapeHtml(m.node.label)}</span>
             <span class="search-type">${formatEntityName(m.node.type)}</span>
         </button>`;
     }).join('');
@@ -3761,17 +3815,6 @@ function renderGraph() {
             : color + '88';
         ctx.lineWidth = (isHovered || isSelected) ? Math.max(1, 2.5 / s) : Math.max(0.5, 1.2 / s);
         ctx.stroke();
-
-        // Pinned indicator ring
-        if (n.pinned) {
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, r + 3 / s, 0, Math.PI * 2);
-            ctx.strokeStyle = '#f97316';
-            ctx.lineWidth = Math.max(0.8, 1.5 / s);
-            ctx.setLineDash([3 / s, 2 / s]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
 
         // Label
         const labelSize = Math.max(5, ((isHovered || isSelected) ? 11 : 10) / s);

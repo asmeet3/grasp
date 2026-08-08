@@ -554,13 +554,27 @@ function startNewChat() {
     welcome.id = 'welcome';
 
     welcome.innerHTML = `
-        <div class="welcome-motif">
-            <div class="motif-line"></div>
-            <div class="motif-diamond"></div>
-            <div class="motif-line"></div>
+        <div class="welcome-glow" aria-hidden="true"></div>
+        <div class="welcome-kicker">
+            <span class="welcome-kicker-line" aria-hidden="true"></span>
+            <span class="welcome-kicker-diamond" aria-hidden="true"></span>
+            <span class="welcome-kicker-text">Institutional knowledge, answered</span>
+            <span class="welcome-kicker-diamond" aria-hidden="true"></span>
+            <span class="welcome-kicker-line" aria-hidden="true"></span>
         </div>
-        <h1>Ask <span class="accent-word">anything</span> about your company</h1>
-        <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
+        <h1>Ask <span class="accent-word">anything</span><span class="accent-dot">.</span> <br>Your company already knows.</h1>
+        <p>Grasp searches across all your connected tools to find the answer — in seconds.</p>
+
+        <div class="welcome-sources">
+            <span class="welcome-sources-label">Search sources</span>
+            <div class="source-badges">
+                <span class="source-badge"><img src="/icons/confluence-dark.svg" class="theme-icon-dark" alt="Confluence"><img src="/icons/confluence-light.svg" class="theme-icon-light" alt="Confluence"></span>
+                <span class="source-badge"><img src="/icons/jira-dark.svg" class="theme-icon-dark" alt="Jira"><img src="/icons/jira-light.svg" class="theme-icon-light" alt="Jira"></span>
+                <span class="source-badge"><img src="/icons/sharepoint-dark.svg" class="theme-icon-dark" alt="SharePoint"><img src="/icons/sharepoint-light.svg" class="theme-icon-light" alt="SharePoint"></span>
+                <span class="source-badge"><img src="/icons/slack-dark.svg" class="theme-icon-dark" alt="Slack"><img src="/icons/slack-light.svg" class="theme-icon-light" alt="Slack"></span>
+                <span class="source-badge"><img src="/icons/notion-dark.svg" class="theme-icon-dark" alt="Notion"><img src="/icons/notion-light.svg" class="theme-icon-light" alt="Notion"></span>
+            </div>
+        </div>
 
         <div class="suggestion-chips" id="defaultChips">
             <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the current architecture of our backend?</div>
@@ -947,7 +961,10 @@ function updateThemeIcon() {
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
     const menuIcon = document.getElementById('themeMenuIcon');
     const menuLabel = document.getElementById('themeMenuLabel');
-    if (menuIcon) menuIcon.textContent = isLight ? '☀️' : '🌙';
+    if (menuIcon) {
+        menuIcon.classList.toggle('theme-icon-sun', isLight);
+        menuIcon.classList.toggle('theme-icon-moon', !isLight);
+    }
     if (menuLabel) menuLabel.textContent = isLight ? 'Dark Mode' : 'Light Mode';
 }
 

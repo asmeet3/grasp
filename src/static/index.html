@@ -7,7 +7,7 @@
     <meta name="description"
         content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260724-7">
+    <link rel="stylesheet" href="/static/styles.css?v=20260808-3">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -110,10 +110,13 @@
                                     <div class="dropdown-menu-group">
                                         <div class="dropdown-menu-label">Account</div>
                                         <div class="dropdown-menu-item" style="pointer-events:none; padding: 6px 12px;">
-                                            <div class="sidebar-user-avatar sidebar-user-avatar-sm" id="userAvatarDropdown">?</div>
+                                            <div class="sidebar-user-avatar sidebar-user-avatar-sm"
+                                                id="userAvatarDropdown">?</div>
                                             <div>
-                                                <div style="font-weight:600;color:var(--text-primary);font-size:13px" id="userDropdownName">—</div>
-                                                <div style="font-size:11px;color:var(--text-tertiary)" id="userMenuRole"></div>
+                                                <div style="font-weight:600;color:var(--text-primary);font-size:13px"
+                                                    id="userDropdownName">—</div>
+                                                <div style="font-size:11px;color:var(--text-tertiary)"
+                                                    id="userMenuRole"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -121,7 +124,8 @@
                                     <div class="dropdown-menu-group">
                                         <button class="dropdown-menu-item"
                                             onclick="toggleTheme(); event.stopPropagation();">
-                                            <span class="theme-menu-icon" id="themeMenuIcon">🌙</span>
+                                            <span class="theme-icon theme-icon-moon" id="themeMenuIcon"
+                                                aria-hidden="true"></span>
                                             <span id="themeMenuLabel">Light Mode</span>
                                         </button>
                                         <button class="dropdown-menu-item"
@@ -184,15 +188,32 @@
 
             <div class="chat-area" id="chatArea">
                 <div class="welcome" id="welcome">
-                    <div class="welcome-motif">
-                        <div class="motif-line"></div>
-                        <div class="motif-diamond"></div>
-                        <div class="motif-line"></div>
+                    <div class="welcome-glow" aria-hidden="true"></div>
+
+                    <h1>Ask <span class="accent-word">anything</span><span class="accent-dot">.</span> <br>Your
+                        company already knows.</h1>
+                    <p>Grasp searches across all your connected tools to find the answer — in seconds.</p>
+
+                    <div class="welcome-sources">
+                        <span class="welcome-sources-label">Search sources</span>
+                        <div class="source-badges">
+                            <span class="source-badge"><img src="/icons/confluence-dark.svg" class="theme-icon-dark"
+                                    alt="Confluence"><img src="/icons/confluence-light.svg" class="theme-icon-light"
+                                    alt="Confluence"></span>
+                            <span class="source-badge"><img src="/icons/jira-dark.svg" class="theme-icon-dark"
+                                    alt="Jira"><img src="/icons/jira-light.svg" class="theme-icon-light"
+                                    alt="Jira"></span>
+                            <span class="source-badge"><img src="/icons/sharepoint-dark.svg" class="theme-icon-dark"
+                                    alt="SharePoint"><img src="/icons/sharepoint-light.svg" class="theme-icon-light"
+                                    alt="SharePoint"></span>
+                            <span class="source-badge"><img src="/icons/slack-dark.svg" class="theme-icon-dark"
+                                    alt="Slack"><img src="/icons/slack-light.svg" class="theme-icon-light"
+                                    alt="Slack"></span>
+                            <span class="source-badge"><img src="/icons/notion-dark.svg" class="theme-icon-dark"
+                                    alt="Notion"><img src="/icons/notion-light.svg" class="theme-icon-light"
+                                    alt="Notion"></span>
+                        </div>
                     </div>
-                    <h1>Ask <span class="accent-word">anything</span> about your company</h1>
-                    <p>Grasp searches across Confluence, Jira, SharePoint, Slack, and Notion to find the answer.</p>
-
-
 
                     <div class="suggestion-chips" id="defaultChips">
                         <div class="suggestion-chip stagger-1" onclick="askQuestion(this.textContent)">What's the
@@ -577,7 +598,7 @@
 
     <div id="toastContainer"></div>
     <script src="/static/toast.js?v=20260724-7"></script>
-    <script src="/static/app.js?v=20260724-7"></script>
+    <script src="/static/app.js?v=20260808-1"></script>
 </body>
 
 </html>

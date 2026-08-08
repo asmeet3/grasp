@@ -21,14 +21,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Anthropic
-    anthropic_api_key: str = Field(..., description="Anthropic API key")
-    agent_model: str = Field("claude-sonnet-4-6", description="Model for agentic reasoning")
+    # LLM provider (currently DeepSeek — revert to Anthropic when key is available)
+    # The field is named anthropic_api_key to avoid renaming all call sites;
+    # it now holds the DEEPSEEK_API_KEY value during the temporary swap.
+    anthropic_api_key: str = Field("", description="LLM API key (DeepSeek while Anthropic key is unavailable)")
+    agent_model: str = Field("deepseek-chat", description="Model for agentic reasoning")
     classifier_model: str = Field(
-        "claude-haiku-4-5-20251001", description="Model for content classification"
+        "deepseek-chat", description="Model for content classification"
     )
     query_shortener_model: str = Field(
-        "claude-haiku-4-5-20251001",
+        "deepseek-chat",
         description="Model for query shortening",
     )
     query_shortener_system_prompt: str = Field(

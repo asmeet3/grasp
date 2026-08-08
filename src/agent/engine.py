@@ -16,7 +16,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-from anthropic import AsyncAnthropic
+from ..deepseek_compat import AsyncDeepSeek as AsyncAnthropic  # TODO: restore anthropic when key is back
 
 from ..core.security import AuthContext
 from ..observability import MetricRecorder
@@ -68,7 +68,7 @@ class QueryEngine:
         context_router=None,
         metrics: MetricRecorder | None = None,
     ):
-        self.client = AsyncAnthropic(api_key=anthropic_api_key)
+        self.client = AsyncAnthropic(api_key=anthropic_api_key)  # routes to DeepSeek via shim
         self.model = model
         self.tool_executor = tool_executor
         self.context_router = context_router

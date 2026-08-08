@@ -20,7 +20,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from anthropic import AsyncAnthropic
+from ..deepseek_compat import AsyncDeepSeek as AsyncAnthropic  # TODO: restore anthropic when key is back
 from git import InvalidGitRepositoryError, Repo
 
 from ..connectors.base import Document, sanitize_filename
