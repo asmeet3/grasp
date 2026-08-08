@@ -1487,7 +1487,6 @@ body::before {
 .modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-top: 2px solid var(--accent-primary);
   border-radius: var(--radius-xl);
   width: 90%;
   max-width: 700px;
@@ -1856,7 +1855,6 @@ body::before {
 .auth-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-top: 2px solid var(--accent-primary);
   border-radius: var(--radius-xl);
   padding: 40px 36px;
   width: 400px;
