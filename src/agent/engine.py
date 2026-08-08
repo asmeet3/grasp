@@ -16,9 +16,10 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-from ..deepseek_compat import AsyncDeepSeek as AsyncAnthropic  # TODO: restore anthropic when key is back
-
 from ..core.security import AuthContext
+from ..deepseek_compat import (
+    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
+)
 from ..observability import MetricRecorder
 from .tools import ToolExecutor
 

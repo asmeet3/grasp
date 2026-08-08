@@ -20,11 +20,13 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..deepseek_compat import AsyncDeepSeek as AsyncAnthropic  # TODO: restore anthropic when key is back
 from git import InvalidGitRepositoryError, Repo
 
 from ..connectors.base import Document, sanitize_filename
 from ..core.changes import require_current_base
+from ..deepseek_compat import (
+    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
+)
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 
-from ..deepseek_compat import AsyncDeepSeek as AsyncAnthropic  # TODO: restore anthropic when key is back
+from ..deepseek_compat import (
+    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
+)
 
 logger = logging.getLogger(__name__)
 
