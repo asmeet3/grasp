@@ -84,9 +84,7 @@ def _to_openai_tools(anthropic_tools: list[dict]) -> list[dict]:
     return oai_tools
 
 
-def _to_openai_messages(
-    messages: list[dict], system: str | None
-) -> list[dict]:
+def _to_openai_messages(messages: list[dict], system: str | None) -> list[dict]:
     """Convert Anthropic-style messages + system prompt to flat OpenAI messages list.
 
     Anthropic quirks handled:
@@ -122,12 +120,26 @@ def _to_openai_messages(
             for block in content:
                 btype = block.get("type") if isinstance(block, dict) else getattr(block, "type", "")
                 if btype == "text":
-                    txt = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+                    txt = (
+                        block.get("text", "")
+                        if isinstance(block, dict)
+                        else getattr(block, "text", "")
+                    )
                     text_parts.append(txt)
                 elif btype == "tool_use":
-                    bid = block.get("id", "") if isinstance(block, dict) else getattr(block, "id", "")
-                    bname = block.get("name", "") if isinstance(block, dict) else getattr(block, "name", "")
-                    binput = block.get("input", {}) if isinstance(block, dict) else getattr(block, "input", {})
+                    bid = (
+                        block.get("id", "") if isinstance(block, dict) else getattr(block, "id", "")
+                    )
+                    bname = (
+                        block.get("name", "")
+                        if isinstance(block, dict)
+                        else getattr(block, "name", "")
+                    )
+                    binput = (
+                        block.get("input", {})
+                        if isinstance(block, dict)
+                        else getattr(block, "input", {})
+                    )
                     tool_calls.append(
                         {
                             "id": bid,
@@ -159,11 +171,23 @@ def _to_openai_messages(
             for block in content:
                 btype = block.get("type") if isinstance(block, dict) else getattr(block, "type", "")
                 if btype == "tool_result":
-                    tid = block.get("tool_use_id", "") if isinstance(block, dict) else getattr(block, "tool_use_id", "")
-                    bcontent = block.get("content", "") if isinstance(block, dict) else getattr(block, "content", "")
+                    tid = (
+                        block.get("tool_use_id", "")
+                        if isinstance(block, dict)
+                        else getattr(block, "tool_use_id", "")
+                    )
+                    bcontent = (
+                        block.get("content", "")
+                        if isinstance(block, dict)
+                        else getattr(block, "content", "")
+                    )
                     tool_results.append({"role": "tool", "tool_call_id": tid, "content": bcontent})
                 else:
-                    txt = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
+                    txt = (
+                        block.get("text", "")
+                        if isinstance(block, dict)
+                        else getattr(block, "text", "")
+                    )
                     text_parts.append(txt)
 
             if tool_results:

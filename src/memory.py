@@ -335,9 +335,7 @@ class StructuredMemoryService:
             deleted_relationships = del_rels.rowcount
 
             del_ents = await conn.execute(
-                delete(entities_table).where(
-                    entities_table.c.organization_id == org
-                )
+                delete(entities_table).where(entities_table.c.organization_id == org)
             )
             deleted_entities = del_ents.rowcount
 
@@ -353,9 +351,7 @@ class StructuredMemoryService:
         md_files: list[Path] = []
         if knowledge_dir.exists():
             md_files = [
-                f
-                for f in knowledge_dir.rglob("*.md")
-                if f.name != "README.md" and f.is_file()
+                f for f in knowledge_dir.rglob("*.md") if f.name != "README.md" and f.is_file()
             ]
 
         docs_processed = 0
@@ -364,9 +360,7 @@ class StructuredMemoryService:
 
         for md_path in md_files:
             try:
-                content = await asyncio.to_thread(
-                    md_path.read_text, encoding="utf-8"
-                )
+                content = await asyncio.to_thread(md_path.read_text, encoding="utf-8")
             except Exception as exc:
                 logger.warning("Rebuild: cannot read %s: %s", md_path, exc)
                 continue
@@ -419,9 +413,7 @@ class StructuredMemoryService:
             if self.policy.can_access_principals(context, row["acl_principals"])
         ]
 
-    async def get_entity(
-        self, context: AuthContext, entity_id: str
-    ) -> dict[str, Any] | None:
+    async def get_entity(self, context: AuthContext, entity_id: str) -> dict[str, Any] | None:
         stmt = select(entities_table).where(entities_table.c.id == entity_id)
         async with self.engine.begin() as conn:
             row = (await conn.execute(stmt)).mappings().first()
@@ -744,21 +736,24 @@ class StructuredMemoryService:
         }
         async with self.engine.begin() as conn:
             row = (
-                await conn.execute(
-                    select(work_items_table).where(
-                        work_items_table.c.id == item_id,
-                        work_items_table.c.organization_id == context.organization_id,
+                (
+                    await conn.execute(
+                        select(work_items_table).where(
+                            work_items_table.c.id == item_id,
+                            work_items_table.c.organization_id == context.organization_id,
+                        )
                     )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not row:
                 raise ValueError("Work item not found")
             current = row["status"]
             allowed = valid_transitions.get(current, set())
             if new_status not in allowed:
                 raise ValueError(
-                    f"Cannot transition from '{current}' to '{new_status}'. "
-                    f"Allowed: {allowed}"
+                    f"Cannot transition from '{current}' to '{new_status}'. Allowed: {allowed}"
                 )
             await conn.execute(
                 update(work_items_table)

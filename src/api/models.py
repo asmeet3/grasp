@@ -281,9 +281,7 @@ class GraphResponse(BaseModel):
 
 
 class EntityReviewRequest(BaseModel):
-    action: str = Field(
-        ..., description="Review action: 'confirm', 'retire', or 'merge'"
-    )
+    action: str = Field(..., description="Review action: 'confirm', 'retire', or 'merge'")
     merge_target_id: str | None = Field(
         None, description="Entity ID to merge into (required when action is 'merge')"
     )
@@ -306,9 +304,7 @@ class WorkItemListResponse(BaseModel):
 
 
 class WorkItemStatusRequest(BaseModel):
-    status: str = Field(
-        ..., description="New status: 'accepted', 'completed', or 'dismissed'"
-    )
+    status: str = Field(..., description="New status: 'accepted', 'completed', or 'dismissed'")
 
 
 class MemoryStatsResponse(BaseModel):

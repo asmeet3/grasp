@@ -17,9 +17,7 @@ from src.core.security import (
 from src.memory import ENTITY_TYPES, StructuredMemoryService
 
 
-def _context(
-    role: str = "administrator", org: str = "acme"
-) -> AuthContext:
+def _context(role: str = "administrator", org: str = "acme") -> AuthContext:
     role_enum = SystemRole(role)
     return AuthContext(
         user_id="user-1",
@@ -35,7 +33,10 @@ def _context(
 
 def test_entity_types_are_complete():
     expected = {
-        "person", "team", "project", "product",
+        "person",
+        "team",
+        "project",
+        "product",
     }
     assert ENTITY_TYPES == expected
 
@@ -251,9 +252,7 @@ async def test_extraction_chunks_long_documents():
     async def fake_create(**kwargs):
         content = kwargs["messages"][0]["content"]
         mock_response = MagicMock()
-        mock_response.content = [
-            MagicMock(text=json.dumps(build_extraction(content)))
-        ]
+        mock_response.content = [MagicMock(text=json.dumps(build_extraction(content)))]
         return mock_response
 
     mock_client = AsyncMock()
@@ -275,9 +274,11 @@ async def test_extraction_chunks_long_documents():
     svc.add_relationship = AsyncMock(return_value=str(uuid.uuid4()))
 
     # Alice appears at the start; Zoe only near the end, past 8k chars.
-    text = "Alice Chen joined the project.\n\n" + (
-        "filler content\n" * 600
-    ) + "Zoe Winters owns delivery."
+    text = (
+        "Alice Chen joined the project.\n\n"
+        + ("filler content\n" * 600)
+        + "Zoe Winters owns delivery."
+    )
     assert len(text) > 8_000
 
     with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
@@ -356,9 +357,7 @@ async def test_work_item_status_transition_validation():
 
     # proposed -> completed should be rejected
     with pytest.raises(ValueError, match="Cannot transition"):
-        await svc.update_work_item_status(
-            _context(), "item-1", "completed"
-        )
+        await svc.update_work_item_status(_context(), "item-1", "completed")
 
 
 # ── Review actions ───────────────────────────────────────────
@@ -370,12 +369,14 @@ async def test_review_entity_unknown_action_raises():
     svc = StructuredMemoryService(engine=MagicMock(), policy=PolicyEngine())
 
     # Mock get_entity to return a valid entity
-    svc.get_entity = AsyncMock(return_value={
-        "id": "ent-1",
-        "entity_type": "person",
-        "canonical_name": "Test",
-        "acl_principals": ["organization:acme"],
-    })
+    svc.get_entity = AsyncMock(
+        return_value={
+            "id": "ent-1",
+            "entity_type": "person",
+            "canonical_name": "Test",
+            "acl_principals": ["organization:acme"],
+        }
+    )
 
     with pytest.raises(ValueError, match="Unknown review action"):
         await svc.review_entity(_context(), "ent-1", "invalid_action")
@@ -398,12 +399,14 @@ async def test_review_entity_not_found_raises():
 async def test_merge_requires_target_id():
     """Merge action must specify merge_target_id."""
     svc = StructuredMemoryService(engine=MagicMock(), policy=PolicyEngine())
-    svc.get_entity = AsyncMock(return_value={
-        "id": "ent-1",
-        "entity_type": "person",
-        "canonical_name": "Test",
-        "acl_principals": ["organization:acme"],
-    })
+    svc.get_entity = AsyncMock(
+        return_value={
+            "id": "ent-1",
+            "entity_type": "person",
+            "canonical_name": "Test",
+            "acl_principals": ["organization:acme"],
+        }
+    )
 
     with pytest.raises(ValueError, match="merge_target_id is required"):
         await svc.review_entity(_context(), "ent-1", "merge")
@@ -455,16 +458,18 @@ async def test_search_memory_tool_returns_results():
     from src.agent.tools import ToolExecutor
 
     mock_memory = AsyncMock()
-    mock_memory.search_entities = AsyncMock(return_value=[
-        {
-            "id": "ent-1",
-            "entity_type": "person",
-            "canonical_name": "Alice Chen",
-            "confidence": "high",
-            "aliases": ["Alice"],
-            "attributes": {"role": "Tech Lead"},
-        }
-    ])
+    mock_memory.search_entities = AsyncMock(
+        return_value=[
+            {
+                "id": "ent-1",
+                "entity_type": "person",
+                "canonical_name": "Alice Chen",
+                "confidence": "high",
+                "aliases": ["Alice"],
+                "attributes": {"role": "Tech Lead"},
+            }
+        ]
+    )
     mock_memory.find_relationships = AsyncMock(return_value=[])
 
     executor = ToolExecutor(

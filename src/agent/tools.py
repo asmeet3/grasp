@@ -432,16 +432,12 @@ class ToolExecutor:
                 lines.append(f"   Attributes: {attr_str}")
 
             # Fetch relationships for this entity
-            rels = await self.memory_service.find_relationships(
-                auth_context, entity["id"]
-            )
+            rels = await self.memory_service.find_relationships(auth_context, entity["id"])
             if rels:
                 rel_lines = []
                 for rel in rels[:5]:  # Cap at 5 per entity
                     direction = "→" if rel["source_entity_id"] == entity["id"] else "←"
-                    rel_lines.append(
-                        f"{direction} {rel['relationship_type']}"
-                    )
+                    rel_lines.append(f"{direction} {rel['relationship_type']}")
                 lines.append(f"   Relationships: {'; '.join(rel_lines)}")
 
         return "\n".join(lines)

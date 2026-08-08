@@ -775,9 +775,7 @@ def create_app(
             try:
                 return datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError:
-                raise HTTPException(
-                    status_code=422, detail=f"Invalid datetime: {value}"
-                ) from None
+                raise HTTPException(status_code=422, detail=f"Invalid datetime: {value}") from None
 
         limit = max(1, min(int(limit), 200))
         offset = max(0, int(offset))
@@ -1305,23 +1303,23 @@ def create_app(
         rels = await svc.find_relationships(context, entity_id)
         rel_responses = []
         for r in rels:
-            rel_responses.append(RelationshipResponse(
-                id=r["id"],
-                source_entity_id=r["source_entity_id"],
-                relationship_type=r["relationship_type"],
-                target_entity_id=r["target_entity_id"],
-                evidence=r.get("evidence", []),
-                confidence=r.get("confidence", "medium"),
-            ))
+            rel_responses.append(
+                RelationshipResponse(
+                    id=r["id"],
+                    source_entity_id=r["source_entity_id"],
+                    relationship_type=r["relationship_type"],
+                    target_entity_id=r["target_entity_id"],
+                    evidence=r.get("evidence", []),
+                    confidence=r.get("confidence", "medium"),
+                )
+            )
         return EntityDetailResponse(
             entity=EntityResponse(**entity),
             relationships=rel_responses,
         )
 
     @app.post("/api/memory/entities/{entity_id}/review")
-    async def review_memory_entity(
-        entity_id: str, request: EntityReviewRequest, req: Request
-    ):
+    async def review_memory_entity(entity_id: str, request: EntityReviewRequest, req: Request):
         """Confirm, retire, or merge an entity."""
         context = await require_context(req, Permission.REVIEW)
         svc = require_memory_service()
@@ -1337,15 +1335,11 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/memory/work-items", response_model=WorkItemListResponse)
-    async def list_memory_work_items(
-        req: Request, status: str = "", limit: int = 50
-    ):
+    async def list_memory_work_items(req: Request, status: str = "", limit: int = 50):
         """List work items from structured memory."""
         context = await require_context(req, Permission.QUERY)
         svc = require_memory_service()
-        items = await svc.list_work_items(
-            context, status=status or None, limit=limit
-        )
+        items = await svc.list_work_items(context, status=status or None, limit=limit)
         serialized = []
         for item in items:
             i_copy = dict(item)
@@ -1357,16 +1351,12 @@ def create_app(
         return WorkItemListResponse(work_items=serialized, count=len(serialized))
 
     @app.put("/api/memory/work-items/{item_id}/status")
-    async def update_memory_work_item(
-        item_id: str, request: WorkItemStatusRequest, req: Request
-    ):
+    async def update_memory_work_item(item_id: str, request: WorkItemStatusRequest, req: Request):
         """Transition a work item's status."""
         context = await require_context(req, Permission.REVIEW)
         svc = require_memory_service()
         try:
-            return await svc.update_work_item_status(
-                context, item_id, request.status
-            )
+            return await svc.update_work_item_status(context, item_id, request.status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1469,7 +1459,9 @@ def create_app(
         html_path = static_dir / "admin.html"
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
-        return HTMLResponse(content="<h1>Grasp Observability</h1><p>Observability page not found.</p>")
+        return HTMLResponse(
+            content="<h1>Grasp Observability</h1><p>Observability page not found.</p>"
+        )
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page():

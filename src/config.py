@@ -24,11 +24,11 @@ class Settings(BaseSettings):
     # LLM provider (currently DeepSeek — revert to Anthropic when key is available)
     # The field is named anthropic_api_key to avoid renaming all call sites;
     # it now holds the DEEPSEEK_API_KEY value during the temporary swap.
-    anthropic_api_key: str = Field("", description="LLM API key (DeepSeek while Anthropic key is unavailable)")
-    agent_model: str = Field("deepseek-chat", description="Model for agentic reasoning")
-    classifier_model: str = Field(
-        "deepseek-chat", description="Model for content classification"
+    anthropic_api_key: str = Field(
+        "", description="LLM API key (DeepSeek while Anthropic key is unavailable)"
     )
+    agent_model: str = Field("deepseek-chat", description="Model for agentic reasoning")
+    classifier_model: str = Field("deepseek-chat", description="Model for content classification")
     query_shortener_model: str = Field(
         "deepseek-chat",
         description="Model for query shortening",
@@ -143,8 +143,7 @@ Return only a JSON array of strings, with no markdown or explanation.""",
         if not self.auth_required or not self.revisioned_knowledge:
             if self.agents_enabled or self.self_improvement_enabled:
                 raise ValueError(
-                    "Agents and self-improvement require authentication and "
-                    "revisioned knowledge"
+                    "Agents and self-improvement require authentication and revisioned knowledge"
                 )
         return self
 

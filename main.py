@@ -289,9 +289,7 @@ def main():
                 organization_id=payload.get("organization_id", "default"),
                 system_role=SystemRole.ADMINISTRATOR,
                 permissions=ROLE_PERMISSIONS[SystemRole.ADMINISTRATOR],
-                principals=frozenset(
-                    {f"organization:{payload.get('organization_id', 'default')}"}
-                ),
+                principals=frozenset({f"organization:{payload.get('organization_id', 'default')}"}),
             )
             cs_id = payload.get("change_set_id")
             if not cs_id:

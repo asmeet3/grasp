@@ -74,24 +74,26 @@ class PostgresAuditStore:
         async with self.engine.connect() as conn:
             total = (
                 await conn.scalar(
-                    select(func.count())
-                    .select_from(audit_events_table)
-                    .where(*conditions)
+                    select(func.count()).select_from(audit_events_table).where(*conditions)
                 )
                 or 0
             )
             rows = (
-                await conn.execute(
-                    select(audit_events_table)
-                    .where(*conditions)
-                    .order_by(
-                        audit_events_table.c.created_at.desc(),
-                        audit_events_table.c.id.desc(),
+                (
+                    await conn.execute(
+                        select(audit_events_table)
+                        .where(*conditions)
+                        .order_by(
+                            audit_events_table.c.created_at.desc(),
+                            audit_events_table.c.id.desc(),
+                        )
+                        .limit(limit)
+                        .offset(offset)
                     )
-                    .limit(limit)
-                    .offset(offset)
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows], int(total)
 
     async def summary(
@@ -109,9 +111,7 @@ class PostgresAuditStore:
         async with self.engine.connect() as conn:
             total = (
                 await conn.scalar(
-                    select(func.count())
-                    .select_from(audit_events_table)
-                    .where(*conditions)
+                    select(func.count()).select_from(audit_events_table).where(*conditions)
                 )
                 or 0
             )
