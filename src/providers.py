@@ -14,7 +14,6 @@ class ProviderCapability(str, enum.Enum):
     BROWSE = "browse"
     READ = "read"
     PROPOSE_WRITE = "propose_write"
-    EXECUTE_ACTION = "execute_action"
     ACL_DISCOVERY = "acl_discovery"
     INCREMENTAL_SYNC = "incremental_sync"
 

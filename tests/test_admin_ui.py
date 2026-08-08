@@ -85,7 +85,7 @@ def test_admin_sidebar_buttons_match_user_actions_without_sharing_classes() -> N
     javascript = (ROOT / "src" / "static" / "admin.js").read_text(encoding="utf-8")
     stylesheet = (ROOT / "src" / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert html.count('class="admin-sidebar-button') == 5
+    assert html.count('class="admin-sidebar-button') == 6
     assert "admin-nav-item" not in html
     assert "document.querySelectorAll('.admin-sidebar-button')" in javascript
     assert ".admin-nav-item" not in stylesheet

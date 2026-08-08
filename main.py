@@ -435,6 +435,7 @@ def main():
         upload_rate_limit=settings.upload_rate_limit_per_minute,
         job_queue=job_queue,
         metrics=metrics,
+        audit=audit_store,
         agent_service=agent_service,
         agent_scheduler=agent_scheduler,
         memory_service=memory_service,

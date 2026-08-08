@@ -326,42 +326,6 @@ work_items_table = Table(
 )
 
 
-skills_table = Table(
-    "skills",
-    metadata,
-    Column("id", String(36), primary_key=True),
-    Column("organization_id", String(36), ForeignKey("organizations.id"), nullable=False),
-    Column("name", Text, nullable=False),
-    Column("version", Text, nullable=False),
-    Column("manifest", JSONB, nullable=False),
-    Column("commit_sha", String(64), nullable=False),
-    Column("active", Boolean, nullable=False, server_default="false"),
-    UniqueConstraint("organization_id", "name", "version", name="uq_skill_version"),
-)
-
-
-actions_table = Table(
-    "actions",
-    metadata,
-    Column("id", String(36), primary_key=True),
-    Column("organization_id", String(36), ForeignKey("organizations.id"), nullable=False),
-    Column(
-        "creator_user_id", String(12), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    ),
-    Column("action_type", String(80), nullable=False),
-    Column("state", String(20), nullable=False, server_default="planned"),
-    Column("input", JSONB, nullable=False),
-    Column("preview", JSONB, nullable=False, server_default="{}"),
-    Column("result", JSONB, nullable=False, server_default="{}"),
-    Column("idempotency_key", Text, nullable=False, unique=True),
-    Column("approval_required", Boolean, nullable=False, server_default="true"),
-    Column("approved_by", String(12), ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-    Column("verified_at", DateTime(timezone=True), nullable=True),
-    Column("error", Text, nullable=False, server_default=""),
-    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-)
-
-
 agent_definitions_table = Table(
     "agent_definitions",
     metadata,

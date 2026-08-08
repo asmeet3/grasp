@@ -10,7 +10,7 @@ Make authorization server-enforced, default-deny, organization-scoped, recoverab
 | --- | --- |
 | `member` | Query and contribute |
 | `knowledge_editor` | Member permissions plus knowledge review |
-| `operator` | Editor permissions plus audit visibility, agents, and approved actions |
+| `operator` | Editor permissions plus audit visibility and agents |
 | `administrator` | All permissions, including `manage_users` |
 
 Organization job titles such as Associate, Manager, and Partner remain separate from system roles and do not grant security permissions.

@@ -21,6 +21,9 @@ let allAgentsData = [];
 let allAgentRuns = [];
 let agentOwners = [];
 let agentControlState = { enabled: false, emergency_stopped: false, reason: '' };
+let auditEventsPage = 0;
+let auditEventsTotal = 0;
+let auditEventsLimit = 25;
 
 // Theme
 
@@ -267,6 +270,8 @@ function showAdminDashboard(isBootstrap = false) {
     document.getElementById('navHome').style.display = isBootstrap ? 'none' : '';
     document.getElementById('navContributions').style.display = isBootstrap ? 'none' : '';
     document.getElementById('navAgents').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navAudit').style.display = isBootstrap ? 'none' : '';
+    document.getElementById('navObservability').style.display = isBootstrap ? 'none' : '';
     document.getElementById('syncBtn').style.display = isBootstrap ? 'none' : '';
 
     if (isBootstrap) {
@@ -278,8 +283,10 @@ function showAdminDashboard(isBootstrap = false) {
     checkPendingChanges();
     checkContributionCount();
 
-    // Default to Home screen
-    showAdminScreen('Home');
+    // Default to Home screen, or the Audit/Observability page when reached directly.
+    if (location.pathname === '/admin/observability') showAdminScreen('Observability');
+    else if (location.pathname === '/admin/audit' || location.pathname === '/admin/operations') showAdminScreen('Audit');
+    else showAdminScreen('Home');
 
     if (!adminIntervalsStarted) {
         adminIntervalsStarted = true;
@@ -300,8 +307,11 @@ function configureAdminNavigation(user) {
     const role = user?.system_role || 'member';
     const canManageUsers = role === 'administrator';
     const canManageAgents = role === 'operator' || role === 'administrator';
+    const canViewAudit = role === 'operator' || role === 'administrator';
     document.getElementById('navUsers').style.display = canManageUsers ? '' : 'none';
     document.getElementById('navAgents').style.display = canManageAgents ? '' : 'none';
+    document.getElementById('navAudit').style.display = canViewAudit ? '' : 'none';
+    document.getElementById('navObservability').style.display = canViewAudit ? '' : 'none';
     if (canManageUsers) checkUserPendingCount();
 
     // Show Memory tab if feature is enabled (checked async)
@@ -323,6 +333,15 @@ function showAdminScreen(screenName) {
     document.querySelectorAll('.admin-sidebar-button').forEach(el => el.classList.remove('active'));
 
     const titleEl = document.getElementById('adminScreenTitle');
+
+    // Keep the URL aligned with the Audit / Observability endpoints.
+    if (screenName === 'Audit') {
+        history.replaceState(null, '', '/admin/audit');
+    } else if (screenName === 'Observability') {
+        history.replaceState(null, '', '/admin/observability');
+    } else if (location.pathname === '/admin/operations' || location.pathname === '/admin/audit' || location.pathname === '/admin/observability') {
+        history.replaceState(null, '', '/admin');
+    }
 
     if (screenName === 'Home') {
         document.getElementById('screenHome').style.display = 'block';
@@ -351,7 +370,677 @@ function showAdminScreen(screenName) {
         loadMemoryStats();
         loadEntities();
         loadWorkItems();
+    } else if (screenName === 'Audit') {
+        document.getElementById('screenAudit').style.display = 'block';
+        document.getElementById('navAudit').classList.add('active');
+        titleEl.textContent = 'Audit Log';
+        loadAuditSummary();
+        loadAuditEvents();
+    } else if (screenName === 'Observability') {
+        document.getElementById('screenObservability').style.display = 'block';
+        document.getElementById('navObservability').classList.add('active');
+        titleEl.textContent = 'Observability';
+        loadObservability();
     }
+}
+
+// Audit log querying
+
+function currentAuditFilters() {
+    const value = id => (document.getElementById(id)?.value || '').trim();
+    const start = document.getElementById('auditStart')?.value;
+    const end = document.getElementById('auditEnd')?.value;
+    return {
+        event_type: value('auditEventType') || null,
+        actor: value('auditActor') || null,
+        resource_type: value('auditResourceType') || null,
+        resource_id: value('auditResourceId') || null,
+        start: start ? `${start}T00:00:00` : null,
+        end: end ? `${end}T23:59:59` : null,
+    };
+}
+
+function resetAuditFilters() {
+    ['auditEventType', 'auditActor', 'auditResourceType', 'auditResourceId', 'auditStart', 'auditEnd'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    // Reset the custom date pickers back to their placeholder state.
+    Object.keys(_auditDatePickers).forEach(key => {
+        const cfg = _auditDatePickers[key];
+        if (!cfg) return;
+        cfg.state.selected = null;
+        const display = auditDateEl(key, 'display');
+        if (display) {
+            display.textContent = cfg.placeholder;
+            display.classList.add('date-picker-placeholder');
+        }
+    });
+    loadAuditEvents(true);
+}
+
+// --- Audit date pickers (same custom calendar as the register Date of Birth picker) ---
+
+const AUDIT_DATE_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const _auditDatePickers = {
+    start: {
+        hidden: 'auditStart',
+        display: 'auditStartDisplay',
+        popover: 'auditStartPopover',
+        monthSelect: 'auditStartMonthSelect',
+        yearSelect: 'auditStartYearSelect',
+        days: 'auditStartCalendarDays',
+        wrapper: 'auditStartPicker',
+        placeholder: 'From date',
+        state: { viewMonth: 0, viewYear: 2000, selected: null },
+    },
+    end: {
+        hidden: 'auditEnd',
+        display: 'auditEndDisplay',
+        popover: 'auditEndPopover',
+        monthSelect: 'auditEndMonthSelect',
+        yearSelect: 'auditEndYearSelect',
+        days: 'auditEndCalendarDays',
+        wrapper: 'auditEndPicker',
+        placeholder: 'To date',
+        state: { viewMonth: 0, viewYear: 2000, selected: null },
+    },
+};
+
+function auditDateEl(key, field) {
+    const cfg = _auditDatePickers[key];
+    return cfg ? document.getElementById(cfg[field]) : null;
+}
+
+function initAuditDatePicker(key) {
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    const now = new Date();
+    const hidden = auditDateEl(key, 'hidden');
+    cfg.state.selected = null;
+    if (hidden && hidden.value) {
+        const m = hidden.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) {
+            cfg.state.selected = { day: parseInt(m[3], 10), month: parseInt(m[2], 10), year: parseInt(m[1], 10) };
+            cfg.state.viewMonth = parseInt(m[2], 10) - 1;
+            cfg.state.viewYear = parseInt(m[1], 10);
+        }
+    }
+    if (!cfg.state.selected) {
+        cfg.state.viewMonth = now.getMonth();
+        cfg.state.viewYear = now.getFullYear();
+    }
+    populateAuditDateSelects(key);
+    renderAuditDateCalendar(key);
+}
+
+function populateAuditDateSelects(key) {
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    const monthSelect = auditDateEl(key, 'monthSelect');
+    const yearSelect = auditDateEl(key, 'yearSelect');
+    if (!monthSelect || !yearSelect) return;
+
+    monthSelect.innerHTML = AUDIT_DATE_MONTHS.map((m, i) =>
+        `<option value="${i}" ${i === cfg.state.viewMonth ? 'selected' : ''}>${m}</option>`
+    ).join('');
+
+    const currentYear = new Date().getFullYear();
+    let yearOpts = '';
+    for (let y = currentYear; y >= 1920; y--) {
+        yearOpts += `<option value="${y}" ${y === cfg.state.viewYear ? 'selected' : ''}>${y}</option>`;
+    }
+    yearSelect.innerHTML = yearOpts;
+}
+
+function renderAuditDateCalendar(key) {
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    const container = auditDateEl(key, 'days');
+    if (!container) return;
+
+    const today = new Date();
+    const firstDay = new Date(cfg.state.viewYear, cfg.state.viewMonth, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(cfg.state.viewYear, cfg.state.viewMonth + 1, 0).getDate();
+
+    let html = '';
+    for (let i = 0; i < firstDay; i++) {
+        html += '<button type="button" class="date-picker-day date-picker-day-empty" disabled></button>';
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const isToday = d === today.getDate() && cfg.state.viewMonth === today.getMonth() && cfg.state.viewYear === today.getFullYear();
+        const sel = cfg.state.selected;
+        const isSelected = sel && d === sel.day && cfg.state.viewMonth === (sel.month - 1) && cfg.state.viewYear === sel.year;
+        const isFuture = new Date(cfg.state.viewYear, cfg.state.viewMonth, d) > today;
+
+        let cls = 'date-picker-day';
+        if (isToday) cls += ' date-picker-day-today';
+        if (isSelected) cls += ' date-picker-day-selected';
+        if (isFuture) cls += ' date-picker-day-disabled';
+
+        html += `<button type="button" class="${cls}" ${isFuture ? 'disabled' : ''}
+            onclick="selectAuditDate('${key}', ${d}, event)">${d}</button>`;
+    }
+
+    container.innerHTML = html;
+
+    const monthSelect = auditDateEl(key, 'monthSelect');
+    const yearSelect = auditDateEl(key, 'yearSelect');
+    if (monthSelect) monthSelect.value = cfg.state.viewMonth;
+    if (yearSelect) yearSelect.value = cfg.state.viewYear;
+}
+
+function selectAuditDate(key, day, event) {
+    if (event) event.preventDefault();
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+
+    cfg.state.selected = {
+        day,
+        month: cfg.state.viewMonth + 1,
+        year: cfg.state.viewYear,
+        iso: `${cfg.state.viewYear}-${String(cfg.state.viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    };
+
+    const hidden = auditDateEl(key, 'hidden');
+    if (hidden) hidden.value = cfg.state.selected.iso;
+
+    const display = auditDateEl(key, 'display');
+    if (display) {
+        display.textContent = `${String(day).padStart(2, '0')} / ${String(cfg.state.selected.month).padStart(2, '0')} / ${cfg.state.viewYear}`;
+        display.classList.remove('date-picker-placeholder');
+    }
+
+    closeAuditDatePicker(key);
+}
+
+function toggleAuditDatePicker(key, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    const popover = auditDateEl(key, 'popover');
+    if (!popover) return;
+
+    const isOpen = popover.classList.contains('date-picker-open');
+    Object.keys(_auditDatePickers).forEach(k => closeAuditDatePicker(k));
+    if (!isOpen) {
+        initAuditDatePicker(key);
+        popover.classList.add('date-picker-open');
+    }
+}
+
+function closeAuditDatePicker(key) {
+    const popover = auditDateEl(key, 'popover');
+    if (popover) popover.classList.remove('date-picker-open');
+}
+
+function auditDateNavMonth(key, delta, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    cfg.state.viewMonth += delta;
+    if (cfg.state.viewMonth < 0) { cfg.state.viewMonth = 11; cfg.state.viewYear--; }
+    if (cfg.state.viewMonth > 11) { cfg.state.viewMonth = 0; cfg.state.viewYear++; }
+    renderAuditDateCalendar(key);
+}
+
+function auditDateChangeMonth(key, event) {
+    if (event) event.stopPropagation();
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    cfg.state.viewMonth = parseInt(event.target.value, 10);
+    renderAuditDateCalendar(key);
+}
+
+function auditDateChangeYear(key, event) {
+    if (event) event.stopPropagation();
+    const cfg = _auditDatePickers[key];
+    if (!cfg) return;
+    cfg.state.viewYear = parseInt(event.target.value, 10);
+    renderAuditDateCalendar(key);
+}
+
+// Close audit date pickers when clicking outside them
+document.addEventListener('click', (e) => {
+    Object.keys(_auditDatePickers).forEach(key => {
+        const wrapper = auditDateEl(key, 'wrapper');
+        if (wrapper && !wrapper.contains(e.target)) closeAuditDatePicker(key);
+    });
+});
+
+function formatAuditTime(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? escapeHtml(String(value)) : escapeHtml(date.toLocaleString());
+}
+
+function formatMetric(value) {
+    if (typeof value !== 'number') return '—';
+    return value.toLocaleString(undefined, { maximumFractionDigits: Math.abs(value) >= 100 ? 1 : 3 });
+}
+
+// --- Cached audit summary data for rendering across multiple containers ---
+let _lastAuditSummary = null;
+
+async function loadAuditSummary() {
+    const statCards = document.getElementById('auditStatCards');
+    const activityChart = document.getElementById('auditActivityChart');
+    const typeBreakdown = document.getElementById('auditTypeBreakdown');
+    const loading = '<div class="admin-dashboard-loading-item" style="border:none;padding:0"><span class="admin-dashboard-loading-media"></span><span class="admin-dashboard-loading-copy"></span></div>';
+    if (statCards) statCards.innerHTML = `<div class="ops-stat-card">${loading}</div>`;
+    if (activityChart) activityChart.innerHTML = `<div class="audit-activity-chart">${loading}</div>`;
+    if (typeBreakdown) typeBreakdown.innerHTML = `<div class="audit-type-pills">${loading}</div>`;
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/audit-events/summary?days=30`, { headers: adminHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        _lastAuditSummary = data;
+        renderAuditStatCards(data);
+        renderAuditActivityChart(data);
+        renderAuditTypeBreakdown(data);
+    } catch (err) {
+        const errHtml = `<div class="data-table-empty">Failed to load audit summary: ${escapeHtml(err.message)}</div>`;
+        if (statCards) statCards.innerHTML = errHtml;
+        if (activityChart) activityChart.innerHTML = errHtml;
+        if (typeBreakdown) typeBreakdown.innerHTML = errHtml;
+    }
+}
+
+function renderAuditStatCards(data) {
+    const container = document.getElementById('auditStatCards');
+    if (!container) return;
+    const total = Number(data.total || 0);
+    const typeEntries = Object.entries(data.by_event_type || {});
+    const typeCount = typeEntries.length;
+    const topType = typeEntries.length ? typeEntries[0] : null;
+    const byDay = data.by_day || [];
+    const lastDay = byDay.length ? byDay[byDay.length - 1] : null;
+
+    container.innerHTML = `
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon blue">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Total events</span>
+                <span class="ops-stat-value">${total.toLocaleString()}</span>
+                <span class="ops-stat-sub">Last ${data.days ?? 30} days</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon emerald">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Event types</span>
+                <span class="ops-stat-value">${typeCount}</span>
+                <span class="ops-stat-sub">Unique categories</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon amber">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Most active</span>
+                <span class="ops-stat-value">${topType ? Number(topType[1]).toLocaleString() : '—'}</span>
+                <span class="ops-stat-sub">${topType ? escapeHtml(topType[0]) : 'No events'}</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon violet">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Latest activity</span>
+                <span class="ops-stat-value">${lastDay ? Number(lastDay.count).toLocaleString() : '0'}</span>
+                <span class="ops-stat-sub">${lastDay ? escapeHtml(lastDay.date) : 'No recent activity'}</span>
+            </div>
+        </div>`;
+}
+
+function renderAuditActivityChart(data) {
+    const container = document.getElementById('auditActivityChart');
+    if (!container) return;
+    const byDay = data.by_day || [];
+    if (!byDay.length) {
+        container.innerHTML = '<div class="ops-empty-state"><div class="ops-empty-icon">📊</div><div class="ops-empty-title">No activity data</div><div class="ops-empty-desc">Events will appear here once audit events are recorded.</div></div>';
+        return;
+    }
+    const maxCount = Math.max(...byDay.map(d => d.count), 1);
+    const bars = byDay.map(d => {
+        const height = Math.max(4, (d.count / maxCount) * 100);
+        return `<div class="audit-activity-bar" style="height:${height}%" data-tooltip="${escapeHtml(d.date)}: ${d.count} events"></div>`;
+    }).join('');
+    container.innerHTML = `<div class="audit-activity-chart">${bars}</div>`;
+}
+
+function renderAuditTypeBreakdown(data) {
+    const container = document.getElementById('auditTypeBreakdown');
+    if (!container) return;
+    const typeEntries = Object.entries(data.by_event_type || {});
+    if (!typeEntries.length) {
+        container.innerHTML = '<p style="color:var(--text-tertiary);font-size:12px">No event types recorded in this period.</p>';
+        return;
+    }
+    const pills = typeEntries.map(([name, count]) => {
+        return `<div class="audit-type-pill">
+            <span class="audit-type-pill-count">${Number(count).toLocaleString()}</span>
+            <span class="audit-type-pill-name">${escapeHtml(name)}</span>
+        </div>`;
+    }).join('');
+    container.innerHTML = `<div class="audit-type-pills">${pills}</div>`;
+}
+
+function getAuditBadgeClass(eventType) {
+    if (!eventType) return '';
+    const t = eventType.toLowerCase();
+    if (t.startsWith('auth') || t.includes('login') || t.includes('logout')) return 'auth';
+    if (t.startsWith('agent') || t.includes('agent')) return 'agent';
+    if (t.startsWith('user') || t.includes('user')) return 'user';
+    if (t.startsWith('sync') || t.includes('sync')) return 'sync';
+    if (t.startsWith('admin') || t.includes('admin')) return 'admin';
+    if (t.includes('memory') || t.includes('entity')) return 'memory';
+    if (t.includes('contrib')) return 'contrib';
+    return '';
+}
+
+function formatRelativeTime(dateStr) {
+    if (!dateStr) return '—';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return escapeHtml(String(dateStr));
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}d ago`;
+    return date.toLocaleDateString();
+}
+
+async function loadAuditEvents(resetPage = false) {
+    const container = document.getElementById('auditEventsCard');
+    if (!container) return;
+    if (resetPage) auditEventsPage = 0;
+    const params = new URLSearchParams({
+        limit: String(auditEventsLimit),
+        offset: String(auditEventsPage * auditEventsLimit),
+    });
+    for (const [key, value] of Object.entries(currentAuditFilters())) {
+        if (value) params.set(key, value);
+    }
+    container.innerHTML = '<div class="admin-dashboard-loading-item"><span class="admin-dashboard-loading-media"></span><span class="admin-dashboard-loading-copy"></span></div>';
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/audit-events?${params}`, { headers: adminHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        auditEventsTotal = data.total || 0;
+        renderAuditEvents(data.events || []);
+    } catch (err) {
+        container.innerHTML = `<div class="data-table-empty">Failed to load audit events: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+function renderAuditEvents(events) {
+    const container = document.getElementById('auditEventsCard');
+    if (!container) return;
+    if (!events.length) {
+        container.innerHTML = '<div class="ops-empty-state"><div class="ops-empty-icon">🔍</div><div class="ops-empty-title">No events found</div><div class="ops-empty-desc">No audit events match the current filters. Try adjusting your search criteria.</div></div>';
+        return;
+    }
+    const rows = events.map((ev, idx) => {
+        const details = ev.details && typeof ev.details === 'object'
+            ? JSON.stringify(ev.details, null, 2)
+            : String(ev.details || '');
+        const badgeClass = getAuditBadgeClass(ev.event_type);
+        const relTime = formatRelativeTime(ev.created_at);
+        const fullTime = ev.created_at ? new Date(ev.created_at).toLocaleString() : '';
+        return `<tr class="audit-detail-toggle" onclick="toggleAuditDetail(${idx})">
+            <td class="cell-primary" title="${escapeHtml(fullTime)}">${escapeHtml(relTime)}</td>
+            <td><span class="audit-event-badge ${badgeClass}">${escapeHtml(ev.event_type || '')}</span></td>
+            <td>${escapeHtml(ev.actor_user_id || 'system')}</td>
+            <td>${escapeHtml(ev.resource_type || '')}${ev.resource_id ? ` <span class="type-badge">${escapeHtml(String(ev.resource_id).slice(0, 16))}</span>` : ''}</td>
+            <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(details)}">
+                ${details.length > 2 ? '⋯' : '—'}
+            </td>
+        </tr>
+        <tr class="audit-detail-expand" id="auditDetail${idx}">
+            <td colspan="5">
+                <div class="audit-detail-json">${escapeHtml(details || 'No details')}</div>
+            </td>
+        </tr>`;
+    }).join('');
+    const totalPages = Math.max(1, Math.ceil(auditEventsTotal / auditEventsLimit));
+    container.innerHTML = `<table class="data-table">
+        <thead>
+            <tr><th>Time</th><th>Event type</th><th>Actor</th><th>Resource</th><th>Details</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>
+    <div class="data-table-pagination">
+        <div class="data-table-pagination-info">${auditEventsTotal.toLocaleString()} event(s) — page ${auditEventsPage + 1} of ${totalPages}</div>
+        <div class="data-table-pagination-controls">
+            <button class="data-table-pagination-btn" onclick="auditEventsPage--;loadAuditEvents()" ${auditEventsPage <= 0 ? 'disabled' : ''}>Previous</button>
+            <button class="data-table-pagination-btn" onclick="auditEventsPage++;loadAuditEvents()" ${auditEventsPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        </div>
+    </div>`;
+}
+
+function toggleAuditDetail(idx) {
+    const row = document.getElementById(`auditDetail${idx}`);
+    if (row) row.classList.toggle('open');
+}
+
+function exportAuditCSV() {
+    const events = document.querySelectorAll('#auditEventsCard .audit-detail-toggle');
+    if (!events.length) {
+        if (typeof showToast === 'function') showToast('No events to export', 'warning');
+        return;
+    }
+    let csv = 'Time,Event Type,Actor,Resource,Details\n';
+    events.forEach((row, idx) => {
+        const cells = row.querySelectorAll('td');
+        const detailRow = document.getElementById(`auditDetail${idx}`);
+        const detailJson = detailRow?.querySelector('.audit-detail-json')?.textContent || '';
+        const values = [
+            cells[0]?.getAttribute('title') || cells[0]?.textContent?.trim() || '',
+            cells[1]?.textContent?.trim() || '',
+            cells[2]?.textContent?.trim() || '',
+            cells[3]?.textContent?.trim() || '',
+            detailJson.replace(/"/g, '""'),
+        ];
+        csv += values.map(v => `"${v}"`).join(',') + '\n';
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (typeof showToast === 'function') showToast('Audit events exported', 'success');
+}
+
+// Observability
+
+let _lastObsData = null;
+
+async function loadObservability() {
+    const statCards = document.getElementById('obsStatCards');
+    const metricCards = document.getElementById('obsMetricCards');
+    const tableContainer = document.getElementById('obsTableContainer');
+    const loading = '<div class="admin-dashboard-loading-item" style="border:none;padding:0"><span class="admin-dashboard-loading-media"></span><span class="admin-dashboard-loading-copy"></span></div>';
+    if (statCards) statCards.innerHTML = `<div class="ops-stat-card">${loading}</div>`;
+    if (metricCards) metricCards.innerHTML = `<div class="obs-metric-card">${loading}</div>`;
+    if (tableContainer) tableContainer.innerHTML = loading;
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/observability`, { headers: adminHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        _lastObsData = data;
+        renderObsStatCards(data);
+        renderObsMetricCards(data);
+        renderObsTable(data);
+    } catch (err) {
+        const errHtml = `<div class="data-table-empty">Failed to load observability data: ${escapeHtml(err.message)}</div>`;
+        if (statCards) statCards.innerHTML = errHtml;
+        if (metricCards) metricCards.innerHTML = errHtml;
+        if (tableContainer) tableContainer.innerHTML = errHtml;
+    }
+}
+
+function getMetricHealth(m) {
+    // Simple heuristic: if p95 is more than 5x p50, it's a warning; 10x is bad
+    if (!m || m.count === 0) return 'good';
+    if (m.p50 > 0 && m.p95 / m.p50 > 10) return 'bad';
+    if (m.p50 > 0 && m.p95 / m.p50 > 5) return 'warn';
+    return 'good';
+}
+
+function renderObsStatCards(data) {
+    const container = document.getElementById('obsStatCards');
+    if (!container) return;
+    const metrics = data.metrics || {};
+    const names = Object.keys(metrics);
+    const metricCount = names.length;
+    const captured = data.captured_at ? formatRelativeTime(data.captured_at) : '—';
+    const capturedFull = data.captured_at ? new Date(data.captured_at).toLocaleString() : '';
+
+    // Compute aggregate p50 and find highest p95
+    let totalSamples = 0;
+    let p50Sum = 0;
+    let highestP95 = { name: '—', value: 0 };
+    for (const [name, m] of Object.entries(metrics)) {
+        totalSamples += (m.count || 0);
+        p50Sum += (m.p50 || 0);
+        if ((m.p95 || 0) > highestP95.value) {
+            highestP95 = { name, value: m.p95 };
+        }
+    }
+    const avgP50 = metricCount > 0 ? p50Sum / metricCount : 0;
+
+    container.innerHTML = `
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon cyan">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Tracked metrics</span>
+                <span class="ops-stat-value">${metricCount}</span>
+                <span class="ops-stat-sub">${totalSamples.toLocaleString()} total samples</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon violet">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Captured</span>
+                <span class="ops-stat-value">${escapeHtml(captured)}</span>
+                <span class="ops-stat-sub" title="${escapeHtml(capturedFull)}">${escapeHtml(capturedFull)}</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon emerald">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Avg median (p50)</span>
+                <span class="ops-stat-value">${formatMetric(avgP50)}</span>
+                <span class="ops-stat-sub">Across all metrics</span>
+            </div>
+        </div>
+        <div class="ops-stat-card">
+            <div class="ops-stat-icon rose">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="ops-stat-body">
+                <span class="ops-stat-label">Highest p95</span>
+                <span class="ops-stat-value">${formatMetric(highestP95.value)}</span>
+                <span class="ops-stat-sub">${escapeHtml(highestP95.name)}</span>
+            </div>
+        </div>`;
+}
+
+function renderObsMetricCards(data) {
+    const container = document.getElementById('obsMetricCards');
+    if (!container) return;
+    const metrics = data.metrics || {};
+    const names = Object.keys(metrics);
+    if (!names.length) {
+        container.innerHTML = '<div class="ops-empty-state"><div class="ops-empty-icon">📈</div><div class="ops-empty-title">No metrics recorded</div><div class="ops-empty-desc">Metrics appear after agent runs, queries, or scheduler activity.</div></div>';
+        return;
+    }
+    container.innerHTML = names.map(name => {
+        const m = metrics[name];
+        const health = getMetricHealth(m);
+        return `<div class="obs-metric-card health-${health}">
+            <div class="obs-metric-name">
+                <span class="obs-metric-health-dot ${health}"></span>
+                ${escapeHtml(name)}
+            </div>
+            <div class="obs-metric-grid">
+                <div class="obs-metric-cell">
+                    <span class="obs-metric-cell-label">Samples</span>
+                    <span class="obs-metric-cell-value">${Number(m.count || 0).toLocaleString()}</span>
+                </div>
+                <div class="obs-metric-cell">
+                    <span class="obs-metric-cell-label">Median</span>
+                    <span class="obs-metric-cell-value">${formatMetric(m.p50)}</span>
+                </div>
+                <div class="obs-metric-cell">
+                    <span class="obs-metric-cell-label">p95</span>
+                    <span class="obs-metric-cell-value">${formatMetric(m.p95)}</span>
+                </div>
+                <div class="obs-metric-cell">
+                    <span class="obs-metric-cell-label">Maximum</span>
+                    <span class="obs-metric-cell-value">${formatMetric(m.maximum)}</span>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderObsTable(data) {
+    const container = document.getElementById('obsTableContainer');
+    if (!container) return;
+    const metrics = data.metrics || {};
+    const names = Object.keys(metrics);
+    if (!names.length) {
+        container.innerHTML = '<div class="data-table-empty">No metrics to display in table form.</div>';
+        return;
+    }
+    const rows = names.map(name => {
+        const m = metrics[name];
+        const health = getMetricHealth(m);
+        return `<tr>
+            <td class="cell-primary"><span class="obs-metric-health-dot ${health}" style="display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(name)}</td>
+            <td>${Number(m.count || 0).toLocaleString()}</td>
+            <td>${formatMetric(m.p50)}</td>
+            <td>${formatMetric(m.p95)}</td>
+            <td>${formatMetric(m.maximum)}</td>
+        </tr>`;
+    }).join('');
+    const captured = data.captured_at ? formatAuditTime(data.captured_at) : '—';
+    container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 2px 10px;color:var(--text-tertiary);font-size:13px">
+        <span>Captured ${captured}</span>
+        <span>${names.length} metric(s)</span>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr><th>Metric</th><th>Samples</th><th>p50</th><th>p95</th><th>Maximum</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
 }
 
 async function getAdminBootstrapStatus() {

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
     <title>Grasp - Admin Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260808-1">
+    <link rel="stylesheet" href="/static/styles.css?v=20260808-7">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -176,6 +176,12 @@
                             <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Agents')"
                                 id="navAgents">Agents
                                 <span class="admin-nav-badge" id="navAgentsBadge" style="display:none">0</span>
+                            </button>
+                            <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Audit')"
+                                id="navAudit" style="display:none">Audit Log
+                            </button>
+                            <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Observability')"
+                                id="navObservability" style="display:none">Observability
                             </button>
                         </nav>
                     </div>
@@ -462,6 +468,243 @@
                             </div>
                             <div id="agentRunsTable" class="agent-runs-shell">
                                 <div class="agent-empty-state">No runs loaded.</div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div id="screenAudit" class="admin-screen admin-dashboard-page" style="display:none">
+                        <header class="admin-dashboard-page-header">
+                            <div class="admin-dashboard-page-heading">
+                                <span class="admin-dashboard-kicker">Security &amp; compliance</span>
+                                <h3>Audit log</h3>
+                                <p>Explore the append-only audit trail for every action across your organization.</p>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+                                <button type="button" class="admin-dashboard-primary-action"
+                                    onclick="loadAuditSummary();loadAuditEvents()">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"
+                                            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                            stroke-linejoin="round" />
+                                    </svg>
+                                    Refresh
+                                </button>
+                                <button type="button" class="admin-dashboard-primary-action"
+                                    onclick="exportAuditCSV()" style="background:transparent;color:var(--text-primary);border-color:var(--border)">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" width="15" height="15">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+                                            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                            stroke-linejoin="round" />
+                                    </svg>
+                                    Export
+                                </button>
+                            </div>
+                        </header>
+
+                        <!-- Summary stat cards -->
+                        <div id="auditStatCards" class="ops-stat-row" aria-live="polite">
+                            <div class="ops-stat-card">
+                                <div class="admin-dashboard-loading-item" style="border:none;padding:0">
+                                    <span class="admin-dashboard-loading-media"></span>
+                                    <span class="admin-dashboard-loading-copy"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Activity chart -->
+                        <section class="admin-dashboard-section" aria-labelledby="auditActivityTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="auditActivityTitle">Activity timeline</h4>
+                                    <p>Daily event volume over the past 30 days.</p>
+                                </div>
+                            </div>
+                            <div id="auditActivityChart" aria-live="polite">
+                                <div class="audit-activity-chart">
+                                    <div class="admin-dashboard-loading-item" style="border:none;flex:1">
+                                        <span class="admin-dashboard-loading-media"></span>
+                                        <span class="admin-dashboard-loading-copy"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Event type breakdown -->
+                        <section class="admin-dashboard-section" aria-labelledby="auditTypeBreakdownTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="auditTypeBreakdownTitle">Event type breakdown</h4>
+                                    <p>Distribution of event types in the audit trail.</p>
+                                </div>
+                            </div>
+                            <div id="auditTypeBreakdown" aria-live="polite">
+                                <div class="audit-type-pills">
+                                    <div class="admin-dashboard-loading-item" style="border:none">
+                                        <span class="admin-dashboard-loading-media"></span>
+                                        <span class="admin-dashboard-loading-copy"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Audit event log table -->
+                        <section class="admin-dashboard-section" aria-labelledby="auditQueryTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="auditQueryTitle">Event log</h4>
+                                    <p>Filter and search audit events. Click a row to expand details.</p>
+                                </div>
+                            </div>
+                            <div class="data-table-toolbar" style="flex-wrap:wrap;gap:8px">
+                                <input id="auditEventType" class="data-table-search"
+                                    placeholder="Event type (e.g. agent.run.completed)" style="flex:1;min-width:180px">
+                                <input id="auditActor" class="data-table-search" placeholder="Actor user ID"
+                                    style="flex:1;min-width:130px">
+                                <input id="auditResourceType" class="data-table-search" placeholder="Resource type"
+                                    style="flex:1;min-width:130px">
+                                <input id="auditResourceId" class="data-table-search" placeholder="Resource ID"
+                                    style="flex:1;min-width:130px">
+                                <input type="hidden" id="auditStart" value="">
+                                <div class="date-picker-wrapper" id="auditStartPicker"
+                                    style="flex:1;min-width:145px;max-width:210px">
+                                    <button type="button" class="date-picker-trigger" id="auditStartTrigger"
+                                        onclick="toggleAuditDatePicker('start', event)">
+                                        <span class="date-picker-placeholder" id="auditStartDisplay">From date</span>
+                                        <span class="date-picker-chevron">▾</span>
+                                    </button>
+                                    <div class="date-picker-popover" id="auditStartPopover">
+                                        <div class="date-picker-header">
+                                            <button type="button" class="date-picker-nav-btn"
+                                                onclick="auditDateNavMonth('start', -1, event)">‹</button>
+                                            <div class="date-picker-selectors">
+                                                <select class="date-picker-select" id="auditStartMonthSelect"
+                                                    onchange="auditDateChangeMonth('start', event)"></select>
+                                                <select class="date-picker-select" id="auditStartYearSelect"
+                                                    onchange="auditDateChangeYear('start', event)"></select>
+                                            </div>
+                                            <button type="button" class="date-picker-nav-btn"
+                                                onclick="auditDateNavMonth('start', 1, event)">›</button>
+                                        </div>
+                                        <div class="date-picker-grid">
+                                            <div class="date-picker-weekdays">
+                                                <div class="date-picker-weekday">Su</div>
+                                                <div class="date-picker-weekday">Mo</div>
+                                                <div class="date-picker-weekday">Tu</div>
+                                                <div class="date-picker-weekday">We</div>
+                                                <div class="date-picker-weekday">Th</div>
+                                                <div class="date-picker-weekday">Fr</div>
+                                                <div class="date-picker-weekday">Sa</div>
+                                            </div>
+                                            <div class="date-picker-days" id="auditStartCalendarDays"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="auditEnd" value="">
+                                <div class="date-picker-wrapper" id="auditEndPicker"
+                                    style="flex:1;min-width:145px;max-width:210px">
+                                    <button type="button" class="date-picker-trigger" id="auditEndTrigger"
+                                        onclick="toggleAuditDatePicker('end', event)">
+                                        <span class="date-picker-placeholder" id="auditEndDisplay">To date</span>
+                                        <span class="date-picker-chevron">▾</span>
+                                    </button>
+                                    <div class="date-picker-popover" id="auditEndPopover">
+                                        <div class="date-picker-header">
+                                            <button type="button" class="date-picker-nav-btn"
+                                                onclick="auditDateNavMonth('end', -1, event)">‹</button>
+                                            <div class="date-picker-selectors">
+                                                <select class="date-picker-select" id="auditEndMonthSelect"
+                                                    onchange="auditDateChangeMonth('end', event)"></select>
+                                                <select class="date-picker-select" id="auditEndYearSelect"
+                                                    onchange="auditDateChangeYear('end', event)"></select>
+                                            </div>
+                                            <button type="button" class="date-picker-nav-btn"
+                                                onclick="auditDateNavMonth('end', 1, event)">›</button>
+                                        </div>
+                                        <div class="date-picker-grid">
+                                            <div class="date-picker-weekdays">
+                                                <div class="date-picker-weekday">Su</div>
+                                                <div class="date-picker-weekday">Mo</div>
+                                                <div class="date-picker-weekday">Tu</div>
+                                                <div class="date-picker-weekday">We</div>
+                                                <div class="date-picker-weekday">Th</div>
+                                                <div class="date-picker-weekday">Fr</div>
+                                                <div class="date-picker-weekday">Sa</div>
+                                            </div>
+                                            <div class="date-picker-days" id="auditEndCalendarDays"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" class="audit-filter-btn audit-filter-btn-primary"
+                                    onclick="loadAuditEvents(true)">Search</button>
+                                <button type="button" class="audit-filter-btn audit-filter-btn-secondary"
+                                    onclick="resetAuditFilters()">Reset</button>
+                            </div>
+                            <div id="auditEventsCard" style="margin-top:12px" aria-live="polite">
+                                <div class="data-table-empty">Enter filters and press Search, or load the screen to
+                                    browse recent events.</div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div id="screenObservability" class="admin-screen admin-dashboard-page" style="display:none">
+                        <header class="admin-dashboard-page-header">
+                            <div class="admin-dashboard-page-heading">
+                                <span class="admin-dashboard-kicker">System performance</span>
+                                <h3>Observability</h3>
+                                <p>In-process distribution snapshots: sample count, median, p95, and maximum for every tracked metric.</p>
+                            </div>
+                            <button type="button" class="admin-dashboard-primary-action"
+                                onclick="loadObservability()">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"
+                                        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                                Refresh
+                            </button>
+                        </header>
+
+                        <!-- Observability overview stat cards -->
+                        <div id="obsStatCards" class="ops-stat-row" aria-live="polite">
+                            <div class="ops-stat-card">
+                                <div class="admin-dashboard-loading-item" style="border:none;padding:0">
+                                    <span class="admin-dashboard-loading-media"></span>
+                                    <span class="admin-dashboard-loading-copy"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Metric cards grid -->
+                        <section class="admin-dashboard-section" aria-labelledby="obsMetricCardsTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="obsMetricCardsTitle">Metric overview</h4>
+                                    <p>Each card represents one tracked metric with its distribution statistics.</p>
+                                </div>
+                            </div>
+                            <div id="obsMetricCards" class="obs-metrics-grid" aria-live="polite">
+                                <div class="obs-metric-card">
+                                    <div class="admin-dashboard-loading-item" style="border:none;padding:0">
+                                        <span class="admin-dashboard-loading-media"></span>
+                                        <span class="admin-dashboard-loading-copy"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Detailed metrics table -->
+                        <section class="admin-dashboard-section" aria-labelledby="obsTableTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="obsTableTitle">Detailed metrics</h4>
+                                    <p>Complete metric data in tabular form.</p>
+                                </div>
+                            </div>
+                            <div id="obsTableContainer" aria-live="polite">
+                                <div class="admin-dashboard-loading-item">
+                                    <span class="admin-dashboard-loading-media"></span>
+                                    <span class="admin-dashboard-loading-copy"></span>
+                                </div>
                             </div>
                         </section>
                     </div>
@@ -789,7 +1032,7 @@
         </div>
     </div>
     <script src="/static/toast.js?v=20260725-8"></script>
-    <script src="/static/admin.js?v=20260725-8"></script>
+    <script src="/static/admin.js?v=20260808-1"></script>
 </body>
 
 </html>

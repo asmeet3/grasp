@@ -11,6 +11,7 @@ import hmac
 import logging
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -45,8 +46,8 @@ from .models import (
     EntityListResponse,
     EntityResponse,
     EntityReviewRequest,
-    GraphResponse,
     GoogleAuthRequest,
+    GraphResponse,
     LoginRequest,
     MemoryExtractRequest,
     MemoryStatsResponse,
@@ -95,6 +96,7 @@ def create_app(
     upload_rate_limit: int = 10,
     job_queue=None,
     metrics=None,
+    audit=None,
     agent_service=None,
     agent_scheduler=None,
     memory_service=None,
@@ -749,6 +751,70 @@ def create_app(
         await require_context(req, Permission.VIEW_AUDIT)
         return {"metrics": metrics.snapshot() if metrics else {}}
 
+    @app.get("/api/admin/audit-events")
+    async def list_audit_events(
+        req: Request,
+        event_type: str | None = None,
+        actor: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        """Query the append-only audit log, scoped to the caller's organization."""
+        context = await require_context(req, Permission.VIEW_AUDIT)
+        if not audit:
+            raise HTTPException(status_code=503, detail="Audit store unavailable")
+
+        def parse_dt(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid datetime: {value}"
+                ) from None
+
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        events, total = await audit.query(
+            organization_id=context.organization_id,
+            event_type=event_type or None,
+            actor_user_id=actor or None,
+            resource_type=resource_type or None,
+            resource_id=resource_id or None,
+            start=parse_dt(start),
+            end=parse_dt(end),
+            limit=limit,
+            offset=offset,
+        )
+        return {"events": events, "total": total, "limit": limit, "offset": offset}
+
+    @app.get("/api/admin/audit-events/summary")
+    async def audit_events_summary(req: Request, days: int = 30):
+        """Return aggregate audit statistics for a recent window."""
+        context = await require_context(req, Permission.VIEW_AUDIT)
+        if not audit:
+            raise HTTPException(status_code=503, detail="Audit store unavailable")
+        return await audit.summary(
+            organization_id=context.organization_id,
+            days=max(1, min(int(days), 365)),
+        )
+
+    @app.get("/api/admin/observability")
+    async def get_observability(req: Request):
+        """Return the in-process metric snapshot plus capture metadata."""
+        await require_context(req, Permission.VIEW_AUDIT)
+        snapshot = metrics.snapshot() if metrics else {}
+        return {
+            "metrics": snapshot,
+            "metric_count": len(snapshot),
+            "captured_at": datetime.now(UTC).isoformat(),
+        }
+
     # Governed company-brain agents
 
     def require_agent_service():
@@ -1372,6 +1438,30 @@ def create_app(
         if html_path.exists():
             return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
         return HTMLResponse(content="<h1>Grasp Admin</h1><p>Admin page not found.</p>")
+
+    @app.get("/admin/operations", response_class=HTMLResponse)
+    async def admin_operations_page():
+        """Serve the audit log admin view (legacy URL — redirects to Audit)."""
+        html_path = static_dir / "admin.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content="<h1>Grasp Operations</h1><p>Operations page not found.</p>")
+
+    @app.get("/admin/audit", response_class=HTMLResponse)
+    async def admin_audit_page():
+        """Serve the audit log admin view."""
+        html_path = static_dir / "admin.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content="<h1>Grasp Audit</h1><p>Audit page not found.</p>")
+
+    @app.get("/admin/observability", response_class=HTMLResponse)
+    async def admin_observability_page():
+        """Serve the observability admin view."""
+        html_path = static_dir / "admin.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content="<h1>Grasp Observability</h1><p>Observability page not found.</p>")
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page():

@@ -7,7 +7,7 @@
     <meta name="description"
         content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260808-3">
+    <link rel="stylesheet" href="/static/styles.css?v=20260808-8">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -400,7 +400,40 @@
                     </div>
                     <div class="settings-field" style="margin-top:12px">
                         <label class="contribute-label">Date of Birth</label>
-                        <input type="date" class="contribute-input" id="settingsDob">
+                        <input type="hidden" id="settingsDob" value="">
+                        <div class="date-picker-wrapper" id="settingsDobPicker">
+                            <button type="button" class="date-picker-trigger" id="settingsDobTrigger"
+                                onclick="toggleSettingsDobPicker(event)">
+                                <span class="date-picker-placeholder" id="settingsDobDisplay">Select date</span>
+                                <span class="date-picker-chevron">▾</span>
+                            </button>
+                            <div class="date-picker-popover" id="settingsDobPopover">
+                                <div class="date-picker-header">
+                                    <button type="button" class="date-picker-nav-btn"
+                                        onclick="settingsDobNavMonth(-1, event)">‹</button>
+                                    <div class="date-picker-selectors">
+                                        <select class="date-picker-select" id="settingsDobMonthSelect"
+                                            onchange="settingsDobChangeMonth(event)"></select>
+                                        <select class="date-picker-select" id="settingsDobYearSelect"
+                                            onchange="settingsDobChangeYear(event)"></select>
+                                    </div>
+                                    <button type="button" class="date-picker-nav-btn"
+                                        onclick="settingsDobNavMonth(1, event)">›</button>
+                                </div>
+                                <div class="date-picker-grid">
+                                    <div class="date-picker-weekdays">
+                                        <div class="date-picker-weekday">Su</div>
+                                        <div class="date-picker-weekday">Mo</div>
+                                        <div class="date-picker-weekday">Tu</div>
+                                        <div class="date-picker-weekday">We</div>
+                                        <div class="date-picker-weekday">Th</div>
+                                        <div class="date-picker-weekday">Fr</div>
+                                        <div class="date-picker-weekday">Sa</div>
+                                    </div>
+                                    <div class="date-picker-days" id="settingsDobCalendarDays"></div>
+                                </div>
+                            </div>
+                        </div>
                         <div id="settingsGoogleDobHint"
                             style="display:none;margin-top:6px;font-size:12px;color:var(--text-tertiary);line-height:1.5">
                             Google doesn't share date of birth — you can enter it here manually.
@@ -598,7 +631,7 @@
 
     <div id="toastContainer"></div>
     <script src="/static/toast.js?v=20260724-7"></script>
-    <script src="/static/app.js?v=20260808-1"></script>
+    <script src="/static/app.js?v=20260808-2"></script>
 </body>
 
 </html>

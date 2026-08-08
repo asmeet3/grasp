@@ -19,12 +19,11 @@ flowchart TD
     N --> Q
     Q --> O["Cited answer or proposed operation"]
 
-    O --> W{"Write or external action?"}
+    O --> W{"Write?"}
     W -->|"No"| U
     W -->|"Yes"| X["Versioned proposal"]
     X --> Y["Policy checks + human approval"]
-    Y --> Z["Idempotent execution"]
-    Z --> G["Git commit / external system"]
+    Y --> G["Git commit"]
     G --> B["Outbox indexing + audit"]
 ```
 
@@ -33,7 +32,7 @@ Core rules:
 - Only approved, committed knowledge is searchable.
 - Every request carries an authenticated user and permission context.
 - Context is selected dynamically, never injected wholesale.
-- Agents propose changes and actions; execution is controlled separately.
+- Agents propose changes; execution is controlled separately.
 - Derived indexes can always be rebuilt from committed source data.
 - Existing connectors and APIs remain available through adapters during migration.
 
@@ -75,7 +74,6 @@ Avoid rewriting the application at once. Place interfaces around existing classe
 - `PolicyEngine`.
 - `JobQueue`.
 - `AuditStore`.
-- `ActionExecutor`.
 
 The current composition root in [main.py](C:/Users/Asmeet/Desktop/grasp/main.py:140) should remain responsible only for constructing dependencies.
 
@@ -105,7 +103,7 @@ The current query endpoint is public in [server.py](C:/Users/Asmeet/Desktop/gras
 - `/api/sources`
 - Contribution submission, listing, and download
 - Chat access
-- Any future memory, skill, agent, or action endpoint
+- Any future memory or agent endpoint
 
 Keep a separate unauthenticated liveness endpoint for Docker health checks.
 
@@ -117,7 +115,7 @@ Current organization titles are not security roles. Separate:
 
 - `job_title`: Associate, Manager, Partner, etc.
 - `system_role`: member, knowledge_editor, operator, administrator.
-- `permissions`: query, contribute, review, manage users, manage agents, execute actions.
+- `permissions`: query, contribute, review, manage users, manage agents.
 - Source and document access rules.
 
 Every retrieval operation must apply access filters before content reaches the model.
@@ -127,7 +125,7 @@ Every retrieval operation must apply access filters before content reaches the m
 - Replace wildcard CORS with configured trusted origins.
 - Prefer secure, HTTP-only, same-site session cookies or a short-lived access/refresh-token design.
 - Add CSRF protection if cookies are used.
-- Rate-limit authentication, queries, uploads, and action endpoints.
+- Rate-limit authentication, queries, and uploads.
 - Apply upload size, page-count, and extracted-text limits.
 - Sanitize rendered Markdown and uploaded filenames.
 - Use constant-time comparison for any remaining bootstrap admin key.
@@ -159,7 +157,7 @@ The current sync path writes files and immediately indexes them in [orchestrator
 
 Create a `knowledge_changesets` table:
 
-- ID and type: sync, contribution, memory, context, skill, self-improvement.
+- ID and type: sync, contribution, memory, context, self-improvement.
 - Creator and organization.
 - Base Git commit.
 - State: draft, awaiting_review, approved, applying, active, rejected, failed.
@@ -185,7 +183,6 @@ This applies to:
 - User contributions.
 - Conversation-derived memories.
 - Canonical context changes.
-- Skill changes.
 - Self-improvement proposals.
 
 No component should call `RepoManager.write_document()` or Chroma directly outside this pipeline.
@@ -267,7 +264,6 @@ Introduce a worker process for:
 - Indexing.
 - Scheduled agents.
 - Evaluations.
-- External actions.
 
 Use PostgreSQL-backed jobs initially to avoid another infrastructure dependency. Protect scheduled jobs with PostgreSQL advisory locks so multiple replicas cannot execute the same routine.
 
@@ -306,7 +302,6 @@ domains/
   hr/CONTEXT.md
   legal/CONTEXT.md
   compliance/CONTEXT.md
-skills/
 agents/
 ```
 
@@ -326,7 +321,7 @@ Before calling the coordinator:
 Precedence should be:
 
 ```text
-Security policy → company policy → domain context → selected skill → user request
+Security policy → company policy → domain context → user request
 ```
 
 ## 4.3 Add structured memory
@@ -370,7 +365,6 @@ Each provider advertises supported capabilities:
 - Browse/navigate.
 - Read.
 - Propose write.
-- Execute action.
 - ACL discovery.
 - Incremental sync.
 
@@ -378,7 +372,7 @@ Adapt existing Confluence, Jira, SharePoint, Slack, and Notion connectors to thi
 
 ## 5.2 Add selective tool routing
 
-Do not expose every provider and skill to the coordinator.
+Do not expose every provider to the coordinator.
 
 A lightweight router should select:
 
@@ -425,46 +419,9 @@ Exit gate: relevant-source selection reduces average provider calls and latency 
 
 ---
 
-# Phase 6 — Skills, planning, and controlled external actions
+# Phase 6 — Evidence-backed work planning
 
-## 6.1 Define a skill format
-
-A skill manifest should declare:
-
-- Name, version, purpose, and owning domain.
-- Typed inputs and outputs.
-- Required context.
-- Allowed tools and providers.
-- Permissions.
-- Approval policy.
-- Cost and time budgets.
-- Idempotency behavior.
-- Evaluation cases.
-- Failure and compensation behavior.
-
-Skills live in Git; the database stores their active versions and runtime state.
-
-## 6.2 Build a skill registry and router
-
-- Validate skill manifests at commit time.
-- Load only the chosen skill into the prompt.
-- Prevent tools outside the skill’s allowlist.
-- Pin running jobs to a specific skill version.
-- Keep previous versions available for rollback.
-
-## 6.3 Add a two-phase action protocol
-
-Every external write follows:
-
-```text
-Plan → validate → preview → approve if required → execute → verify → audit
-```
-
-Action records include an idempotency key so retries cannot create duplicate Jira issues, messages, campaigns, or calendar events.
-
-Start each connector as read-only. Enable individual write operations only after its contract, permission, and failure tests pass.
-
-## 6.4 Add evidence-backed work planning
+## 6.1 Add evidence-backed work planning
 
 Create `work_items` for tasks and follow-ups with:
 
@@ -478,7 +435,7 @@ Create `work_items` for tasks and follow-ups with:
 
 Low-confidence suggestions remain proposals and do not become assigned work automatically.
 
-Exit gate: action tests prove preview/approval behavior, authorization, idempotency, failure recovery, and audit completeness.
+Exit gate: work-item tests prove ownership, deduplication, and status transitions.
 
 ---
 
@@ -489,16 +446,15 @@ Exit gate: action tests prove preview/approval behavior, authorization, idempote
 Each agent definition contains:
 
 - Role and owner.
-- Assigned domains and skills.
+- Assigned domains and analysis skills.
 - Allowed data classifications.
-- Allowed actions.
 - Approval thresholds.
 - Schedule or event triggers.
 - Runtime and cost budget.
 - Concurrency limits.
 - Escalation path.
 
-Agents use the same coordinator, provider, skill, and policy services as interactive chat; they must not introduce parallel implementations.
+Agents use the same coordinator, provider, and policy services as interactive chat; they must not introduce parallel implementations.
 
 ## 7.2 Add safe routine execution
 
@@ -506,13 +462,13 @@ Agents use the same coordinator, provider, skill, and policy services as interac
 - Use leases and idempotency.
 - Prevent two agents from owning the same task.
 - Suppress unchanged reports.
-- Apply daily cost and action limits.
+- Apply daily cost limits.
 - Pause agents automatically after repeated failures.
 - Provide a global emergency stop.
 
 ## 7.3 Add Slack as another client
 
-Slack should call the same authenticated query and action APIs as the browser.
+Slack should call the same authenticated query APIs as the browser.
 
 Implement:
 
@@ -522,7 +478,6 @@ Implement:
 - Mention/event deduplication.
 - Request-signature verification.
 - Rate limiting.
-- Explicit confirmation before sensitive actions.
 
 Exit gate: scheduled and Slack requests produce the same permission decisions and answer quality as browser requests.
 
@@ -534,11 +489,10 @@ Implement this last.
 
 ## 8.1 Capture feedback safely
 
-For eligible skill executions, retain:
+For eligible query executions, retain:
 
 - Original request.
 - Context version.
-- Skill version.
 - Draft output.
 - User-approved output.
 - Structured edit diff.
@@ -548,19 +502,18 @@ For eligible skill executions, retain:
 
 The improvement process may propose:
 
-- A new skill rule.
 - A context correction.
 - A better example.
 - A validation check.
 
-It may not directly modify active context or skills.
+It may not directly modify active context.
 
 ## 8.3 Gate every improvement
 
 A proposed improvement must:
 
 1. Pass schema and policy validation.
-2. Pass the existing skill’s regression tests.
+2. Pass the existing behavior’s regression tests.
 3. Pass permission and prompt-injection tests.
 4. Improve the targeted evaluation.
 5. Avoid degrading the wider evaluation suite.
@@ -582,9 +535,7 @@ Add administrative views for:
 - Context and memory proposals.
 - Entity merges.
 - Provider permissions and health.
-- Skills and versions.
 - Agent schedules and runs.
-- Action approvals.
 - Audit events.
 - Evaluation history.
 - Cost, latency, and token metrics.
@@ -600,8 +551,6 @@ Every major capability gets an independent flag:
 - `CONTEXT_ROUTING`
 - `STRUCTURED_MEMORY`
 - `PROVIDER_ROUTING`
-- `SKILLS_ENABLED`
-- `ACTIONS_ENABLED`
 - `AGENTS_ENABLED`
 - `SELF_IMPROVEMENT_ENABLED`
 
@@ -614,7 +563,7 @@ Roll out using:
 5. Approved writes.
 6. Limited autonomous routines.
 
-Rollback means disabling the flag and restoring the previous active Git/index/skill versions—not manually repairing data.
+Rollback means disabling the flag and restoring the previous active Git/index versions—not manually repairing data.
 
 ---
 
@@ -629,7 +578,6 @@ Rollback means disabling the flag and restoring the previous active Git/index/sk
 | Chat history vs. company memory | Persist only reviewed memory proposals |
 | Job titles vs. security roles | Store them separately |
 | Multiple replicas vs. scheduler | Persistent jobs plus advisory locks |
-| Skills vs. coordinator tools | Dynamically expose only allowed tools |
 | Multiple agents vs. task ownership | Leases, ownership, and idempotency |
 | Self-improvement vs. reliability | Evaluation and review before activation |
 | Source service accounts vs. user ACLs | Propagate source ACLs and default-deny unknown access |
@@ -641,7 +589,6 @@ Initial targets should be finalized after Phase 0 measurements:
 
 - No unauthorized document returned in automated ACL tests.
 - No rejected revision visible in retrieval.
-- No duplicate external action under retry.
 - Local retrieval p95 no worse than the current baseline.
 - Common queries avoid live provider calls when committed evidence is sufficient.
 - Query time-to-first-token improves for local-answer questions.
@@ -649,6 +596,6 @@ Initial targets should be finalized after Phase 0 measurements:
 - Context stays inside an explicit token budget.
 - Citation precision and retrieval recall do not regress.
 - Every new feature passes deterministic tests and the behavioral evaluation suite.
-- Failed changes, index jobs, actions, and agents are retryable without manual data repair.
+- Failed changes, index jobs, and agents are retryable without manual data repair.
 
 No implementation or file changes were made.

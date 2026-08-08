@@ -170,7 +170,6 @@ class RepoManager:
             "compliance",
         ):
             (self.repo_path / "domains" / domain).mkdir(parents=True, exist_ok=True)
-        (self.repo_path / "skills").mkdir(exist_ok=True)
         (self.repo_path / "agents").mkdir(exist_ok=True)
 
         # Initialize Git repo

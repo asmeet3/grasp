@@ -8,7 +8,6 @@ from .changes import (
     summarize_operations,
 )
 from .interfaces import (
-    ActionExecutor,
     AuditStore,
     ChangeSetStore,
     ContextProvider,
@@ -19,7 +18,6 @@ from .interfaces import (
 from .security import AuthContext, Permission, PolicyEngine, SystemRole
 
 __all__ = [
-    "ActionExecutor",
     "AuditStore",
     "AuthContext",
     "ChangeSetStore",

@@ -118,8 +118,6 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     context_routing: bool = False
     structured_memory: bool = False
     provider_routing: bool = False
-    skills_enabled: bool = False
-    actions_enabled: bool = False
     agents_enabled: bool = True
     self_improvement_enabled: bool = False
     context_token_budget: int = Field(8000, ge=1000)
@@ -137,13 +135,11 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     @model_validator(mode="after")
     def validate_safe_rollout_order(self):
         if not self.auth_required or not self.revisioned_knowledge:
-            if self.actions_enabled or self.agents_enabled or self.self_improvement_enabled:
+            if self.agents_enabled or self.self_improvement_enabled:
                 raise ValueError(
-                    "Actions, agents, and self-improvement require authentication and "
+                    "Agents and self-improvement require authentication and "
                     "revisioned knowledge"
                 )
-        if self.self_improvement_enabled and not self.skills_enabled:
-            raise ValueError("SELF_IMPROVEMENT_ENABLED requires SKILLS_ENABLED")
         return self
 
     @property

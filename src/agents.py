@@ -137,8 +137,7 @@ class AgentDefinition(BaseModel):
     def validate_execution_policy(self):
         if self.allowed_actions:
             raise ValueError(
-                "company-brain agents are read-only; external actions must use the separate "
-                "human-approved action workflow"
+                "company-brain agents are read-only; external action execution is not supported"
             )
         if self.schedule and "schedule" not in self.event_triggers:
             self.event_triggers.append("schedule")

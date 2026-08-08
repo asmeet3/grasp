@@ -102,13 +102,6 @@ class AuditStore(Protocol):
     ) -> None: ...
 
 
-@runtime_checkable
-class ActionExecutor(Protocol):
-    async def preview(self, action_id: str, context: AuthContext) -> Mapping[str, Any]: ...
-
-    async def execute(self, action_id: str, context: AuthContext) -> Mapping[str, Any]: ...
-
-
 class AsyncContextSource(Protocol):
     """Optional streaming form used by large live providers."""
 

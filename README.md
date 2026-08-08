@@ -227,14 +227,12 @@ Approval always creates a local commit. If a remote is configured, the exact app
 | `CONTEXT_ROUTING` | `false` | Inject canonical company and domain context into queries |
 | `STRUCTURED_MEMORY` | `false` | Enable the typed, ACL-governed entity/relationship store |
 | `PROVIDER_ROUTING` | `false` | Select live providers based on query relevance instead of calling all |
-| `SKILLS_ENABLED` | `false` | Enable versioned, validated skill manifests with allowlisted tools |
-| `ACTIONS_ENABLED` | `false` | Enable the two-phase, human-approved external action protocol |
 | `AGENTS_ENABLED` | `true` | Enable governed, read-only company-brain agents |
-| `SELF_IMPROVEMENT_ENABLED` | `false` | Enable evaluation-gated self-improvement proposals (requires `SKILLS_ENABLED`) |
+| `SELF_IMPROVEMENT_ENABLED` | `false` | Enable evaluation-gated self-improvement proposals |
 | `CONTEXT_TOKEN_BUDGET` | `8000` | Token budget for canonical context injection |
 | `MAX_LIVE_PROVIDERS` | `2` | Maximum live providers selected per query when routing is enabled |
 
-Governed, read-only company-brain agents default to true; write actions and self-improvement remain disabled. Set `AGENTS_ENABLED=false` and restart to disable all agent execution. Validation enforces safe rollout ordering: actions, agents, and self-improvement require both authentication and revisioned knowledge.
+Governed, read-only company-brain agents default to true; self-improvement remains disabled. Set `AGENTS_ENABLED=false` and restart to disable all agent execution. Validation enforces safe rollout ordering: agents and self-improvement require both authentication and revisioned knowledge.
 
 The Docker container normally runs in UTC, making the default schedule 02:30, 05:30, 08:30, 11:30, and 14:30 UTC (08:00, 11:00, 14:00, 17:00, and 20:00 IST). The scheduler does not explicitly set a timezone, so a local installation interprets these hours in the host timezone even though the application log labels them as UTC.
 
@@ -270,7 +268,7 @@ Permissions are checked by a central default-deny `PolicyEngine`. Each system ro
 |---|---|
 | `member` | `query`, `contribute` |
 | `knowledge_editor` | `query`, `contribute`, `review` |
-| `operator` | `query`, `contribute`, `review`, `manage_agents`, `execute_actions`, `view_audit` |
+| `operator` | `query`, `contribute`, `review`, `manage_agents`, `view_audit` |
 | `administrator` | All permissions including `manage_users` |
 
 Document-level access is enforced through ACL principals that must intersect with the authenticated user's principals. Documents with no explicit principals are inaccessible by design. Agent runs inherit the owner's ACL scope and may further narrow — but never broaden — access through allowed domains and classification levels.
@@ -312,8 +310,7 @@ agent inherits the approved owner's document ACLs and may narrow—but never bro
 that access. Runs are queued durably, leased, audited, retained in PostgreSQL, and
 automatically paused after three consecutive failures. Identical consecutive reports
 can be suppressed. An organization-wide persistent emergency stop prevents new runs.
-Agents cannot execute external actions; those remain in the separately approved action
-workflow.
+Agents are read-only and cannot execute external actions.
 
 ### Durable job queue
 
@@ -328,7 +325,7 @@ multiple workers.
 
 Grasp maintains an append-only `audit_events` table in PostgreSQL. Events cover:
 agent creation, activation, pausing, run lifecycle (started, completed, suppressed,
-failed), change-set operations, action verification, and emergency-stop toggling.
+failed), change-set operations, and emergency-stop toggling.
 Each event records the actor, organization, resource type, resource ID, and
 structured details. The `VIEW_AUDIT` permission (operator or administrator) is
 required to access audit data.
@@ -430,7 +427,6 @@ knowledge_repo/
   .grasp_state/              Isolated proposals and uploaded originals (Git-ignored)
   company/                   Canonical company context and policies
   domains/<domain>/          Canonical domain context
-  skills/                    Versioned declarative skill manifests
   agents/                    Versioned declarative agent definitions
   sources/                   Source-oriented Markdown copies
     confluence/YYYY-MM/
@@ -466,7 +462,7 @@ Raw source paths include a stable external-ID hash, and same-title knowledge doc
 main.py                        Composition root and Uvicorn entry point
 src/
   config.py                    Pydantic environment settings
-  database.py                  PostgreSQL schema (18 tables) and initialization
+  database.py                  PostgreSQL schema and initialization
   auth.py                      Accounts, sessions, Google auth, and roles
   chat_manager.py              Per-user PostgreSQL chat persistence
   contributions.py             Submission and review workflow
@@ -478,8 +474,6 @@ src/
   observability.py             Metric recorder and secret log redaction filter
   context_router.py            Token-budgeted canonical company/domain context selection
   providers.py                 Capability-based live provider routing
-  skills.py                    Versioned skill manifests and allowlisted tool routing
-  actions.py                   Two-phase, authorized, idempotent external action protocol
   improvement.py               Evaluation-gated self-improvement proposals
   memory.py                    Typed, ACL-governed organizational memory (entities/relationships)
   api/

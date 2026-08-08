@@ -1265,6 +1265,181 @@ function toggleSidebarSection(section) {
 /** Pending profile picture data URL (256×256 PNG) waiting to be saved. */
 let _pendingProfilePicture = null;
 
+// --- Settings date of birth picker (same custom calendar as the register page) ---
+
+const SETTINGS_DOB_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+let settingsDobViewMonth = 0; // 0-indexed month currently displayed
+let settingsDobViewYear = 2000; // year currently displayed
+let settingsDobSelectedDate = null; // { day, month, year } or null
+
+function initSettingsDobPicker() {
+    const now = new Date();
+    settingsDobViewMonth = now.getMonth();
+    settingsDobViewYear = now.getFullYear() - 20; // Default to ~20 years ago
+    settingsDobSelectedDate = null;
+
+    // If the user already has a saved DOB, open the calendar on that date.
+    const hiddenInput = document.getElementById('settingsDob');
+    if (hiddenInput && hiddenInput.value) {
+        const m = hiddenInput.value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) {
+            settingsDobSelectedDate = { day: parseInt(m[3], 10), month: parseInt(m[2], 10), year: parseInt(m[1], 10) };
+            settingsDobViewMonth = parseInt(m[2], 10) - 1;
+            settingsDobViewYear = parseInt(m[1], 10);
+        }
+    }
+
+    populateSettingsDobSelectors();
+    renderSettingsDobCalendar();
+}
+
+function populateSettingsDobSelectors() {
+    const monthSelect = document.getElementById('settingsDobMonthSelect');
+    const yearSelect = document.getElementById('settingsDobYearSelect');
+    if (!monthSelect || !yearSelect) return;
+
+    monthSelect.innerHTML = SETTINGS_DOB_MONTHS.map((m, i) =>
+        `<option value="${i}" ${i === settingsDobViewMonth ? 'selected' : ''}>${m}</option>`
+    ).join('');
+
+    const currentYear = new Date().getFullYear();
+    let yearOpts = '';
+    for (let y = currentYear; y >= 1920; y--) {
+        yearOpts += `<option value="${y}" ${y === settingsDobViewYear ? 'selected' : ''}>${y}</option>`;
+    }
+    yearSelect.innerHTML = yearOpts;
+}
+
+function renderSettingsDobCalendar() {
+    const container = document.getElementById('settingsDobCalendarDays');
+    if (!container) return;
+
+    const today = new Date();
+    const firstDay = new Date(settingsDobViewYear, settingsDobViewMonth, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(settingsDobViewYear, settingsDobViewMonth + 1, 0).getDate();
+
+    let html = '';
+    for (let i = 0; i < firstDay; i++) {
+        html += '<button type="button" class="date-picker-day date-picker-day-empty" disabled></button>';
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const isToday = d === today.getDate() && settingsDobViewMonth === today.getMonth() && settingsDobViewYear === today.getFullYear();
+        const isSelected = settingsDobSelectedDate &&
+            d === settingsDobSelectedDate.day && settingsDobViewMonth === (settingsDobSelectedDate.month - 1) && settingsDobViewYear === settingsDobSelectedDate.year;
+        const isFuture = new Date(settingsDobViewYear, settingsDobViewMonth, d) > today;
+
+        let cls = 'date-picker-day';
+        if (isToday) cls += ' date-picker-day-today';
+        if (isSelected) cls += ' date-picker-day-selected';
+        if (isFuture) cls += ' date-picker-day-disabled';
+
+        html += `<button type="button" class="${cls}" ${isFuture ? 'disabled' : ''}
+            onclick="selectSettingsDobDate(${d}, event)">${d}</button>`;
+    }
+
+    container.innerHTML = html;
+
+    const monthSelect = document.getElementById('settingsDobMonthSelect');
+    const yearSelect = document.getElementById('settingsDobYearSelect');
+    if (monthSelect) monthSelect.value = settingsDobViewMonth;
+    if (yearSelect) yearSelect.value = settingsDobViewYear;
+}
+
+function selectSettingsDobDate(day, event) {
+    if (event) event.preventDefault();
+    settingsDobSelectedDate = {
+        day,
+        month: settingsDobViewMonth + 1,
+        year: settingsDobViewYear,
+        iso: `${settingsDobViewYear}-${String(settingsDobViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    };
+
+    const hiddenInput = document.getElementById('settingsDob');
+    if (hiddenInput) hiddenInput.value = settingsDobSelectedDate.iso;
+
+    const display = document.getElementById('settingsDobDisplay');
+    if (display) {
+        display.textContent = `${String(day).padStart(2, '0')} / ${String(settingsDobSelectedDate.month).padStart(2, '0')} / ${settingsDobViewYear}`;
+        display.classList.remove('date-picker-placeholder');
+        display.style.color = 'var(--text-primary)';
+    }
+
+    const hint = document.getElementById('settingsGoogleDobHint');
+    if (hint) hint.style.display = 'none';
+
+    closeSettingsDobPicker();
+}
+
+function toggleSettingsDobPicker(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const popover = document.getElementById('settingsDobPopover');
+    if (!popover) return;
+
+    const isOpen = popover.classList.contains('date-picker-open');
+    if (isOpen) {
+        closeSettingsDobPicker();
+    } else {
+        initSettingsDobPicker();
+        popover.classList.add('date-picker-open');
+    }
+}
+
+function closeSettingsDobPicker() {
+    const popover = document.getElementById('settingsDobPopover');
+    if (popover) popover.classList.remove('date-picker-open');
+}
+
+function settingsDobNavMonth(delta, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    settingsDobViewMonth += delta;
+    if (settingsDobViewMonth < 0) { settingsDobViewMonth = 11; settingsDobViewYear--; }
+    if (settingsDobViewMonth > 11) { settingsDobViewMonth = 0; settingsDobViewYear++; }
+    renderSettingsDobCalendar();
+}
+
+function settingsDobChangeMonth(event) {
+    event.stopPropagation();
+    settingsDobViewMonth = parseInt(event.target.value, 10);
+    renderSettingsDobCalendar();
+}
+
+function settingsDobChangeYear(event) {
+    event.stopPropagation();
+    settingsDobViewYear = parseInt(event.target.value, 10);
+    renderSettingsDobCalendar();
+}
+
+// Close settings DOB picker on outside click
+document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('settingsDobPicker');
+    if (wrapper && !wrapper.contains(e.target)) {
+        closeSettingsDobPicker();
+    }
+});
+
+function syncSettingsDobDisplay() {
+    const display = document.getElementById('settingsDobDisplay');
+    if (!display) return;
+    const hiddenInput = document.getElementById('settingsDob');
+    const dob = hiddenInput ? hiddenInput.value : '';
+    const m = dob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+        display.textContent = `${m[3]} / ${m[2]} / ${m[1]}`;
+        display.classList.remove('date-picker-placeholder');
+        display.style.color = 'var(--text-primary)';
+    } else {
+        display.textContent = 'Select date';
+        display.classList.add('date-picker-placeholder');
+        display.style.color = '';
+    }
+}
+
 function openSettingsModal() {
     const modal = document.getElementById('settingsModal');
     if (!modal) return;
@@ -1282,6 +1457,7 @@ function openSettingsModal() {
         document.getElementById('settingsFirstName').value = currentUser.first_name || '';
         document.getElementById('settingsLastName').value = currentUser.last_name || '';
         document.getElementById('settingsDob').value = currentUser.dob || '';
+        syncSettingsDobDisplay();
 
         // Avatar preview
         const initial = document.getElementById('settingsAvatarInitial');

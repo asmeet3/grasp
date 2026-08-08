@@ -14,7 +14,6 @@ class Permission(str, enum.Enum):
     REVIEW = "review"
     MANAGE_USERS = "manage_users"
     MANAGE_AGENTS = "manage_agents"
-    EXECUTE_ACTIONS = "execute_actions"
     VIEW_AUDIT = "view_audit"
 
 
@@ -36,7 +35,6 @@ ROLE_PERMISSIONS: dict[SystemRole, frozenset[Permission]] = {
             Permission.CONTRIBUTE,
             Permission.REVIEW,
             Permission.MANAGE_AGENTS,
-            Permission.EXECUTE_ACTIONS,
             Permission.VIEW_AUDIT,
         }
     ),
