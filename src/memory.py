@@ -28,10 +28,6 @@ ENTITY_TYPES = frozenset(
         "team",
         "project",
         "product",
-        "process",
-        "technology",
-        "decision",
-        "milestone",
     }
 )
 
@@ -39,7 +35,7 @@ EXTRACTION_SYSTEM_PROMPT = """\
 You are an entity extraction system for an organizational knowledge base.
 Extract structured entities and relationships from the provided text.
 
-Entity types: person, team, project, product, process, technology, decision, milestone
+Entity types: person, team, project, product
 
 For each entity, provide:
 - entity_type: one of the types above
@@ -124,6 +120,13 @@ class StructuredMemoryService:
                 messages=[{"role": "user", "content": truncated}],
             )
             raw_text = response.content[0].text.strip()
+            
+            # Robust JSON extraction to handle markdown and preambles
+            if "{" in raw_text and "}" in raw_text:
+                start = raw_text.find("{")
+                end = raw_text.rfind("}") + 1
+                raw_text = raw_text[start:end]
+            
             extraction = json.loads(raw_text)
         except Exception as exc:
             logger.warning("Entity extraction failed: %s", exc)
@@ -424,6 +427,51 @@ class StructuredMemoryService:
             "root_entity": entity,
             "entities": all_entities,
             "relationships": all_relationships,
+        }
+
+    async def get_full_graph(
+        self,
+        context: AuthContext,
+        *,
+        entity_types: list[str] | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Return all active entities and relationships for the graph view."""
+        stmt = select(entities_table).where(
+            entities_table.c.organization_id == context.organization_id,
+            entities_table.c.valid_to.is_(None),
+        )
+        if entity_types:
+            valid = [t for t in entity_types if t in ENTITY_TYPES]
+            if valid:
+                stmt = stmt.where(entities_table.c.entity_type.in_(valid))
+        stmt = stmt.order_by(entities_table.c.canonical_name).limit(min(limit, 500))
+
+        async with self.engine.begin() as conn:
+            entity_rows = (await conn.execute(stmt)).mappings().all()
+
+        entities = [
+            dict(row)
+            for row in entity_rows
+            if self.policy.can_access_principals(context, row["acl_principals"])
+        ]
+        entity_ids = {e["id"] for e in entities}
+
+        # Fetch relationships where both ends are in the visible entity set
+        rel_stmt = select(entity_relationships_table).where(
+            entity_relationships_table.c.organization_id == context.organization_id,
+            entity_relationships_table.c.valid_to.is_(None),
+            entity_relationships_table.c.source_entity_id.in_(entity_ids),
+            entity_relationships_table.c.target_entity_id.in_(entity_ids),
+        )
+        async with self.engine.begin() as conn:
+            rel_rows = (await conn.execute(rel_stmt)).mappings().all()
+
+        relationships = [dict(row) for row in rel_rows]
+
+        return {
+            "nodes": entities,
+            "edges": relationships,
         }
 
     # ── Work Items ────────────────────────────────────────────────

@@ -251,18 +251,13 @@ def main():
         except Exception:
             logger.exception("Knowledge sync completed, but agent event fan-out failed")
         # Trigger structured memory extraction after successful sync
+        # (actual extraction happens after the change set is approved — see server.py)
         if memory_service and result.get("change_set_id"):
-            try:
-                await job_queue.enqueue(
-                    "memory-extraction",
-                    {
-                        "change_set_id": result["change_set_id"],
-                        "organization_id": "default",
-                    },
-                    idempotency_key=f"mem-extract:{result['change_set_id']}",
-                )
-            except Exception:
-                logger.exception("Failed to queue memory extraction job")
+            logger.info(
+                "Sync completed with change_set_id=%s — memory extraction "
+                "will run after change set is approved",
+                result["change_set_id"],
+            )
 
     job_queue.register("sync", run_sync_job)
 
@@ -307,10 +302,16 @@ def main():
             for op in operations:
                 if op.get("op") == "delete":
                     continue
-                path = str(op.get("path") or "")
-                content = repo_manager.read_committed_file(path)
+                # Read content from the operation payload first (it has the
+                # full document text), falling back to the Git repo.
+                content = str(op.get("content") or "")
+                if not content or len(content) < 50:
+                    path = str(op.get("path") or "")
+                    if path:
+                        content = repo_manager.read_committed_file(path) or ""
                 if not content or len(content) < 50:
                     continue
+                path = str(op.get("path") or "")
                 result = await memory_service.extract_entities_from_text(
                     system_context,
                     content,

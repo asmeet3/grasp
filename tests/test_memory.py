@@ -36,7 +36,6 @@ def _context(
 def test_entity_types_are_complete():
     expected = {
         "person", "team", "project", "product",
-        "process", "technology", "decision", "milestone",
     }
     assert ENTITY_TYPES == expected
 

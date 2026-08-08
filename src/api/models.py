@@ -275,6 +275,11 @@ class EntityDetailResponse(BaseModel):
     relationships: list[RelationshipResponse] = Field(default_factory=list)
 
 
+class GraphResponse(BaseModel):
+    nodes: list[EntityResponse]
+    edges: list[RelationshipResponse]
+
+
 class EntityReviewRequest(BaseModel):
     action: str = Field(
         ..., description="Review action: 'confirm', 'retire', or 'merge'"

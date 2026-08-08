@@ -45,6 +45,7 @@ from .models import (
     EntityListResponse,
     EntityResponse,
     EntityReviewRequest,
+    GraphResponse,
     GoogleAuthRequest,
     LoginRequest,
     MemoryExtractRequest,
@@ -690,6 +691,23 @@ def create_app(
                 explanation=request.explanation,
                 commit_message=request.message,
             )
+            # Trigger structured memory extraction after successful activation
+            if memory_service and job_queue and result.get("state") == "active":
+                try:
+                    await job_queue.enqueue(
+                        "memory-extraction",
+                        {
+                            "change_set_id": result["id"],
+                            "organization_id": context.organization_id,
+                        },
+                        idempotency_key=f"mem-extract:{result['id']}",
+                    )
+                    logger.info(
+                        "Memory extraction job queued for change set %s",
+                        result["id"],
+                    )
+                except Exception:
+                    logger.exception("Failed to queue memory extraction job")
             return ApproveResponse(
                 status=result["state"],
                 message="Committed, indexed, verified, and activated",
@@ -1298,6 +1316,36 @@ def create_app(
             context, request.text, source_evidence=evidence
         )
         return result
+
+    @app.get("/api/memory/graph", response_model=GraphResponse)
+    async def get_memory_graph(req: Request, limit: int = 200):
+        """Return all entities and relationships for the graph view."""
+        context = await require_context(req, Permission.QUERY)
+        svc = require_memory_service()
+        data = await svc.get_full_graph(context, limit=limit)
+
+        nodes = []
+        for e in data["nodes"]:
+            e_copy = dict(e)
+            for dt_key in ("valid_from", "valid_to"):
+                val = e_copy.get(dt_key)
+                if val is not None and not isinstance(val, str):
+                    e_copy[dt_key] = val.isoformat()
+            nodes.append(EntityResponse(**e_copy))
+
+        edges = [
+            RelationshipResponse(
+                id=r["id"],
+                source_entity_id=r["source_entity_id"],
+                relationship_type=r["relationship_type"],
+                target_entity_id=r["target_entity_id"],
+                evidence=r.get("evidence", []),
+                confidence=r.get("confidence", "medium"),
+            )
+            for r in data["edges"]
+        ]
+
+        return GraphResponse(nodes=nodes, edges=edges)
 
     # Web pages
 

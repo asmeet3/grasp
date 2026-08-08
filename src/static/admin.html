@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Grasp Admin Dashboard — Manage syncs, review changes, and monitor system health.">
     <title>Grasp - Admin Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260725-8">
+    <link rel="stylesheet" href="/static/styles.css?v=20260808-1">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -21,14 +21,15 @@
             <div id="adminBootstrapForm" style="display:none">
                 <input type="password" class="admin-key-input" id="adminKeyInput" placeholder="Bootstrap key..."
                     autocomplete="current-password" onkeydown="if(event.key==='Enter')authenticateAdmin()">
-                <button class="approve-btn" style="width:100%;margin-top:14px"
-                    onclick="authenticateAdmin()">Continue Bootstrap</button>
+                <button class="approve-btn" style="width:100%;margin-top:14px" onclick="authenticateAdmin()">Continue
+                    Bootstrap</button>
             </div>
             <div id="adminDeniedActions" style="display:none;gap:10px;flex-direction:column">
                 <button class="approve-btn" style="width:100%" onclick="signInWithDifferentAccount()">
                     Sign in with another account
                 </button>
-                <a href="/" class="reject-btn" style="width:100%;text-align:center;text-decoration:none">Return to Grasp</a>
+                <a href="/" class="reject-btn" style="width:100%;text-align:center;text-decoration:none">Return to
+                    Grasp</a>
             </div>
             <p id="authError" style="color:var(--danger);text-align:center;margin-top:12px;font-size:12px;display:none">
             </p>
@@ -58,7 +59,8 @@
                                     </div>
                                     <div class="sidebar-menu-button-text" id="adminProfileTextBlock">
                                         <span class="sidebar-menu-button-title" id="adminProfileName">Admin</span>
-                                        <span class="sidebar-menu-button-subtitle" id="adminProfileAccess">Access unknown</span>
+                                        <span class="sidebar-menu-button-subtitle" id="adminProfileAccess">Access
+                                            unknown</span>
                                     </div>
                                     <svg class="sidebar-menu-button-chevrons" xmlns="http://www.w3.org/2000/svg"
                                         width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -76,10 +78,12 @@
                                                 A
                                             </div>
                                             <div>
-                                                <div id="adminMenuName" style="font-weight:600;color:var(--text-primary);font-size:13px">
+                                                <div id="adminMenuName"
+                                                    style="font-weight:600;color:var(--text-primary);font-size:13px">
                                                     Admin</div>
                                                 <div style="font-size:11px;color:var(--text-tertiary)"><span
-                                                        class="role-pill role-admin" id="adminMenuAccess">Access unknown</span></div>
+                                                        class="role-pill role-admin" id="adminMenuAccess">Access
+                                                        unknown</span></div>
                                             </div>
                                         </div>
                                     </div>
@@ -152,12 +156,12 @@
                         </div>
 
                         <nav class="admin-sidebar-nav" style="margin-top:20px;" aria-label="Administration">
-                            <button type="button" class="admin-sidebar-button active"
-                                onclick="showAdminScreen('Home')" id="navHome">
+                            <button type="button" class="admin-sidebar-button active" onclick="showAdminScreen('Home')"
+                                id="navHome">
                                 Dashboard
                             </button>
-                            <button type="button" class="admin-sidebar-button"
-                                onclick="showAdminScreen('Users')" id="navUsers">
+                            <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Users')"
+                                id="navUsers">
                                 User Management
                                 <span class="admin-nav-badge" id="navUsersBadge" style="display:none">0</span>
                             </button>
@@ -165,24 +169,17 @@
                                 onclick="showAdminScreen('Contributions')" id="navContributions">Contributions
                                 <span class="admin-nav-badge" id="navContributionsBadge" style="display:none">0</span>
                             </button>
-                            <button type="button" class="admin-sidebar-button"
-                                onclick="showAdminScreen('Memory')" id="navMemory" style="display:none">Memory
+                            <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Memory')"
+                                id="navMemory" style="display:none">Memory
                                 <span class="admin-nav-badge" id="navMemoryBadge" style="display:none">0</span>
                             </button>
-                            <button type="button" class="admin-sidebar-button"
-                                onclick="showAdminScreen('Agents')" id="navAgents">Agents
+                            <button type="button" class="admin-sidebar-button" onclick="showAdminScreen('Agents')"
+                                id="navAgents">Agents
                                 <span class="admin-nav-badge" id="navAgentsBadge" style="display:none">0</span>
                             </button>
                         </nav>
                     </div>
 
-                    <div class="sidebar-footer">
-                        <div class="sync-controls">
-                            <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
-                                <span>⟳</span> Trigger Sync
-                            </button>
-                        </div>
-                    </div>
                 </div>
             </aside>
         </div>
@@ -216,7 +213,8 @@
                                 <h3>Knowledge operations</h3>
                                 <p>Monitor ingestion health, indexed content, and recent synchronization activity.</p>
                             </div>
-                            <button type="button" class="admin-dashboard-primary-action" onclick="triggerSync()">
+                            <button type="button" class="admin-dashboard-primary-action" id="syncBtn"
+                                onclick="triggerSync()">
                                 <svg viewBox="0 0 24 24" aria-hidden="true">
                                     <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"
                                         fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
@@ -279,9 +277,11 @@
                             <div class="admin-dashboard-page-heading">
                                 <span class="admin-dashboard-kicker">Organizational intelligence</span>
                                 <h3>Structured memory</h3>
-                                <p>Browse extracted entities, relationships, and work items from your knowledge base.</p>
+                                <p>Browse extracted entities and relationships from your knowledge base.
+                                </p>
                             </div>
-                            <button type="button" class="admin-dashboard-primary-action" onclick="openExtractionModal()">
+                            <button type="button" class="admin-dashboard-primary-action"
+                                onclick="openExtractionModal()">
                                 <svg viewBox="0 0 24 24" aria-hidden="true">
                                     <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8"
                                         stroke-linecap="round" />
@@ -294,7 +294,7 @@
                             <div class="admin-dashboard-section-heading">
                                 <div>
                                     <h4 id="memoryStatsTitle">Memory overview</h4>
-                                    <p>Aggregate counts of entities, relationships, and work items.</p>
+                                    <p>Aggregate counts of entities and relationships.</p>
                                 </div>
                             </div>
                             <div id="memoryStatsCards" class="admin-dashboard-status" aria-live="polite"
@@ -302,6 +302,59 @@
                                 <div class="admin-dashboard-loading-item">
                                     <span class="admin-dashboard-loading-media"></span>
                                     <span class="admin-dashboard-loading-copy"></span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="admin-dashboard-section" aria-labelledby="memoryGraphTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="memoryGraphTitle">Entity relationships</h4>
+                                    <p>Interactive map of entities and their relationships.</p>
+                                </div>
+                                <div style="display:flex;gap:8px;align-items:center">
+                                    <button type="button" class="agent-secondary-button" id="viewGraphBtn"
+                                        onclick="showEntityGraph()" style="background:var(--accent-primary);border-color:var(--accent-primary);font-weight:600;padding:7px 14px">View Entity Graph</button>
+                                    <button type="button" class="agent-secondary-button" id="graphFitBtn"
+                                        onclick="graphFitToView()" title="Fit to view" style="display:none">⊡
+                                        Fit</button>
+                                    <button type="button" class="agent-secondary-button" id="graphResetBtn"
+                                        onclick="loadGraph()" title="Reload graph" style="display:none">↻
+                                        Reload</button>
+                                </div>
+                            </div>
+                            <div id="knowledgeGraphContainer" class="knowledge-graph-container"
+                                style="display:none;position:relative;">
+                                <div class="knowledge-graph-toolbar">
+                                    <div class="knowledge-graph-legend" id="graphLegend"></div>
+                                    <div class="graph-search-wrapper">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                                        <input type="text" id="graphSearchInput" class="graph-search-input" placeholder="Search entities…" autocomplete="off" spellcheck="false">
+                                        <div id="graphSearchDropdown" class="graph-search-dropdown"></div>
+                                    </div>
+                                    <div class="knowledge-graph-zoom-controls" style="display:flex;gap:4px;align-items:center;">
+                                        <button type="button" onclick="toggleGraphFullscreen()" title="Fullscreen" style="margin-right:2px;">⛶</button>
+                                        <button type="button" onclick="graphZoomIn()" title="Zoom in">+</button>
+                                        <button type="button" onclick="graphZoomOut()" title="Zoom out">−</button>
+                                        <button type="button" onclick="closeEntityGraph()" title="Close graph" class="graph-close-btn" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:18px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-left:4px;">&times;</button>
+                                    </div>
+                                </div>
+                                <canvas id="graphCanvas" width="900" height="520"></canvas>
+                                <div id="graphLoadingSkeleton" class="graph-loading-skeleton" style="display:none">
+                                    <div class="graph-skeleton-node graph-skeleton-node-lg"></div>
+                                    <div class="graph-skeleton-edge graph-skeleton-edge-1"></div>
+                                    <div class="graph-skeleton-node graph-skeleton-node-md" style="animation-delay:0.15s"></div>
+                                    <div class="graph-skeleton-edge graph-skeleton-edge-2"></div>
+                                    <div class="graph-skeleton-node graph-skeleton-node-sm" style="animation-delay:0.3s"></div>
+                                    <div class="graph-skeleton-edge graph-skeleton-edge-3"></div>
+                                    <div class="graph-skeleton-node graph-skeleton-node-md" style="animation-delay:0.22s"></div>
+                                    <div class="graph-skeleton-edge graph-skeleton-edge-4"></div>
+                                    <div class="graph-skeleton-node graph-skeleton-node-sm" style="animation-delay:0.38s"></div>
+                                    <div class="graph-skeleton-label">Loading entity graph…</div>
+                                </div>
+                                <div id="graphEmptyState" class="knowledge-graph-empty" style="display:none">
+                                    <p>No entities found. Extract entities from your documents to see the knowledge
+                                        graph.</p>
                                 </div>
                             </div>
                         </section>
@@ -327,35 +380,10 @@
                                     <option value="team">Team</option>
                                     <option value="project">Project</option>
                                     <option value="product">Product</option>
-                                    <option value="process">Process</option>
-                                    <option value="technology">Technology</option>
-                                    <option value="decision">Decision</option>
-                                    <option value="milestone">Milestone</option>
                                 </select>
                             </div>
                             <div id="entitiesTableContainer" class="admin-card" style="display:block;overflow-x:auto">
                                 <p style="color:var(--text-secondary)">Loading entities…</p>
-                            </div>
-                        </section>
-
-                        <section class="admin-dashboard-section" aria-labelledby="memoryWorkItemsTitle">
-                            <div class="admin-dashboard-section-heading">
-                                <div>
-                                    <h4 id="memoryWorkItemsTitle">Work items</h4>
-                                    <p>Proposed tasks and follow-ups surfaced by entity extraction.</p>
-                                </div>
-                                <select id="memoryWorkItemStatusFilter"
-                                    style="padding:8px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px"
-                                    onchange="loadWorkItems()">
-                                    <option value="">All statuses</option>
-                                    <option value="proposed">Proposed</option>
-                                    <option value="accepted">Accepted</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="dismissed">Dismissed</option>
-                                </select>
-                            </div>
-                            <div id="workItemsContainer" class="admin-card" style="display:block">
-                                <p style="color:var(--text-secondary)">Loading work items…</p>
                             </div>
                         </section>
                     </div>
@@ -365,7 +393,8 @@
                             <div>
                                 <span class="admin-dashboard-kicker">Governed routines</span>
                                 <h3>Company-brain agents</h3>
-                                <p>Run recurring analysis over company knowledge with owner ACLs, budgets, and a full run history.</p>
+                                <p>Run recurring analysis over company knowledge with owner ACLs, budgets, and a full
+                                    run history.</p>
                             </div>
                             <button type="button" class="admin-dashboard-primary-action" onclick="openAgentEditor()">
                                 <span aria-hidden="true">+</span> New agent
@@ -387,7 +416,8 @@
                                     <h4 id="agentDefinitionsTitle">Agent definitions</h4>
                                     <p>Agents are read-only and always execute as their approved owner.</p>
                                 </div>
-                                <button type="button" class="agent-secondary-button" onclick="loadAgents()">Refresh</button>
+                                <button type="button" class="agent-secondary-button"
+                                    onclick="loadAgents()">Refresh</button>
                             </div>
                             <div id="agentsGrid" class="agent-card-grid">
                                 <div class="agent-empty-state">Loading agents...</div>
@@ -490,8 +520,7 @@
         </div>
     </div>
 
-    <div class="modal-overlay" id="agentEditorModal" role="dialog" aria-modal="true"
-        aria-labelledby="agentEditorTitle">
+    <div class="modal-overlay" id="agentEditorModal" role="dialog" aria-modal="true" aria-labelledby="agentEditorTitle">
         <div class="modal agent-editor-modal">
             <div class="modal-header">
                 <h2 id="agentEditorTitle">Create company-brain agent</h2>
@@ -536,8 +565,10 @@
                     <fieldset class="agent-form-field agent-classification-field">
                         <legend>Allowed classifications</legend>
                         <label><input type="checkbox" name="agentClassification" value="public" checked> Public</label>
-                        <label><input type="checkbox" name="agentClassification" value="internal" checked> Internal</label>
-                        <label><input type="checkbox" name="agentClassification" value="confidential"> Confidential</label>
+                        <label><input type="checkbox" name="agentClassification" value="internal" checked>
+                            Internal</label>
+                        <label><input type="checkbox" name="agentClassification" value="confidential">
+                            Confidential</label>
                         <label><input type="checkbox" name="agentClassification" value="restricted"> Restricted</label>
                     </fieldset>
                     <label class="agent-form-field">
@@ -583,14 +614,14 @@
                 <p class="agent-form-error" id="agentFormError" role="alert"></p>
             </div>
             <div class="modal-footer">
-                <button type="button" class="reject-btn agent-cancel-button" onclick="closeAgentEditor()">Cancel</button>
+                <button type="button" class="reject-btn agent-cancel-button"
+                    onclick="closeAgentEditor()">Cancel</button>
                 <button type="button" class="approve-btn" id="saveAgentButton" onclick="saveAgent()">Save agent</button>
             </div>
         </div>
     </div>
 
-    <div class="modal-overlay" id="agentReportModal" role="dialog" aria-modal="true"
-        aria-labelledby="agentReportTitle">
+    <div class="modal-overlay" id="agentReportModal" role="dialog" aria-modal="true" aria-labelledby="agentReportTitle">
         <div class="modal agent-report-modal">
             <div class="modal-header">
                 <h2 id="agentReportTitle">Agent run</h2>
@@ -620,9 +651,8 @@
                 <label class="revoke-confirm-label" for="revokeUserConfirmInput">
                     Type <strong>Confirm</strong> to continue
                 </label>
-                <input type="text" id="revokeUserConfirmInput" class="revoke-confirm-input"
-                    placeholder="Confirm" autocomplete="off" spellcheck="false"
-                    oninput="validateRevokeUserConfirmation()"
+                <input type="text" id="revokeUserConfirmInput" class="revoke-confirm-input" placeholder="Confirm"
+                    autocomplete="off" spellcheck="false" oninput="validateRevokeUserConfirmation()"
                     onkeydown="if(event.key==='Enter' && !document.getElementById('revokeUserConfirmBtn').disabled) confirmRevokeUserAction()">
                 <p id="revokeUserConfirmError" class="revoke-confirm-error" role="alert" aria-live="polite"></p>
             </div>
@@ -650,10 +680,9 @@
             <div class="modal-body" id="entityDetailBody" style="max-height:70vh;overflow-y:auto">
             </div>
             <div class="modal-footer" style="justify-content:flex-end;gap:12px">
-                <button class="approve-btn" style="background:var(--accent)" id="entityConfirmBtn"
+                <button class="approve-btn" id="entityConfirmBtn"
                     onclick="reviewCurrentEntity('confirm')">✓ Confirm</button>
-                <button class="reject-btn" id="entityRetireBtn"
-                    onclick="reviewCurrentEntity('retire')">Retire</button>
+                <button class="reject-btn" id="entityRetireBtn" onclick="reviewCurrentEntity('retire')">Retire</button>
                 <button class="reject-btn"
                     style="background:transparent;border:1px solid var(--border);color:var(--text-primary)"
                     onclick="closeEntityDetail()">Close</button>
@@ -673,7 +702,8 @@
             <div class="modal-body">
                 <label style="display:block;margin-bottom:8px;font-size:13px;color:var(--text-secondary)">
                     Source label (optional)
-                    <input id="extractionSourceLabel" style="width:100%;margin-top:4px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px"
+                    <input id="extractionSourceLabel"
+                        style="width:100%;margin-top:4px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px"
                         placeholder="e.g. Q3 planning doc">
                 </label>
                 <label style="display:block;margin-bottom:12px;font-size:13px;color:var(--text-secondary)">
