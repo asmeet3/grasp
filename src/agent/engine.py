@@ -220,6 +220,9 @@ class QueryEngine:
                             else {"type": "text", "text": b.text}
                             for b in assistant_content
                         ],
+                        # DeepSeek thinking mode requires assistant messages to
+                        # carry their reasoning_content back on the next call.
+                        "reasoning_content": getattr(response, "reasoning_content", "") or "",
                     }
                 )
 

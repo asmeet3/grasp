@@ -59,6 +59,7 @@ class _Message:
     stop_reason: str  # "end_turn" | "tool_use"
     model: str = ""
     id: str = ""
+    reasoning_content: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +104,15 @@ def _to_openai_messages(
         content = msg["content"]
 
         if isinstance(content, str):
-            oai_msgs.append({"role": role, "content": content})
+            converted: dict[str, Any] = {"role": role, "content": content}
+            if role == "assistant":
+                # DeepSeek thinking mode requires every assistant message to
+                # carry a reasoning_content field (empty is accepted when the
+                # turn had no reasoning, e.g. stored plain-text history).
+                converted["reasoning_content"] = (
+                    msg.get("reasoning_content", "") if isinstance(msg, dict) else ""
+                )
+            oai_msgs.append(converted)
             continue
 
         # List of blocks
@@ -129,7 +138,16 @@ def _to_openai_messages(
                             },
                         }
                     )
-            oai_msg: dict[str, Any] = {"role": "assistant", "content": " ".join(text_parts) or None}
+            oai_msg: dict[str, Any] = {
+                "role": "assistant",
+                # DeepSeek thinking mode expects an empty string (not null) on
+                # assistant messages that carry tool calls, plus the
+                # reasoning_content field on every assistant message.
+                "content": " ".join(text_parts) or ("" if tool_calls else None),
+                "reasoning_content": (
+                    msg.get("reasoning_content", "") if isinstance(msg, dict) else ""
+                ),
+            }
             if tool_calls:
                 oai_msg["tool_calls"] = tool_calls
             oai_msgs.append(oai_msg)
@@ -190,6 +208,7 @@ def _parse_response(oai_response) -> _Message:
         stop_reason=stop_reason,
         model=oai_response.model,
         id=oai_response.id,
+        reasoning_content=getattr(oai_msg, "reasoning_content", "") or "",
     )
 
 
@@ -226,41 +245,51 @@ class _StreamContext:
     async def _iter_text(self):
         """Stream text tokens and accumulate them for get_final_message()."""
         tool_calls_acc: dict[int, dict] = {}
+        reasoning_content = ""
         finish_reason = "stop"
         full_content = ""
 
-        async with self._client.chat.completions.stream(**self._kwargs) as stream:
-            async for chunk in stream:
-                choice = chunk.choices[0] if chunk.choices else None
-                if not choice:
-                    continue
+        # Use create(stream=True) instead of the chat.completions.stream() helper:
+        # the helper auto-parses tool calls and rejects every non-strict function
+        # tool ("Only strict function tools can be auto-parsed"), which DeepSeek's
+        # OpenAI-compatible endpoint does not require. We accumulate tool calls
+        # manually below, so the raw chunk stream is all we need.
+        stream = await self._client.chat.completions.create(stream=True, **self._kwargs)
+        async for chunk in stream:
+            choice = chunk.choices[0] if chunk.choices else None
+            if not choice:
+                continue
 
-                finish_reason = choice.finish_reason or finish_reason
-                delta = choice.delta
+            finish_reason = choice.finish_reason or finish_reason
+            delta = choice.delta
 
-                # Accumulate text
-                if delta.content:
-                    full_content += delta.content
-                    self._collected_text += delta.content
-                    yield delta.content
+            # Accumulate DeepSeek thinking-mode reasoning deltas
+            if getattr(delta, "reasoning_content", None):
+                reasoning_content += delta.reasoning_content
 
-                # Accumulate tool calls
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": tc_delta.id or "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.id:
-                            tool_calls_acc[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_acc[idx]["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+            # Accumulate text
+            if delta.content:
+                full_content += delta.content
+                self._collected_text += delta.content
+                yield delta.content
+
+            # Accumulate tool calls
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {
+                            "id": tc_delta.id or "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_acc[idx]["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
 
         # Build final message
         content_blocks: list[_ContentBlock] = []
@@ -286,6 +315,7 @@ class _StreamContext:
         self._final_message = _Message(
             content=content_blocks,
             stop_reason=stop_reason,
+            reasoning_content=reasoning_content,
         )
         self._stream_done = True
 

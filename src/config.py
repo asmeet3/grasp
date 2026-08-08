@@ -125,6 +125,12 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     sync_overlap_seconds: int = Field(300, ge=0)
     worker_poll_seconds: float = Field(1.0, ge=0.1, le=60.0)
     worker_concurrency: int = Field(4, ge=1, le=32)
+    observability_flush_seconds: int = Field(
+        300,
+        ge=10,
+        le=3600,
+        description="How often live metric snapshots are persisted for session history",
+    )
 
     # Database
     database_url: str = Field(

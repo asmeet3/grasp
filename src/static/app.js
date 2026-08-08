@@ -17,7 +17,9 @@ if (localStorage.getItem('grasp_history')) {
 // Initialization
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await checkAuth();
+    const authed = await checkAuth();
+    if (!authed) return; // redirected to /login
+    document.documentElement.classList.remove('auth-checking');
     await fetchChats();
     refreshStatus();
     renderChatList();
@@ -376,7 +378,7 @@ function renderMarkdown(text) {
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
     // Tables — detect and convert markdown tables to HTML
-    html = html.replace(/((?:^\|.+\|[ \t]*\n)+)/gm, function(tableBlock) {
+    html = html.replace(/((?:^\|.+\|[ \t]*\n)+)/gm, function (tableBlock) {
         const rows = tableBlock.trim().split('\n');
         if (rows.length < 2) return tableBlock;
 
@@ -430,7 +432,7 @@ function renderMarkdown(text) {
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
     // Links
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_match, label, href) {
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_match, label, href) {
         const normalized = href.trim();
         try {
             const parsed = new URL(normalized, window.location.origin);
@@ -449,8 +451,8 @@ function renderMarkdown(text) {
 
     // Numbered lists
     html = html.replace(/^\d+\. (.+)$/gm, '<oli>$1</oli>');
-    html = html.replace(/(<oli>.*<\/oli>\n?)+/g, function(match) {
-        return '<ol>' + match.replace(/<\/?oli>/g, function(tag) {
+    html = html.replace(/(<oli>.*<\/oli>\n?)+/g, function (match) {
+        return '<ol>' + match.replace(/<\/?oli>/g, function (tag) {
             return tag.replace('oli', 'li');
         }) + '</ol>';
     });
@@ -516,14 +518,14 @@ function persistChats() {
 async function syncCurrentChat() {
     const token = localStorage.getItem('grasp_session_token');
     if (!token || !currentChatId) return;
-    
+
     const chat = chatThreads.find(c => c.id === currentChatId);
     if (!chat) return;
 
     try {
         await fetch(`${API_BASE}/api/chats`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
@@ -555,13 +557,6 @@ function startNewChat() {
 
     welcome.innerHTML = `
         <div class="welcome-glow" aria-hidden="true"></div>
-        <div class="welcome-kicker">
-            <span class="welcome-kicker-line" aria-hidden="true"></span>
-            <span class="welcome-kicker-diamond" aria-hidden="true"></span>
-            <span class="welcome-kicker-text">Institutional knowledge, answered</span>
-            <span class="welcome-kicker-diamond" aria-hidden="true"></span>
-            <span class="welcome-kicker-line" aria-hidden="true"></span>
-        </div>
         <h1>Ask <span class="accent-word">anything</span><span class="accent-dot">.</span> <br>Your company already knows.</h1>
         <p>Grasp searches across all your connected tools to find the answer — in seconds.</p>
 
@@ -636,7 +631,7 @@ async function confirmDeleteChat() {
 
     chatThreads = chatThreads.filter(c => c.id !== chatId);
     localStorage.setItem('grasp_chats', JSON.stringify(chatThreads));
-    
+
     if (currentChatId === chatId) {
         startNewChat();
     } else {
@@ -1085,7 +1080,7 @@ async function checkAuth() {
     const token = localStorage.getItem('grasp_session_token');
     if (!token) {
         window.location.href = '/login';
-        return;
+        return false;
     }
 
     try {
@@ -1097,7 +1092,7 @@ async function checkAuth() {
             localStorage.removeItem('grasp_session_token');
             localStorage.removeItem('grasp_user');
             window.location.href = '/login';
-            return;
+            return false;
         }
 
         if (res.ok) {
@@ -1130,6 +1125,7 @@ async function checkAuth() {
             }, 3000);
         }
     }
+    return true;
 }
 
 
@@ -1588,7 +1584,7 @@ function _updateCropMask(size) {
     const circle = document.getElementById('cropMaskCircle');
     const border = document.getElementById('cropBorderCircle');
     if (circle) { circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', r); }
-    if (border)  { border.setAttribute('cx', cx); border.setAttribute('cy', cy); border.setAttribute('r', r); }
+    if (border) { border.setAttribute('cx', cx); border.setAttribute('cy', cy); border.setAttribute('r', r); }
 }
 
 function renderCropCanvas() {
@@ -1638,15 +1634,15 @@ function confirmCrop() {
     const imgW = _crop.img.naturalWidth * scale;
     const imgH = _crop.img.naturalHeight * scale;
     const imgLeft = (s - imgW) / 2 + _crop.panX;
-    const imgTop  = (s - imgH) / 2 + _crop.panY;
+    const imgTop = (s - imgH) / 2 + _crop.panY;
 
     // Top-left of the circular region in canvas space
     const regionLeft = cx - r;
-    const regionTop  = cy - r;
+    const regionTop = cy - r;
 
     // In image coordinates
     const srcX = (regionLeft - imgLeft) / scale;
-    const srcY = (regionTop  - imgTop)  / scale;
+    const srcY = (regionTop - imgTop) / scale;
     const srcW = (r * 2) / scale;
     const srcH = (r * 2) / scale;
 
@@ -1659,7 +1655,7 @@ function confirmCrop() {
     _pendingProfilePicture = outCanvas.toDataURL('image/png');
 
     // Update the settings modal preview
-    const previewImg  = document.getElementById('settingsAvatarImg');
+    const previewImg = document.getElementById('settingsAvatarImg');
     const previewInit = document.getElementById('settingsAvatarInitial');
     if (previewImg) {
         previewImg.src = _pendingProfilePicture;
@@ -1758,13 +1754,13 @@ function _setZoom(z) {
 function _attachCropEvents() {
     const wrapper = document.getElementById('cropCanvasWrapper');
     if (!wrapper) return;
-    wrapper.addEventListener('mousedown',  _onCropMouseDown);
-    wrapper.addEventListener('wheel',      _onCropWheel, { passive: false });
+    wrapper.addEventListener('mousedown', _onCropMouseDown);
+    wrapper.addEventListener('wheel', _onCropWheel, { passive: false });
     wrapper.addEventListener('touchstart', _onCropTouchStart, { passive: true });
-    wrapper.addEventListener('touchmove',  _onCropTouchMove,  { passive: false });
-    wrapper.addEventListener('touchend',   _onCropTouchEnd);
+    wrapper.addEventListener('touchmove', _onCropTouchMove, { passive: false });
+    wrapper.addEventListener('touchend', _onCropTouchEnd);
     document.addEventListener('mousemove', _onCropMouseMove);
-    document.addEventListener('mouseup',   _onCropMouseUp);
+    document.addEventListener('mouseup', _onCropMouseUp);
 
     const slider = document.getElementById('cropZoomSlider');
     if (slider) slider.addEventListener('input', _onSliderInput);
@@ -1773,14 +1769,14 @@ function _attachCropEvents() {
 function _detachCropEvents() {
     const wrapper = document.getElementById('cropCanvasWrapper');
     if (wrapper) {
-        wrapper.removeEventListener('mousedown',  _onCropMouseDown);
-        wrapper.removeEventListener('wheel',      _onCropWheel);
+        wrapper.removeEventListener('mousedown', _onCropMouseDown);
+        wrapper.removeEventListener('wheel', _onCropWheel);
         wrapper.removeEventListener('touchstart', _onCropTouchStart);
-        wrapper.removeEventListener('touchmove',  _onCropTouchMove);
-        wrapper.removeEventListener('touchend',   _onCropTouchEnd);
+        wrapper.removeEventListener('touchmove', _onCropTouchMove);
+        wrapper.removeEventListener('touchend', _onCropTouchEnd);
     }
     document.removeEventListener('mousemove', _onCropMouseMove);
-    document.removeEventListener('mouseup',   _onCropMouseUp);
+    document.removeEventListener('mouseup', _onCropMouseUp);
     const slider = document.getElementById('cropZoomSlider');
     if (slider) slider.removeEventListener('input', _onSliderInput);
 }

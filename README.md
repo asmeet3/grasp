@@ -21,7 +21,7 @@ The application includes a browser chat experience, account approval and role ma
 - **Company-brain agents:** declarative, governed, read-only agents with scheduling, event triggers, daily token budgets, concurrency limits, and organization-wide emergency stop.
 - **Durable job queue:** PostgreSQL-backed workers with leases, idempotency keys, exponential backoff, and dead-letter capture for failed jobs.
 - **Append-only audit trail:** all agent runs, change-set actions, and administrative mutations are recorded in a structured audit log.
-- **Observability metrics:** in-process thread-safe metric recorder tracks latencies, costs, and rates. An authenticated `/api/admin/metrics` endpoint exposes distribution snapshots.
+- **Observability metrics:** in-process thread-safe metric recorder tracks latencies, costs, and rates. Aggregate snapshots are persisted per server session so history survives restarts, and an authenticated `/api/admin/observability` page exposes live and historical distribution snapshots.
 - **Secret redaction:** log output is filtered to redact API keys, tokens, and secrets before they reach handlers.
 - **Rate limiting:** per-IP sliding-window rate limits on authentication, queries, and file uploads protect the service from abuse.
 - **Operations dashboard:** connector health, sync state/history, pending Git changes, contributions, agents, and user approvals are available at `/admin`.
@@ -214,6 +214,7 @@ Approval always creates a local commit. If a remote is configured, the exact app
 | `UPLOAD_MAX_TEXT_CHARS` | `2000000` | Extracted-text limit |
 | `WORKER_CONCURRENCY` | `4` | Concurrent durable queue workers for sync, indexing, and agent runs |
 | `WORKER_POLL_SECONDS` | `1.0` | Durable queue polling interval (0.1–60.0) |
+| `OBSERVABILITY_FLUSH_SECONDS` | `300` | Interval (10-3600s) between persisted observability snapshots |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `20` | Per-IP rate limit on authentication endpoints |
 | `QUERY_RATE_LIMIT_PER_MINUTE` | `60` | Per-user rate limit on the query endpoint |
 | `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Per-user rate limit on contribution/upload endpoints |
@@ -378,6 +379,7 @@ Sync/change/contribution review endpoints require the `review` permission. User 
 | `POST` | `/api/admin/users/{id}/reject` | Reject or revoke a user |
 | `PUT` | `/api/admin/users/{id}/role` | Change an approved user's role |
 | `GET` | `/api/admin/metrics` | Read observability metric distributions (`view_audit` permission) |
+| `GET` | `/api/admin/observability` | Live metric snapshot plus persisted session history (`view_audit` permission) |
 | `POST` | `/api/sync/trigger` | Start a background sync |
 | `GET` | `/api/sync/status` | Read current workers and sync progress |
 | `GET` | `/api/sync/history` | Return up to 100 stored sync runs |

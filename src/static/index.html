@@ -7,7 +7,24 @@
     <meta name="description"
         content="Grasp — Agentic AI institutional brain for your organization. Search across Confluence, Jira, SharePoint, Slack, and Notion.">
     <title>Grasp</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260808-8">
+    <script>
+        // Gate rendering until authentication is verified: redirect immediately
+        // when there is no session token, otherwise hold the app shell hidden
+        // until app.js confirms the token is still valid via /api/auth/me.
+        (function () {
+            try {
+                if (!localStorage.getItem('grasp_session_token')) {
+                    window.location.replace('/login');
+                    return;
+                }
+            } catch (_) {
+                // localStorage unavailable — let the page load normally.
+                return;
+            }
+            document.documentElement.classList.add('auth-checking');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260809-1">
     <link rel="icon" href="/logos/grasp-logo-transparent-favicon.png" media="(prefers-color-scheme: light)">
     <link rel="icon" href="/logos/grasp-logo-transparent-invert-favicon.png" media="(prefers-color-scheme: dark)">
 </head>
@@ -27,6 +44,14 @@
                             <img src="/logos/grasp-letteringwhite-transparent-small.png" alt="Grasp"
                                 class="sidebar-logo-img logo-dark">
                         </div>
+                        <button class="new-chat-btn" id="newChatFab" onclick="startNewChat()" aria-label="New Chat"
+                            data-tooltip="New Chat">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
                     </div>
 
                     <div class="sidebar-content">
@@ -174,15 +199,6 @@
                         <rect width="18" height="18" x="3" y="3" rx="2" />
                         <path d="M9 3v18" />
                     </svg>
-                </button>
-
-                <button class="new-chat-fab" id="newChatFab" onclick="startNewChat()" aria-label="New Chat">
-                    <svg class="new-chat-fab-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    <span class="new-chat-fab-label">New chat</span>
                 </button>
             </header>
 
@@ -631,7 +647,7 @@
 
     <div id="toastContainer"></div>
     <script src="/static/toast.js?v=20260724-7"></script>
-    <script src="/static/app.js?v=20260808-2"></script>
+    <script src="/static/app.js?v=20260809-1"></script>
 </body>
 
 </html>

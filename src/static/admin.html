@@ -114,22 +114,35 @@
                         </div>
 
                         <div class="status-panel" id="statusPanel">
-                            <div class="status-row">
-                                <span class="status-label">System</span>
-                                <span><span class="status-dot online" id="statusDot"></span><span
-                                        id="statusText">Online</span></span>
-                            </div>
-                            <div class="status-row">
-                                <span class="status-label">Last Sync</span>
-                                <span id="lastSyncTime">—</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="status-label">Documents</span>
-                                <span id="docCount">—</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="status-label">Next Sync</span>
-                                <span id="nextSync">—</span>
+                            <button class="sidebar-group-label-btn status-panel-toggle" id="statusToggle"
+                                onclick="toggleStatusPanel()" aria-expanded="false" aria-controls="statusPanelBody">
+                                <span>Status</span>
+                                <svg class="sidebar-group-chevron" id="statusChevron"
+                                    xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="m9 18 6-6-6-6" />
+                                </svg>
+                            </button>
+                            <div class="sidebar-group-content status-panel-body" id="statusPanelBody"
+                                style="display:none">
+                                <div class="status-row">
+                                    <span class="status-label">System</span>
+                                    <span><span class="status-dot online" id="statusDot"></span><span
+                                            id="statusText">Online</span></span>
+                                </div>
+                                <div class="status-row">
+                                    <span class="status-label">Last Sync</span>
+                                    <span id="lastSyncTime">—</span>
+                                </div>
+                                <div class="status-row">
+                                    <span class="status-label">Documents</span>
+                                    <span id="docCount">—</span>
+                                </div>
+                                <div class="status-row">
+                                    <span class="status-label">Next Sync</span>
+                                    <span id="nextSync">—</span>
+                                </div>
                             </div>
                         </div>
 
@@ -651,7 +664,7 @@
                             <div class="admin-dashboard-page-heading">
                                 <span class="admin-dashboard-kicker">System performance</span>
                                 <h3>Observability</h3>
-                                <p>In-process distribution snapshots: sample count, median, p95, and maximum for every tracked metric.</p>
+                                <p>Live in-process distribution snapshots plus persisted history from previous server sessions: sample count, median, p95, and maximum for every tracked metric.</p>
                             </div>
                             <button type="button" class="admin-dashboard-primary-action"
                                 onclick="loadObservability()">
@@ -701,6 +714,22 @@
                                 </div>
                             </div>
                             <div id="obsTableContainer" aria-live="polite">
+                                <div class="admin-dashboard-loading-item">
+                                    <span class="admin-dashboard-loading-media"></span>
+                                    <span class="admin-dashboard-loading-copy"></span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Persisted session history -->
+                        <section class="admin-dashboard-section" aria-labelledby="obsSessionsTitle">
+                            <div class="admin-dashboard-section-heading">
+                                <div>
+                                    <h4 id="obsSessionsTitle">Session history</h4>
+                                    <p>Snapshots persisted periodically and on shutdown survive server restarts. Select a session to inspect its metrics.</p>
+                                </div>
+                            </div>
+                            <div id="obsSessionsContainer" aria-live="polite">
                                 <div class="admin-dashboard-loading-item">
                                     <span class="admin-dashboard-loading-media"></span>
                                     <span class="admin-dashboard-loading-copy"></span>

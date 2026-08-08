@@ -878,10 +878,12 @@ async function loadObservability() {
     const statCards = document.getElementById('obsStatCards');
     const metricCards = document.getElementById('obsMetricCards');
     const tableContainer = document.getElementById('obsTableContainer');
+    const sessionsContainer = document.getElementById('obsSessionsContainer');
     const loading = '<div class="admin-dashboard-loading-item" style="border:none;padding:0"><span class="admin-dashboard-loading-media"></span><span class="admin-dashboard-loading-copy"></span></div>';
     if (statCards) statCards.innerHTML = `<div class="ops-stat-card">${loading}</div>`;
     if (metricCards) metricCards.innerHTML = `<div class="obs-metric-card">${loading}</div>`;
     if (tableContainer) tableContainer.innerHTML = loading;
+    if (sessionsContainer) sessionsContainer.innerHTML = loading;
     try {
         const res = await fetch(`${API_BASE}/api/admin/observability`, { headers: adminHeaders() });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -890,11 +892,13 @@ async function loadObservability() {
         renderObsStatCards(data);
         renderObsMetricCards(data);
         renderObsTable(data);
+        renderObsSessionHistory(data);
     } catch (err) {
         const errHtml = `<div class="data-table-empty">Failed to load observability data: ${escapeHtml(err.message)}</div>`;
         if (statCards) statCards.innerHTML = errHtml;
         if (metricCards) metricCards.innerHTML = errHtml;
         if (tableContainer) tableContainer.innerHTML = errHtml;
+        if (sessionsContainer) sessionsContainer.innerHTML = errHtml;
     }
 }
 
@@ -1042,6 +1046,97 @@ function renderObsTable(data) {
         <tbody>${rows}</tbody>
     </table>`;
 }
+
+function renderObsSessionHistory(data) {
+    const container = document.getElementById('obsSessionsContainer');
+    if (!container) return;
+    const sessions = data.sessions || [];
+    if (!sessions.length) {
+        container.innerHTML = '<div class="data-table-empty">No persisted sessions yet. Snapshots are written at startup, periodically, and on shutdown.</div>';
+        return;
+    }
+    const rows = sessions.map((session, index) => {
+        const names = Object.keys(session.metrics || {});
+        const totalSamples = Object.values(session.metrics || {})
+            .reduce((sum, m) => sum + Number(m.count || 0), 0);
+        return `
+        <tr class="obs-session-row" data-session-index="${index}" tabindex="0" role="button"
+            aria-expanded="false" title="Click to view this session's metrics">
+            <td class="cell-primary">${formatAuditTime(session.started_at)}</td>
+            <td>${formatRelativeTime(session.captured_at)}</td>
+            <td>${escapeHtml(session.host || '—')}</td>
+            <td>${names.length}</td>
+            <td>${totalSamples.toLocaleString()}</td>
+        </tr>
+        <tr class="obs-session-detail" data-session-index="${index}" style="display:none">
+            <td colspan="5"></td>
+        </tr>`;
+    }).join('');
+    container.innerHTML = `<table class="data-table">
+        <thead>
+            <tr>
+                <th>Started</th>
+                <th>Last capture</th>
+                <th>Host</th>
+                <th>Metrics</th>
+                <th>Total samples</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function toggleObsSession(index) {
+    const session = (_lastObsData && _lastObsData.sessions || [])[Number(index)];
+    const mainRow = document.querySelector(`.obs-session-row[data-session-index="${index}"]`);
+    const detailRow = document.querySelector(`.obs-session-detail[data-session-index="${index}"]`);
+    if (!session || !mainRow || !detailRow) return;
+    const expanded = mainRow.getAttribute('aria-expanded') === 'true';
+    mainRow.setAttribute('aria-expanded', String(!expanded));
+    detailRow.style.display = expanded ? 'none' : '';
+    if (expanded) return;
+
+    const names = Object.keys(session.metrics || {});
+    if (!names.length) {
+        detailRow.innerHTML = '<td colspan="5"><div class="data-table-empty" style="margin:0">No metrics recorded in this session.</div></td>';
+        return;
+    }
+    const innerRows = names.map(name => {
+        const m = session.metrics[name];
+        const health = getMetricHealth(m);
+        return `<tr>
+            <td class="cell-primary"><span class="obs-metric-health-dot ${health}" style="display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(name)}</td>
+            <td>${Number(m.count || 0).toLocaleString()}</td>
+            <td>${formatMetric(m.p50)}</td>
+            <td>${formatMetric(m.p95)}</td>
+            <td>${formatMetric(m.maximum)}</td>
+        </tr>`;
+    }).join('');
+    detailRow.innerHTML = `<td colspan="5">
+        <div class="obs-session-detail-inner">
+            <table class="data-table">
+                <thead>
+                    <tr><th>Metric</th><th>Samples</th><th>p50</th><th>p95</th><th>Maximum</th></tr>
+                </thead>
+                <tbody>${innerRows}</tbody>
+            </table>
+        </div>
+    </td>`;
+}
+
+document.addEventListener('click', (event) => {
+    const row = event.target.closest('.obs-session-row');
+    if (row) toggleObsSession(row.dataset.sessionIndex);
+});
+
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const row = event.target.closest('.obs-session-row');
+    if (row) {
+        event.preventDefault();
+        toggleObsSession(row.dataset.sessionIndex);
+    }
+});
 
 async function getAdminBootstrapStatus() {
     try {
@@ -3349,6 +3444,22 @@ function closeAgentReport() {
 }
 
 // Sidebar sections
+
+function toggleStatusPanel() {
+    const body = document.getElementById('statusPanelBody');
+    const chevron = document.getElementById('statusChevron');
+    const toggle = document.getElementById('statusToggle');
+    if (!body) return;
+
+    const isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : '';
+    if (chevron) {
+        chevron.classList.toggle('open', !isOpen);
+    }
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(!isOpen));
+    }
+}
 
 function toggleSidebarSection(section) {
     const bodyMap = { connectors: 'connectorsSectionBody' };

@@ -6,8 +6,15 @@ import logging
 import math
 import re
 import threading
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from .database import observability_snapshots_table
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[=:]\s*[^\s,;]+"),
@@ -79,3 +86,68 @@ class MetricRecorder:
     def _percentile(values: list[float], percentile: float) -> float:
         index = max(0, min(len(values) - 1, math.ceil(len(values) * percentile) - 1))
         return values[index]
+
+
+class MetricSessionStore:
+    """Persist per-session metric snapshots so history survives restarts.
+
+    The recorder keeps live low-latency samples in memory; this store writes
+    cheap aggregate snapshots (count/p50/p95/max per metric) to PostgreSQL on
+    a timer and at shutdown. One row per capture keeps hot paths free of
+    per-sample database writes while providing previous-session history.
+    """
+
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        *,
+        session_id: str,
+        started_at: datetime,
+        host: str = "",
+    ):
+        self.engine = engine
+        self.session_id = session_id
+        self.started_at = started_at
+        self.host = host
+
+    async def save_snapshot(self, metrics: dict[str, dict[str, float | int]]) -> str:
+        """Persist one aggregate snapshot for the current session."""
+        snapshot_id = uuid.uuid4().hex
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                observability_snapshots_table.insert().values(
+                    id=snapshot_id,
+                    session_id=self.session_id,
+                    started_at=self.started_at,
+                    captured_at=datetime.now(UTC),
+                    host=self.host,
+                    metrics=metrics,
+                )
+            )
+        return snapshot_id
+
+    async def list_sessions(self, limit: int = 20) -> list[dict]:
+        """Return the most recent capture for each session, newest first."""
+        latest = (
+            select(
+                observability_snapshots_table.c.session_id,
+                func.max(observability_snapshots_table.c.captured_at).label("captured_at"),
+            )
+            .group_by(observability_snapshots_table.c.session_id)
+            .subquery()
+        )
+        statement = (
+            select(observability_snapshots_table)
+            .join(
+                latest,
+                and_(
+                    observability_snapshots_table.c.session_id == latest.c.session_id,
+                    observability_snapshots_table.c.captured_at == latest.c.captured_at,
+                ),
+            )
+            .order_by(observability_snapshots_table.c.captured_at.desc())
+            .limit(max(1, min(limit, 100)))
+        )
+        async with self.engine.begin() as conn:
+            rows = (await conn.execute(statement)).mappings().all()
+        return [dict(row) for row in rows]

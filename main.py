@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import sys
 import uuid
+from datetime import UTC, datetime
 
 import uvicorn
 
@@ -36,7 +38,7 @@ from src.database import create_engine, init_db
 from src.index.vector_store import VectorStore
 from src.jobs import PostgresJobQueue
 from src.memory import StructuredMemoryService
-from src.observability import MetricRecorder, SecretRedactionFilter
+from src.observability import MetricRecorder, MetricSessionStore, SecretRedactionFilter
 from src.providers import ConnectorProvider, ProviderRouter
 from src.repo.manager import RepoManager
 from src.sync.checkpoints import CheckpointManager
@@ -329,6 +331,17 @@ def main():
         logger.info("Structured memory disabled")
 
     metrics = MetricRecorder()
+    observability_store = MetricSessionStore(
+        db_engine,
+        session_id=uuid.uuid4().hex,
+        started_at=datetime.now(UTC),
+        host=socket.gethostname(),
+    )
+    logger.info(
+        "Observability session started (session=%s, host=%s)",
+        observability_store.session_id,
+        observability_store.host,
+    )
     scheduler = SyncScheduler(
         orchestrator=orchestrator,
         hours=settings.sync_cron_hours,
@@ -435,6 +448,7 @@ def main():
         upload_rate_limit=settings.upload_rate_limit_per_minute,
         job_queue=job_queue,
         metrics=metrics,
+        observability_store=observability_store,
         audit=audit_store,
         agent_service=agent_service,
         agent_scheduler=agent_scheduler,
@@ -442,10 +456,24 @@ def main():
     )
 
     worker_task = None
+    observability_task = None
+
+    async def flush_observability() -> None:
+        """Persist the current in-memory metric snapshot for session history."""
+        try:
+            await observability_store.save_snapshot(metrics.snapshot())
+        except Exception:
+            logger.exception("Failed to persist observability snapshot")
+
+    async def observability_loop() -> None:
+        """Periodically persist snapshots so crashes do not lose history."""
+        while True:
+            await asyncio.sleep(settings.observability_flush_seconds)
+            await flush_observability()
 
     @app.on_event("startup")
     async def on_startup():
-        nonlocal worker_task
+        nonlocal worker_task, observability_task
         await init_db(db_engine)
         reconciliation = await change_set_service.reconcile()
         if reconciliation["repaired"]:
@@ -463,6 +491,8 @@ def main():
         scheduler.start(loop=loop)
         await agent_scheduler.start(loop)
         worker_task = asyncio.create_task(job_queue.run_forever())
+        await flush_observability()
+        observability_task = asyncio.create_task(observability_loop())
         logger.info("Schedulers and durable worker started")
 
     @app.on_event("shutdown")
@@ -472,6 +502,13 @@ def main():
         job_queue.stop()
         if worker_task:
             await worker_task
+        if observability_task:
+            observability_task.cancel()
+            try:
+                await observability_task
+            except asyncio.CancelledError:
+                pass
+        await flush_observability()
         for connector in connectors.values():
             if hasattr(connector, "close"):
                 await connector.close()

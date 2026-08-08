@@ -96,6 +96,7 @@ def create_app(
     upload_rate_limit: int = 10,
     job_queue=None,
     metrics=None,
+    observability_store=None,
     audit=None,
     agent_service=None,
     agent_scheduler=None,
@@ -809,10 +810,17 @@ def create_app(
         """Return the in-process metric snapshot plus capture metadata."""
         await require_context(req, Permission.VIEW_AUDIT)
         snapshot = metrics.snapshot() if metrics else {}
+        sessions = []
+        if observability_store:
+            try:
+                sessions = await observability_store.list_sessions(limit=20)
+            except Exception:
+                logger.exception("Failed to load observability session history")
         return {
             "metrics": snapshot,
             "metric_count": len(snapshot),
             "captured_at": datetime.now(UTC).isoformat(),
+            "sessions": sessions,
         }
 
     # Governed company-brain agents

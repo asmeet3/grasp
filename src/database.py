@@ -395,6 +395,19 @@ evaluation_runs_table = Table(
 )
 
 
+observability_snapshots_table = Table(
+    "observability_snapshots",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("session_id", String(36), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+    Column("host", Text, nullable=False, server_default=""),
+    Column("metrics", JSONB, nullable=False, server_default="{}"),
+    Index("ix_obs_snapshots_session_captured", "session_id", "captured_at"),
+)
+
+
 def create_engine(database_url: str) -> AsyncEngine:
     """Create an async SQLAlchemy engine with a bounded connection pool."""
     return create_async_engine(

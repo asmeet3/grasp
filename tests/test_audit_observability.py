@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import create_app
-from src.observability import MetricRecorder
+from src.database import create_engine, init_db, observability_snapshots_table
+from src.observability import MetricRecorder, MetricSessionStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -126,7 +129,31 @@ class AuditStoreStub:
         return dict(self.summary_data)
 
 
-def client(audit_store=None, metrics=None) -> TestClient:
+class ObservabilityStoreStub:
+    def __init__(self):
+        self.sessions = [
+            {
+                "id": "snap-1",
+                "session_id": "session-1",
+                "started_at": datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+                "captured_at": datetime(2026, 8, 2, 12, 0, tzinfo=UTC),
+                "host": "test-host",
+                "metrics": {
+                    "agent.run_duration_seconds": {
+                        "count": 3,
+                        "p50": 1.5,
+                        "p95": 2.5,
+                        "maximum": 2.5,
+                    }
+                },
+            }
+        ]
+
+    async def list_sessions(self, limit: int = 20):
+        return list(self.sessions)
+
+
+def client(audit_store=None, metrics=None, observability_store=None) -> TestClient:
     app = create_app(
         query_engine=object(),
         sync_orchestrator=SyncOrchestratorStub(),
@@ -139,6 +166,7 @@ def client(audit_store=None, metrics=None) -> TestClient:
         admin_key="bootstrap-secret",
         audit=audit_store,
         metrics=metrics,
+        observability_store=observability_store,
     )
     return TestClient(app)
 
@@ -240,6 +268,67 @@ def test_observability_endpoint_returns_metric_snapshot() -> None:
     assert metric["p50"] == 1.5
     assert metric["p95"] == 2.5
     assert body["captured_at"]
+    assert body["sessions"] == []
+
+
+def test_observability_endpoint_returns_session_history() -> None:
+    store = ObservabilityStoreStub()
+    api = client(audit_store=AuditStoreStub(), observability_store=store)
+
+    response = api.get(
+        "/api/admin/observability",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["sessions"]) == 1
+    session = body["sessions"][0]
+    assert session["session_id"] == "session-1"
+    assert session["started_at"] == "2026-08-01T12:00:00+00:00"
+    assert session["captured_at"] == "2026-08-02T12:00:00+00:00"
+    assert session["host"] == "test-host"
+    assert session["metrics"]["agent.run_duration_seconds"]["count"] == 3
+
+
+@pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL", "").startswith("postgresql"),
+    reason="requires a PostgreSQL database",
+)
+async def test_metric_session_store_roundtrip() -> None:
+    engine = create_engine(os.environ["DATABASE_URL"])
+    try:
+        await init_db(engine)
+        store = MetricSessionStore(
+            engine,
+            session_id="store-test-session",
+            started_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+            host="store-test-host",
+        )
+        await store.save_snapshot(
+            {
+                "agent.run_duration_seconds": {
+                    "count": 3,
+                    "p50": 1.5,
+                    "p95": 2.5,
+                    "maximum": 2.5,
+                }
+            }
+        )
+        await store.save_snapshot({})
+        sessions = await store.list_sessions(limit=10)
+        assert sessions
+        latest = sessions[0]
+        assert latest["session_id"] == "store-test-session"
+        assert latest["host"] == "store-test-host"
+        assert latest["metrics"]["agent.run_duration_seconds"]["count"] == 3
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(
+                observability_snapshots_table.delete().where(
+                    observability_snapshots_table.c.session_id == "store-test-session"
+                )
+            )
+        await engine.dispose()
 
 
 def test_operations_page_and_sidebar_ui_present() -> None:
