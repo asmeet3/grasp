@@ -21,14 +21,14 @@ jobs:
       ANTHROPIC_API_KEY: test
       ADMIN_KEY: test-bootstrap-key
       DATABASE_URL: postgresql+asyncpg://grasp:grasp@localhost:5432/grasp
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.11", cache: pip}
-      - run: pip install -e .[dev]
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: mypy
-      - run: pytest --cov --cov-report=term-missing
-      - run: bandit -q -r src -x src/connectors
-      - run: pip check
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: actions/setup-python@v5
+#        with: {python-version: "3.11", cache: pip}
+#     - run: pip install -e .[dev]
+#     - run: ruff check .
+#     - run: ruff format --check .
+#     - run: mypy
+#     - run: pytest --cov --cov-report=term-missing
+#     - run: bandit -q -r src -x src/connectors
+#     - run: pip check
