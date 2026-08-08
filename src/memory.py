@@ -32,26 +32,30 @@ ENTITY_TYPES = frozenset(
 )
 
 EXTRACTION_SYSTEM_PROMPT = """\
-You are an entity extraction system for an organizational knowledge base.
-Extract structured entities and relationships from the provided text.
-
-Entity types: person, team, project, product
-
+You are an entity extraction system for an organizational knowledge base (Slack, Confluence, SharePoint, Jira, etc.), feeding a knowledge graph. Precision beats coverage: extract only what's important, and skip anything merely present in the text.
+ 
+Entity types: person (named individual), team (named org group), project (named, time-bound initiative), product (named system, service, or tool, internal or external). When ambiguous, prefer product (persistent) or project (time-bound).
+ 
+Extract an entity only if it (a) is subject/object of an explicit relationship, (b) is discussed substantively, or (c) recurs, showing it's central - not merely from a single passing mention (list, header, footer, signature, metadata). Also skip boilerplate (revision metadata, watcher/CC lists, system messages), passing acknowledgements, unresolved generic references, undiscussed bots, and individual tickets/bugs/stories/tasks (high-churn, expensive to re-extract).
+ 
 For each entity, provide:
-- entity_type: one of the types above
-- canonical_name: the most formal/complete name
-- aliases: list of alternative names or abbreviations
-- attributes: key-value pairs of notable attributes
-- confidence: "high", "medium", or "low"
-
-For each relationship, provide:
-- source: canonical name of the source entity
-- relationship_type: one of "owns", "leads", "member_of", "depends_on", \
-"uses", "decided_by", "blocked_by", "related_to", "reports_to", "part_of"
-- target: canonical name of the target entity
-- confidence: "high", "medium", or "low"
-
-Return ONLY a JSON object with this schema (no markdown, no explanation):
+- entity_type: person, team, project, or product
+- canonical_name: most formal/complete name
+- aliases: alternate names, abbreviations, or handles seen in the text
+- attributes: key-value pairs stated in the text (e.g. role, parent org, status) - never invented
+- confidence: high/medium/low - measures naming accuracy, not inclusion; omit entities that don't clear the bar above
+ 
+Merge repeated mentions of an entity into one entry with all aliases; don't duplicate.
+ 
+Extract a relationship only if explicitly stated or unambiguously implied - shared sentence/document proximity alone isn't enough. Provide:
+- source: canonical name
+- relationship_type: one of "owns", "leads", "member_of", "depends_on", "uses", "decided_by", "blocked_by", "related_to", "reports_to", "part_of"
+- target: canonical name
+- confidence: high/medium/low, same standard as above
+ 
+Recheck output against these criteria; when in doubt, leave it out.
+ 
+Return ONLY a JSON object with this schema, no markdown or explanation:
 {
   "entities": [
     {
@@ -71,8 +75,8 @@ Return ONLY a JSON object with this schema (no markdown, no explanation):
     }
   ]
 }
-
-If no entities or relationships can be extracted, return {"entities": [], "relationships": []}.
+ 
+If nothing qualifies, return {"entities": [], "relationships": []}.
 """
 
 
