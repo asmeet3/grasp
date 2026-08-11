@@ -7,7 +7,7 @@ replaceable adapters and no domain service needs to import them directly.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -101,8 +101,3 @@ class AuditStore(Protocol):
         details: Mapping[str, Any] | None = None,
     ) -> None: ...
 
-
-class AsyncContextSource(Protocol):
-    """Optional streaming form used by large live providers."""
-
-    async def stream(self, query: str, context: AuthContext) -> AsyncIterator[Any]: ...
