@@ -966,6 +966,7 @@ body::before {
   min-height: 0;
   padding: 28px;
   display: flex;
+  overflow-y: auto;
   flex-direction: column;
   gap: 24px;
 }
@@ -1386,8 +1387,21 @@ body::before {
 /* Query input */
 .input-area {
   padding: 18px 28px 22px;
-  background: linear-gradient(to top, var(--bg-primary) 85%, transparent);
+  background: var(--bg-primary);
   position: relative;
+}
+
+/* Fade scrim above the input bar: messages visually dissolve as they
+   scroll toward the input area instead of being hard-clipped behind it. */
+.input-area::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 56px;
+  background: linear-gradient(to top, var(--bg-primary), transparent);
+  pointer-events: none;
 }
 
 .stop-chat-btn {
@@ -2176,6 +2190,11 @@ body::before {
   white-space: nowrap;
 }
 
+.admin-dashboard-metric-value.idle,
+.admin-dashboard-metric-value.accent {
+  color: var(--accent-primary);
+}
+
 .admin-dashboard-metric-value.success {
   color: var(--success);
 }
@@ -2239,9 +2258,9 @@ body::before {
 }
 
 .admin-dashboard-result-badge.success {
-  border-color: rgba(74, 222, 128, 0.2);
-  background: var(--success-bg);
-  color: var(--success);
+  border-color: rgba(0, 84, 140, 0.2);
+  background: var(--accent-glow);
+  color: var(--accent-primary);
 }
 
 .admin-dashboard-result-badge.danger {

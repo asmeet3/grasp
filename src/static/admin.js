@@ -1309,7 +1309,8 @@ function updateSyncStatusCard(data) {
             title: 'Sync engine',
             description: isSyncing ? 'Processing connected knowledge sources' : 'Ready for scheduled or manual runs',
             value: isSyncing ? 'Syncing' : 'Idle',
-            tone: isSyncing ? 'warning' : 'success',
+            tone: 'neutral',
+            valueTone: isSyncing ? 'warning' : 'idle',
         },
         {
             icon: 'database',
@@ -1317,6 +1318,7 @@ function updateSyncStatusCard(data) {
             description: 'Knowledge records available to Grasp',
             value: numberValue(data.document_stats?.total),
             tone: 'neutral',
+            valueTone: 'neutral',
         },
         {
             icon: 'layers',
@@ -1324,6 +1326,7 @@ function updateSyncStatusCard(data) {
             description: 'Embedded segments ready for retrieval',
             value: numberValue(data.vector_index?.total_chunks),
             tone: 'neutral',
+            valueTone: 'neutral',
         },
         {
             icon: 'clock',
@@ -1331,6 +1334,7 @@ function updateSyncStatusCard(data) {
             description: 'Next scheduled automation window',
             value: data.next_scheduled ? timeAgo(data.next_scheduled, true) : 'Not scheduled',
             tone: 'neutral',
+            valueTone: 'neutral',
         },
     ];
 
@@ -1342,7 +1346,7 @@ function updateSyncStatusCard(data) {
                 <div class="admin-dashboard-item-description">${metric.description}</div>
             </div>
             <div class="admin-dashboard-item-actions">
-                <strong class="admin-dashboard-metric-value ${metric.tone}">${metric.value}</strong>
+                <strong class="admin-dashboard-metric-value ${metric.valueTone}">${metric.value}</strong>
             </div>
         </article>`).join('')}</div>`;
 
@@ -1353,13 +1357,14 @@ function updateSyncStatusCard(data) {
     } else {
         const workers = Object.entries(lastSync.workers || {});
         const failedWorkers = workers.filter(([, info]) => info.status !== 'completed');
+        const mediaTone = failedWorkers.length ? 'danger' : 'neutral';
         const resultTone = failedWorkers.length ? 'danger' : 'success';
         const resultLabel = failedWorkers.length ? 'Needs attention' : 'Completed';
         const typeLabel = String(lastSync.type || 'sync').replaceAll('_', ' ');
         const completedLabel = lastSync.timestamp ? timeAgo(lastSync.timestamp) : 'Time unavailable';
 
         html += `<article class="admin-dashboard-item admin-dashboard-latest-item">
-            <div class="admin-dashboard-item-media ${resultTone}">${adminDashboardIcon('history')}</div>
+            <div class="admin-dashboard-item-media ${mediaTone}">${adminDashboardIcon('history')}</div>
             <div class="admin-dashboard-item-content">
                 <div class="admin-dashboard-item-title">${escapeHtml(typeLabel)} sync</div>
                 <div class="admin-dashboard-item-description">${numberValue(lastSync.total_docs ?? 0)} documents · ${completedLabel}</div>
@@ -1374,7 +1379,7 @@ function updateSyncStatusCard(data) {
                 const completed = info.status === 'completed';
                 const statusLabel = String(info.status || 'unknown').replaceAll('_', ' ');
                 return `<div class="admin-dashboard-item admin-dashboard-worker-item" role="listitem">
-                    <div class="admin-dashboard-item-media ${completed ? 'success' : 'danger'}">${adminDashboardIcon('source')}</div>
+                    <div class="admin-dashboard-item-media ${completed ? 'neutral' : 'danger'}">${adminDashboardIcon('source')}</div>
                     <div class="admin-dashboard-item-content">
                         <div class="admin-dashboard-item-title">${escapeHtml(name)}</div>
                         <div class="admin-dashboard-item-description">${numberValue(info.docs ?? 0)} documents processed</div>
