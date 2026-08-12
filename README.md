@@ -26,26 +26,7 @@ Every write to the knowledge base goes through a human-reviewed change set — n
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    subgraph Sources["Knowledge sources"]
-        CF[Confluence]
-        JR[Jira]
-        SP[SharePoint]
-        SL[Slack]
-        NT[Notion]
-    end
-
-    Sources -->|full / incremental sync| ORCH[Sync orchestrator]
-    ORCH --> REPO[Git-backed knowledge repo]
-    REPO --> VS[ChromaDB vector store]
-    VS --> QE[Agentic query engine]
-    QE -->|query-time live search| Sources
-    QE --> API[FastAPI + web dashboard]
-
-    DB[(PostgreSQL)] -. identity, change sets, jobs, audit, memory, chats .-> ORCH
-    DB -.-> API
-```
+![Grasp architecture](docs/architecture.png)
 
 PostgreSQL is the system of record for identity, policy, review state, jobs, audit history, and active revision pointers. Git is the source of truth for knowledge content, and Chroma is a rebuildable derived index.
 
