@@ -59,7 +59,7 @@ async def test_extraction_returns_error_when_no_api_key():
 
 
 @pytest.mark.asyncio
-async def test_extraction_parses_claude_response():
+async def test_extraction_parses_llm_response():
     """Verify the extraction pipeline correctly parses a mock LLM response."""
     mock_extraction = {
         "entities": [
@@ -117,7 +117,7 @@ async def test_extraction_parses_claude_response():
     svc.upsert_entity = mock_upsert
     svc.add_relationship = mock_add_rel
 
-    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
+    with patch("src.llm.build_async_client", return_value=mock_client):
         result = await svc.extract_entities_from_text(
             _context(),
             "Alice Chen leads the Platform Team and is responsible for infrastructure.",
@@ -207,7 +207,7 @@ async def test_extraction_resolves_relationships_via_alias_and_case():
     svc.upsert_entity = mock_upsert
     svc.add_relationship = mock_add_rel
 
-    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
+    with patch("src.llm.build_async_client", return_value=mock_client):
         result = await svc.extract_entities_from_text(
             _context(),
             "Hana owns Route Planning.",
@@ -281,7 +281,7 @@ async def test_extraction_chunks_long_documents():
     )
     assert len(text) > 8_000
 
-    with patch("src.deepseek_compat.AsyncDeepSeek", return_value=mock_client):
+    with patch("src.llm.build_async_client", return_value=mock_client):
         result = await svc.extract_entities_from_text(_context(), text)
 
     assert mock_client.messages.create.call_count >= 2

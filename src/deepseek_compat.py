@@ -17,8 +17,9 @@ Usage (drop-in replacement)::
     from src.deepseek_compat import AsyncDeepSeek   # instead of AsyncAnthropic
     client = AsyncDeepSeek(api_key="sk-...")
 
-This module is intentionally self-contained — remove it and revert the four
-import sites once the Anthropic key is restored.
+This module is the DeepSeek backend selected by ``src.llm.build_async_client``
+when ``LLM_PROVIDER=deepseek``; with ``LLM_PROVIDER=anthropic`` the official
+``anthropic`` SDK is used instead.
 """
 
 from __future__ import annotations
@@ -59,7 +60,6 @@ class _Message:
     stop_reason: str  # "end_turn" | "tool_use"
     model: str = ""
     id: str = ""
-    reasoning_content: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +232,6 @@ def _parse_response(oai_response) -> _Message:
         stop_reason=stop_reason,
         model=oai_response.model,
         id=oai_response.id,
-        reasoning_content=getattr(oai_msg, "reasoning_content", "") or "",
     )
 
 
@@ -269,7 +268,6 @@ class _StreamContext:
     async def _iter_text(self):
         """Stream text tokens and accumulate them for get_final_message()."""
         tool_calls_acc: dict[int, dict] = {}
-        reasoning_content = ""
         finish_reason = "stop"
         full_content = ""
 
@@ -286,10 +284,6 @@ class _StreamContext:
 
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
-
-            # Accumulate DeepSeek thinking-mode reasoning deltas
-            if getattr(delta, "reasoning_content", None):
-                reasoning_content += delta.reasoning_content
 
             # Accumulate text
             if delta.content:
@@ -339,7 +333,6 @@ class _StreamContext:
         self._final_message = _Message(
             content=content_blocks,
             stop_reason=stop_reason,
-            reasoning_content=reasoning_content,
         )
         self._stream_done = True
 

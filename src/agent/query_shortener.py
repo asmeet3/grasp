@@ -10,9 +10,7 @@ from __future__ import annotations
 import json
 import logging
 
-from ..deepseek_compat import (
-    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
-)
+from .. import llm
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +25,9 @@ class QueryShortener:
         anthropic_api_key: str,
         system_prompt: str,
         model: str = "claude-haiku-4-5-20251001",
+        llm_provider: str = "anthropic",
     ):
-        self.client = AsyncAnthropic(api_key=anthropic_api_key)
+        self.client = llm.build_async_client(llm_provider, anthropic_api_key)
         self.model = model
         self.system_prompt = system_prompt
 

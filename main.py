@@ -196,10 +196,11 @@ def main():
 
     repo_manager = RepoManager(
         repo_path=settings.repo_path,
-        anthropic_api_key=settings.anthropic_api_key,
+        anthropic_api_key=settings.llm_api_key,
         classifier_model=settings.classifier_model,
         remote_url=settings.github_remote_url,
         github_pat=settings.github_pat,
+        llm_provider=settings.llm_provider,
     )
     logger.info(f"Repository manager initialized at {settings.repo_path}")
 
@@ -275,8 +276,9 @@ def main():
         memory_service = StructuredMemoryService(
             engine=db_engine,
             policy=PolicyEngine(),
-            anthropic_api_key=settings.anthropic_api_key,
+            anthropic_api_key=settings.llm_api_key,
             classifier_model=settings.classifier_model,
+            llm_provider=settings.llm_provider,
         )
         logger.info("Structured memory service initialized")
 
@@ -349,9 +351,10 @@ def main():
     )
 
     query_shortener = QueryShortener(
-        anthropic_api_key=settings.anthropic_api_key,
+        anthropic_api_key=settings.llm_api_key,
         model=settings.query_shortener_model,
         system_prompt=settings.query_shortener_system_prompt,
+        llm_provider=settings.llm_provider,
     )
     logger.info(f"Query shortener initialized (model: {settings.query_shortener_model})")
 
@@ -377,11 +380,12 @@ def main():
         else None
     )
     query_engine = QueryEngine(
-        anthropic_api_key=settings.anthropic_api_key,
+        anthropic_api_key=settings.llm_api_key,
         model=settings.agent_model,
         tool_executor=tool_executor,
         context_router=context_router,
         metrics=metrics,
+        llm_provider=settings.llm_provider,
     )
     logger.info(f"Query engine initialized (model: {settings.agent_model})")
 

@@ -7,7 +7,7 @@ Documents are organized in the company-brain layout:
   _schema/   — frontmatter schemas and source-connector configs
   teams/     — team-scoped spaces
 
-Classification via Claude Haiku maps documents into knowledge types.
+Classification via the configured LLM maps documents into knowledge types.
 Supports human-approved commits with remote push.
 """
 
@@ -22,11 +22,9 @@ from pathlib import Path
 
 from git import InvalidGitRepositoryError, Repo
 
+from .. import llm
 from ..connectors.base import Document, sanitize_filename
 from ..core.changes import require_current_base
-from ..deepseek_compat import (
-    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
-)
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +65,10 @@ class RepoManager:
         classifier_model: str = "claude-haiku-4-5-20251001",
         remote_url: str = "",
         github_pat: str = "",
+        llm_provider: str = "anthropic",
     ):
         self.repo_path = repo_path
-        self.anthropic_client = AsyncAnthropic(api_key=anthropic_api_key)
+        self.anthropic_client = llm.build_async_client(llm_provider, anthropic_api_key)
         self.classifier_model = classifier_model
         self.remote_url = remote_url
         self.github_pat = github_pat
@@ -308,7 +307,7 @@ class RepoManager:
     # Classification
 
     async def classify_document(self, doc: Document) -> str:
-        """Classify a document into a knowledge type using Claude Haiku."""
+        """Classify a document into a knowledge type using the configured LLM."""
         try:
             preview = doc.content[:500] if doc.content else ""
             prompt = CLASSIFICATION_PROMPT.format(

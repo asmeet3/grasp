@@ -1,6 +1,6 @@
-"""Tool definitions for the Claude-powered coordinator agent.
+"""Tool definitions for the LLM-powered coordinator agent.
 
-Defines all tools (JSON Schema format for Claude's tool-use API) and
+Defines all tools (JSON Schema format for the LLM's tool-use API) and
 their execution functions. Includes the fan_out_search meta-tool and
 individual platform search tools.
 """

@@ -335,12 +335,16 @@ def test_operations_page_and_sidebar_ui_present() -> None:
     api = client(AuditStoreStub())
     response = api.get("/admin/operations")
     assert response.status_code == 200
-    assert 'id="navOperations"' in response.text
-    assert 'id="screenOperations"' in response.text
-    assert "Audit log &amp; observability" in response.text
+    assert 'id="navAudit"' in response.text
+    assert 'id="screenAudit"' in response.text
+    assert 'id="navObservability"' in response.text
+    assert 'id="screenObservability"' in response.text
+    assert "Audit Log" in response.text
+    assert "Observability" in response.text
 
     javascript = (ROOT / "src" / "static" / "admin.js").read_text(encoding="utf-8")
-    assert "screenName === 'Operations'" in javascript
+    assert "screenName === 'Audit'" in javascript
+    assert "screenName === 'Observability'" in javascript
     assert "'/admin/operations'" in javascript
     assert "loadAuditEvents" in javascript
     assert "loadAuditSummary" in javascript

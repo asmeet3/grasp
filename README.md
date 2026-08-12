@@ -83,7 +83,7 @@ The repository search has a five-second timeout; each live connector search has 
 - Python 3.11 or newer (the Docker image uses Python 3.12)
 - PostgreSQL 16 or another compatible PostgreSQL server
 - Git, because repository approval and rejection use Git operations
-- An Anthropic API key
+- An Anthropic API key (or a DeepSeek API key when `LLM_PROVIDER=deepseek`)
 - An admin key chosen for this deployment
 - Platform credentials for any connectors you want to enable
 - Optional: an OpenAI API key for `text-embedding-3-large`; otherwise ChromaDB uses its local default embedding model
@@ -168,7 +168,9 @@ Settings are loaded from environment variables and `.env` by `src/config.py`.
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
-| `ANTHROPIC_API_KEY` | Yes | - | Claude queries, query shortening, and document classification |
+| `LLM_PROVIDER` | No | `anthropic` | LLM backend: `anthropic` (official SDK) or `deepseek` (DeepSeek-compatible shim) |
+| `ANTHROPIC_API_KEY` | When provider is `anthropic` | - | Claude queries, query shortening, and document classification |
+| `DEEPSEEK_API_KEY` | When provider is `deepseek` | - | DeepSeek queries, query shortening, and document classification |
 | `ADMIN_KEY` | Yes | - | Constant-time checked bootstrap key for initial user administration |
 | `DATABASE_URL` | No | `postgresql+asyncpg://grasp:grasp@localhost:5432/grasp` | Async PostgreSQL connection URL; a reachable PostgreSQL server is still required |
 | `SESSION_SECRET` | Recommended | Falls back to `ADMIN_KEY` | Signs short-lived user access tokens |

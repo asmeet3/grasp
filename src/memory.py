@@ -1,6 +1,6 @@
 """Typed, ACL-governed organizational memory access.
 
-Provides entity extraction from document text (via Claude Haiku),
+Provides entity extraction from document text via the configured LLM,
 entity/relationship CRUD with ACL enforcement, graph traversal,
 search, review workflow, work-item lifecycle, and aggregate statistics.
 """
@@ -19,6 +19,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import llm
 from .core.security import AuthContext, PolicyEngine
 from .database import entities_table, entity_relationships_table, work_items_table
 
@@ -152,11 +153,13 @@ class StructuredMemoryService:
         policy: PolicyEngine | None = None,
         anthropic_api_key: str = "",
         classifier_model: str = "claude-haiku-4-5-20251001",
+        llm_provider: str = "anthropic",
     ):
         self.engine = engine
         self.policy = policy or PolicyEngine()
         self.anthropic_api_key = anthropic_api_key
         self.classifier_model = classifier_model
+        self.llm_provider = llm_provider
 
     # ── Extraction ────────────────────────────────────────────────
 
@@ -167,18 +170,14 @@ class StructuredMemoryService:
         *,
         source_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Extract entities and relationships from text via Claude Haiku.
+        """Extract entities and relationships from text via the configured LLM.
 
         Returns the raw extraction result plus counts of upserted items.
         """
         if not self.anthropic_api_key:
             return {"entities_created": 0, "relationships_created": 0, "error": "No API key"}
 
-        from .deepseek_compat import (
-            AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
-        )
-
-        client = AsyncAnthropic(api_key=self.anthropic_api_key)
+        client = llm.build_async_client(self.llm_provider, self.anthropic_api_key)
 
         # Process long documents in overlapping chunks so nothing past the
         # first 8k characters is silently dropped.

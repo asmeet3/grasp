@@ -21,16 +21,24 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM provider (currently DeepSeek — revert to Anthropic when key is available)
-    # The field is named anthropic_api_key to avoid renaming all call sites;
-    # it now holds the DEEPSEEK_API_KEY value during the temporary swap.
-    anthropic_api_key: str = Field(
-        "", description="LLM API key (DeepSeek while Anthropic key is unavailable)"
+    # LLM provider — "anthropic" uses the official Anthropic SDK; "deepseek"
+    # uses the OpenAI-compatible DeepSeek shim. Each provider has its own key
+    # field; call sites receive the effective key via llm_api_key.
+    llm_provider: str = Field(
+        "anthropic", description="LLM provider: anthropic or deepseek"
     )
-    agent_model: str = Field("deepseek-chat", description="Model for agentic reasoning")
-    classifier_model: str = Field("deepseek-chat", description="Model for content classification")
+    anthropic_api_key: str = Field(
+        "", description="Anthropic API key (required when LLM_PROVIDER=anthropic)"
+    )
+    deepseek_api_key: str = Field(
+        "", description="DeepSeek API key (required when LLM_PROVIDER=deepseek)"
+    )
+    agent_model: str = Field("claude-sonnet-4-6", description="Model for agentic reasoning")
+    classifier_model: str = Field(
+        "claude-haiku-4-5-20251001", description="Model for content classification"
+    )
     query_shortener_model: str = Field(
-        "deepseek-chat",
+        "claude-haiku-4-5-20251001",
         description="Model for query shortening",
     )
     query_shortener_system_prompt: str = Field(
@@ -139,6 +147,19 @@ Return only a JSON array of strings, with no markdown or explanation.""",
     )
 
     @model_validator(mode="after")
+    def validate_llm_configuration(self):
+        provider = self.llm_provider.strip().lower()
+        if provider not in {"anthropic", "deepseek"}:
+            raise ValueError(
+                f"LLM_PROVIDER must be 'anthropic' or 'deepseek', got {self.llm_provider!r}"
+            )
+        required_key = "ANTHROPIC_API_KEY" if provider == "anthropic" else "DEEPSEEK_API_KEY"
+        configured_key = self.anthropic_api_key if provider == "anthropic" else self.deepseek_api_key
+        if not configured_key:
+            raise ValueError(f"LLM_PROVIDER={provider} requires {required_key} to be set")
+        return self
+
+    @model_validator(mode="after")
     def validate_safe_rollout_order(self):
         if not self.auth_required or not self.revisioned_knowledge:
             if self.agents_enabled or self.self_improvement_enabled:
@@ -146,6 +167,13 @@ Return only a JSON array of strings, with no markdown or explanation.""",
                     "Agents and self-improvement require authentication and revisioned knowledge"
                 )
         return self
+
+    @property
+    def llm_api_key(self) -> str:
+        """Return the API key for the configured LLM provider."""
+        if self.llm_provider.strip().lower() == "deepseek":
+            return self.deepseek_api_key
+        return self.anthropic_api_key
 
     @property
     def effective_session_secret(self) -> str:

@@ -1,8 +1,8 @@
-"""Coordinator agent — Claude-powered agentic query engine.
+"""Coordinator agent — LLM-powered agentic query engine.
 
 Implements the three-phase query architecture:
 1. Parallel fan-out to all sources via sub-agents
-2. Coordinator synthesis using Claude with tool-use
+2. Coordinator synthesis using the LLM with tool-use
 3. Optional deep-dive follow-ups
 
 Streams responses via an async generator for SSE support.
@@ -16,10 +16,8 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
+from .. import llm
 from ..core.security import AuthContext
-from ..deepseek_compat import (
-    AsyncDeepSeek as AsyncAnthropic,  # TODO: restore anthropic when key is back
-)
 from ..observability import MetricRecorder
 from .tools import ToolExecutor
 
@@ -68,8 +66,9 @@ class QueryEngine:
         tool_executor: ToolExecutor,
         context_router=None,
         metrics: MetricRecorder | None = None,
+        llm_provider: str = "anthropic",
     ):
-        self.client = AsyncAnthropic(api_key=anthropic_api_key)  # routes to DeepSeek via shim
+        self.client = llm.build_async_client(llm_provider, anthropic_api_key)
         self.model = model
         self.tool_executor = tool_executor
         self.context_router = context_router
@@ -85,7 +84,7 @@ class QueryEngine:
 
         Implements the three-phase query architecture:
         1. Auto-trigger fan_out_search
-        2. Claude synthesizes from gathered context
+        2. The LLM synthesizes from gathered context
         3. Optional follow-up rounds for deep-dives
 
         Args:
@@ -184,7 +183,7 @@ class QueryEngine:
                     response = await stream.get_final_message()
 
             except Exception as e:
-                logger.error(f"Claude API error: {e}")
+                logger.error(f"LLM API error: {e}")
                 yield f"\n\n*Error communicating with AI: {e}*"
                 return
 
@@ -221,9 +220,6 @@ class QueryEngine:
                             else {"type": "text", "text": b.text}
                             for b in assistant_content
                         ],
-                        # DeepSeek thinking mode requires assistant messages to
-                        # carry their reasoning_content back on the next call.
-                        "reasoning_content": getattr(response, "reasoning_content", "") or "",
                     }
                 )
 
@@ -268,7 +264,7 @@ class QueryEngine:
                     async for text in stream.text_stream:
                         yield text
             except Exception as e:
-                logger.error(f"Claude API error in final synthesis: {e}")
+                logger.error(f"LLM API error in final synthesis: {e}")
                 yield f"\n\n*Error communicating with AI: {e}*"
 
         elapsed = time.time() - start_time
