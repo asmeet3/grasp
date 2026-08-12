@@ -24,9 +24,7 @@ class Settings(BaseSettings):
     # LLM provider — "anthropic" uses the official Anthropic SDK; "deepseek"
     # uses the OpenAI-compatible DeepSeek shim. Each provider has its own key
     # field; call sites receive the effective key via llm_api_key.
-    llm_provider: str = Field(
-        "anthropic", description="LLM provider: anthropic or deepseek"
-    )
+    llm_provider: str = Field("anthropic", description="LLM provider: anthropic or deepseek")
     anthropic_api_key: str = Field(
         "", description="Anthropic API key (required when LLM_PROVIDER=anthropic)"
     )
@@ -154,7 +152,9 @@ Return only a JSON array of strings, with no markdown or explanation.""",
                 f"LLM_PROVIDER must be 'anthropic' or 'deepseek', got {self.llm_provider!r}"
             )
         required_key = "ANTHROPIC_API_KEY" if provider == "anthropic" else "DEEPSEEK_API_KEY"
-        configured_key = self.anthropic_api_key if provider == "anthropic" else self.deepseek_api_key
+        configured_key = (
+            self.anthropic_api_key if provider == "anthropic" else self.deepseek_api_key
+        )
         if not configured_key:
             raise ValueError(f"LLM_PROVIDER={provider} requires {required_key} to be set")
         return self

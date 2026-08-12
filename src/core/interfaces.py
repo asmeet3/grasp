@@ -100,4 +100,3 @@ class AuditStore(Protocol):
         resource_id: str,
         details: Mapping[str, Any] | None = None,
     ) -> None: ...
-

@@ -8,7 +8,7 @@
 
 ---
 
-Grasp is a self-hosted knowledge platform that continuously collects your organization's knowledge from the tools your teams already use, stores it in a version-controlled Markdown repository, and answers natural-language questions with cited, evidence-grounded responses.
+Grasp is a self-hosted company brain that continuously collects your organization's knowledge from the tools your teams already use, stores it in a version-controlled Markdown repository, and answers natural-language questions with cited, evidence-grounded responses.
 
 Every write to the knowledge base goes through a human-reviewed change set — no AI edit lands in your company brain without approval.
 
