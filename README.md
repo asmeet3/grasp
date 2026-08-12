@@ -1,15 +1,10 @@
 <p align="center">
-  <img src="src/logos/grasp-lettering-transparent.png" alt="Grasp" width="260" />
+  <img src="src/logos/grasp-invert-transparent.png" alt="Grasp logo" width="30%">
+</p>
+<p align="center">
+  <b>Agentic AI company brain</b> — retrieves, indexes, and reasons over company knowledge from Confluence, Jira, SharePoint, Slack, and Notion.
 </p>
 
-<p align="center">
-  <b>Agentic AI institutional brain</b> — retrieves, indexes, and reasons over company knowledge from Confluence, Jira, SharePoint, Slack, and Notion.
-</p>
-
-<p align="center">
-  <img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue" />
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
-</p>
 
 ---
 
