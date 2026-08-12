@@ -111,7 +111,13 @@ class MetricSessionStore:
         self.host = host
 
     async def save_snapshot(self, metrics: dict[str, dict[str, float | int]]) -> str:
-        """Persist one aggregate snapshot for the current session."""
+        """Persist one aggregate snapshot for the current session.
+
+        Empty snapshots are skipped so a quiet interval does not replace the
+        most recent meaningful capture for the session.
+        """
+        if not metrics:
+            return ""
         snapshot_id = uuid.uuid4().hex
         async with self.engine.begin() as conn:
             await conn.execute(
