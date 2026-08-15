@@ -8,6 +8,10 @@
 
 ---
 
+<p><strong><a href="grasp-UI.pdf" target="_blank" rel="noopener noreferrer" style="color:#2dd4bf;text-decoration:none;">✦ UI screenshots are available in <code>grasp-UI.pdf</code> — click to open</a></strong></p>
+
+---
+
 Grasp is a self-hosted company brain that continuously collects your organization's knowledge from the tools your teams already use, stores it in a version-controlled Markdown repository, and answers natural-language questions with cited, evidence-grounded responses.
 
 Every write to the knowledge base goes through a human-reviewed change set — no AI edit lands in your company brain without approval.
