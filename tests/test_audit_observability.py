@@ -298,6 +298,13 @@ async def test_metric_session_store_roundtrip() -> None:
     engine = create_engine(os.environ["DATABASE_URL"])
     try:
         await init_db(engine)
+        # Remove any rows left by a prior failed run before inserting fresh data.
+        async with engine.begin() as conn:
+            await conn.execute(
+                observability_snapshots_table.delete().where(
+                    observability_snapshots_table.c.session_id == "store-test-session"
+                )
+            )
         store = MetricSessionStore(
             engine,
             session_id="store-test-session",
