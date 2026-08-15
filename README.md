@@ -8,7 +8,7 @@
 
 ---
 
-<p><strong><a href="grasp-UI.pdf" target="_blank" rel="noopener noreferrer" style="color:#2dd4bf;text-decoration:none;">✦ UI screenshots are available in <code>grasp-UI.pdf</code> — click to open</a></strong></p>
+<p><strong><a href="grasp-UI.pdf" target="_blank" rel="noopener noreferrer" style="color:#2dd4bf;text-decoration:none;">✦ UI screenshots are available in <code>grasp-UI.pdf</code></a></strong></p>
 
 ---
 
